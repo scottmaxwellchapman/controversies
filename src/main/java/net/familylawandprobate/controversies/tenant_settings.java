@@ -26,6 +26,9 @@ public final class tenant_settings {
             "clio_base_url",
             "clio_client_id",
             "clio_client_secret",
+            "clio_auth_mode",
+            "clio_oauth_callback_url",
+            "clio_private_relay_url",
             "clio_enabled",
             "clio_access_token",
             "clio_refresh_token",
@@ -38,7 +41,9 @@ public final class tenant_settings {
             "storage_connection_status",
             "storage_connection_checked_at",
             "clio_connection_status",
-            "clio_connection_checked_at"
+            "clio_connection_checked_at",
+            "clio_auth_health_status",
+            "clio_auth_health_checked_at"
     };
 
     public static tenant_settings defaultStore() {
@@ -145,6 +150,9 @@ public final class tenant_settings {
         d.put("clio_base_url", "");
         d.put("clio_client_id", "");
         d.put("clio_client_secret", "");
+        d.put("clio_auth_mode", "public");
+        d.put("clio_oauth_callback_url", "");
+        d.put("clio_private_relay_url", "");
         d.put("clio_enabled", "false");
         d.put("clio_access_token", "");
         d.put("clio_refresh_token", "");
@@ -158,6 +166,8 @@ public final class tenant_settings {
         d.put("storage_connection_checked_at", "");
         d.put("clio_connection_status", "unknown");
         d.put("clio_connection_checked_at", "");
+        d.put("clio_auth_health_status", "unknown");
+        d.put("clio_auth_health_checked_at", "");
         return d;
     }
 
@@ -176,13 +186,19 @@ public final class tenant_settings {
         }
 
 
+        if ("clio_auth_mode".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if (!"public".equals(mode) && !"private".equals(mode)) return "public";
+            return mode;
+        }
+
         if ("clio_storage_mode".equals(key)) {
             String mode = v.toLowerCase(Locale.ROOT);
             if (!"enabled".equals(mode) && !"disabled".equals(mode)) return "disabled";
             return mode;
         }
 
-        if ("storage_connection_status".equals(key) || "clio_connection_status".equals(key)) {
+        if ("storage_connection_status".equals(key) || "clio_connection_status".equals(key) || "clio_auth_health_status".equals(key)) {
             String s = v.toLowerCase(Locale.ROOT);
             if (!"ok".equals(s) && !"failed".equals(s) && !"unknown".equals(s)) return "unknown";
             return s;
