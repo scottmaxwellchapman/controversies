@@ -111,6 +111,7 @@
         g.items.add(new MenuItem("Cases", "/cases.jsp"));
         g.items.add(new MenuItem("Tenant Fields", "/tenant_fields.jsp"));
         g.items.add(new MenuItem("Form Assembly", "/forms.jsp"));
+        g.items.add(new MenuItem("Assembled Forms", "/assembled_forms.jsp"));
         return java.util.List.of(g);
     }
 

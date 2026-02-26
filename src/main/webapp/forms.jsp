@@ -9,12 +9,14 @@
 <%@ page import="java.util.Locale" %>
 <%@ page import="java.util.Map" %>
 
+<%@ page import="net.familylawandprobate.controversies.assembled_forms" %>
 <%@ page import="net.familylawandprobate.controversies.case_fields" %>
 <%@ page import="net.familylawandprobate.controversies.document_assembler" %>
 <%@ page import="net.familylawandprobate.controversies.document_image_preview" %>
 <%@ page import="net.familylawandprobate.controversies.form_templates" %>
 <%@ page import="net.familylawandprobate.controversies.matters" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_fields" %>
+<%@ page import="net.familylawandprobate.controversies.users_roles" %>
 
 <%@ include file="security.jspf" %>
 <%
@@ -102,6 +104,8 @@
 
   String tenantUuid = safe((String)session.getAttribute(S_TENANT_UUID)).trim();
   String tenantLabel = safe((String)session.getAttribute(S_TENANT_LABEL)).trim();
+  String userUuid = safe((String)session.getAttribute(users_roles.S_USER_UUID)).trim();
+  String userEmail = safe((String)session.getAttribute(users_roles.S_USER_EMAIL)).trim();
   if (tenantUuid.isBlank()) {
     response.sendRedirect(ctx + "/tenant_login.jsp");
     return;
@@ -111,6 +115,7 @@
   case_fields caseStore = case_fields.defaultStore();
   tenant_fields tenantStore = tenant_fields.defaultStore();
   form_templates templateStore = form_templates.defaultStore();
+  assembled_forms assembledStore = assembled_forms.defaultStore();
   document_assembler assembler = new document_assembler();
   document_image_preview imagePreviewer = new document_image_preview();
 
@@ -124,10 +129,12 @@
 
   String selectedMatterUuid = safe(request.getParameter("matter_uuid")).trim();
   String selectedTemplateUuid = safe(request.getParameter("template_uuid")).trim();
+  String selectedAssemblyUuid = safe(request.getParameter("assembly_uuid")).trim();
   boolean focusMode = "1".equals(safe(request.getParameter("focus")).trim());
   boolean renderPreview = !"0".equals(safe(request.getParameter("render_preview")).trim());
   String focusQs = focusMode ? "&focus=1" : "";
   String renderPreviewQs = renderPreview ? "&render_preview=1" : "&render_preview=0";
+  String assemblyQs = selectedAssemblyUuid.isBlank() ? "" : "&assembly_uuid=" + enc(selectedAssemblyUuid);
 
   String action = "";
   boolean wantsDownload = false;
@@ -136,6 +143,7 @@
     action = safe(request.getParameter("action")).trim();
     selectedMatterUuid = safe(request.getParameter("matter_uuid")).trim();
     selectedTemplateUuid = safe(request.getParameter("template_uuid")).trim();
+    selectedAssemblyUuid = safe(request.getParameter("assembly_uuid")).trim();
 
     if ("download_assembled".equalsIgnoreCase(action)) {
       wantsDownload = true;
@@ -163,6 +171,15 @@
   try { selectedCase = matterStore.getByUuid(tenantUuid, selectedMatterUuid); } catch (Exception ignored) {}
   if (selectedCase == null && !activeCases.isEmpty()) selectedCase = activeCases.get(0);
   if (selectedCase != null) selectedMatterUuid = safe(selectedCase.uuid);
+  try { if (selectedCase != null) assembledStore.ensure(tenantUuid, selectedCase.uuid); } catch (Exception ignored) {}
+
+  assembled_forms.AssemblyRec selectedAssembly = null;
+  if (selectedCase != null && !selectedAssemblyUuid.isBlank()) {
+    try { selectedAssembly = assembledStore.getByUuid(tenantUuid, selectedCase.uuid, selectedAssemblyUuid); } catch (Exception ignored) {}
+    if (selectedAssembly != null && !safe(selectedAssembly.templateUuid).isBlank()) {
+      selectedTemplateUuid = safe(selectedAssembly.templateUuid);
+    }
+  }
 
   form_templates.TemplateRec selectedTemplate = null;
   for (int i = 0; i < templates.size(); i++) {
@@ -221,6 +238,9 @@
   }
 
   LinkedHashMap<String,String> literalOverrides = new LinkedHashMap<String,String>();
+  if (selectedAssembly != null && selectedAssembly.overrides != null && !selectedAssembly.overrides.isEmpty()) {
+    literalOverrides.putAll(selectedAssembly.overrides);
+  }
   String[] overrideTokens = request.getParameterValues("override_token");
   String[] overrideValues = request.getParameterValues("override_value");
   if (overrideTokens != null && overrideValues != null) {
@@ -283,11 +303,29 @@
       dynamicPreview = imagePreviewer.render(templateBytes, templateExt, literalOverrides, highlightNeedles, 6);
     }
 
+    if (selectedCase != null && selectedTemplate != null) {
+      try {
+        assembled_forms.AssemblyRec draft = assembledStore.upsertInProgress(
+            tenantUuid,
+            selectedCase.uuid,
+            selectedAssemblyUuid,
+            selectedTemplate.uuid,
+            templateLabel,
+            templateExt,
+            userUuid,
+            userEmail,
+            literalOverrides
+        );
+        if (draft != null && !safe(draft.uuid).isBlank()) selectedAssemblyUuid = safe(draft.uuid);
+      } catch (Exception ignored) {}
+    }
+
     response.setContentType("application/json; charset=UTF-8");
     response.setHeader("Cache-Control", "no-store");
 
     StringBuilder jsonOut = new StringBuilder(65536);
     jsonOut.append("{");
+    jsonOut.append("\"assemblyUuid\":").append(jsonStr(selectedAssemblyUuid)).append(',');
     jsonOut.append("\"engine\":").append(jsonStr(safe(dynamicPreview.engine))).append(',');
     jsonOut.append("\"warning\":").append(jsonStr(safe(dynamicPreview.warning))).append(',');
 
@@ -355,6 +393,26 @@
       String ext = safe(assembledFile.extension).isBlank() ? "txt" : safe(assembledFile.extension);
       String filename = casePart + "__" + templatePart + "." + ext;
 
+      if (selectedCase != null) {
+        try {
+          assembled_forms.AssemblyRec completed = assembledStore.markCompleted(
+              tenantUuid,
+              selectedCase.uuid,
+              selectedAssemblyUuid,
+              selectedTemplate.uuid,
+              templateLabel,
+              templateExt,
+              userUuid,
+              userEmail,
+              literalOverrides,
+              filename,
+              ext,
+              assembledFile.bytes
+          );
+          if (completed != null && !safe(completed.uuid).isBlank()) selectedAssemblyUuid = safe(completed.uuid);
+        } catch (Exception ignored) {}
+      }
+
       response.setContentType(safe(assembledFile.contentType).isBlank() ? "application/octet-stream" : assembledFile.contentType);
       response.setHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
       response.getOutputStream().write(assembledFile.bytes);
@@ -363,6 +421,8 @@
       error = "Unable to assemble document: " + safe(ex.getMessage());
     }
   }
+
+  assemblyQs = selectedAssemblyUuid.isBlank() ? "" : "&assembly_uuid=" + enc(selectedAssemblyUuid);
 
 %>
 <jsp:include page="header.jsp" />
@@ -565,15 +625,16 @@
 
     <div class="actions" style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
       <% if (selectedTemplate != null) { %>
-        <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>&focus=1<%= renderPreviewQs %>">Start Focus Mode</a>
+        <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>&focus=1<%= renderPreviewQs %><%= assemblyQs %>">Start Focus Mode</a>
       <% } %>
       <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Template Library</a>
       <a class="btn btn-ghost" href="<%= ctx %>/case_fields.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Case Fields</a>
       <a class="btn btn-ghost" href="<%= ctx %>/token_guide.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Token Guide</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/assembled_forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Assembled Forms</a>
       <% if (renderPreview) { %>
-        <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>&render_preview=0">Disable Rendered Preview</a>
+        <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>&render_preview=0<%= assemblyQs %>">Disable Rendered Preview</a>
       <% } else { %>
-        <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>&render_preview=1">Enable Rendered Preview</a>
+        <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>&render_preview=1<%= assemblyQs %>">Enable Rendered Preview</a>
       <% } %>
     </div>
   </form>
@@ -586,10 +647,11 @@
       <div class="meta">Setup panels are hidden so the user can focus on navigating and replacing text in the working document.</div>
     </div>
     <div style="display:flex; gap:10px; flex-wrap:wrap;">
-      <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= renderPreviewQs %>">Exit Focus Mode</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= renderPreviewQs %><%= assemblyQs %>">Exit Focus Mode</a>
       <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Template Library</a>
       <a class="btn btn-ghost" href="<%= ctx %>/case_fields.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Case Fields</a>
       <a class="btn btn-ghost" href="<%= ctx %>/token_guide.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Token Guide</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/assembled_forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Assembled Forms</a>
     </div>
   </div>
 </section>
@@ -611,6 +673,7 @@
           <input type="hidden" name="action" value="download_assembled" />
           <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
           <input type="hidden" name="template_uuid" value="<%= esc(selectedTemplateUuid) %>" />
+          <input type="hidden" name="assembly_uuid" id="assemblyUuidField" value="<%= esc(selectedAssemblyUuid) %>" />
           <div id="downloadOverrides"></div>
           <button class="btn" type="submit" id="btnDownloadAssembled" title="Alt+D">Download (Alt+D)</button>
         </form>
@@ -684,7 +747,7 @@
   <div class="forms-pane-scroll">
     <% if (!renderPreview) { %>
       <div class="meta" style="margin-bottom:8px;">Rendered image preview is disabled.</div>
-      <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= focusQs %>&render_preview=1">Enable Image Preview</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= focusQs %>&render_preview=1<%= assemblyQs %>">Enable Image Preview</a>
     <% } else { %>
       <div class="meta" id="renderedPreviewMeta" style="margin-bottom:8px;">
         <% if (!safe(imagePreviewEngine).isBlank()) { %>
@@ -734,6 +797,7 @@
   var tokenMatchMeta = document.getElementById("tokenMatchMeta");
   var downloadForm = document.getElementById("downloadForm");
   var downloadOverrides = document.getElementById("downloadOverrides");
+  var assemblyUuidField = document.getElementById("assemblyUuidField");
   var renderedPreviewPages = document.getElementById("renderedPreviewPages");
   var renderedPreviewMeta = document.getElementById("renderedPreviewMeta");
   var renderedPreviewWarning = document.getElementById("renderedPreviewWarning");
@@ -744,6 +808,7 @@
   var csrfTokenValue = "<%= js(csrfToken) %>";
   var selectedMatterUuid = "<%= js(selectedMatterUuid) %>";
   var selectedTemplateUuid = "<%= js(selectedTemplateUuid) %>";
+  var currentAssemblyUuid = "<%= js(selectedAssemblyUuid) %>";
   var focusModeEnabled = <%= focusMode ? "true" : "false" %>;
   var renderPreviewEnabled = <%= renderPreview ? "true" : "false" %>;
   var imagePreviewHits = Object.create(null);
@@ -1064,6 +1129,12 @@
 
   function hasOwn(obj, key) {
     return Object.prototype.hasOwnProperty.call(obj, key);
+  }
+
+  function syncAssemblyUuid(value) {
+    var v = String(value || "").trim();
+    currentAssemblyUuid = v;
+    if (assemblyUuidField) assemblyUuidField.value = v;
   }
 
   function defaultValueForToken(token, opt) {
@@ -1408,6 +1479,10 @@
   function applyRenderedPreviewData(data) {
     if (!renderPreviewEnabled || !renderedPreviewPages) return;
     var d = data || {};
+    if (d && d.assemblyUuid != null) {
+      var incomingAssemblyUuid = String(d.assemblyUuid || "").trim();
+      if (incomingAssemblyUuid) syncAssemblyUuid(incomingAssemblyUuid);
+    }
     var pages = Array.isArray(d.pages) ? d.pages : [];
     var hits = d.hitRects || {};
     imagePreviewHits = Object.create(null);
@@ -1481,6 +1556,7 @@
     addPair("action", "render_preview_json");
     addPair("matter_uuid", selectedMatterUuid);
     addPair("template_uuid", selectedTemplateUuid);
+    if (currentAssemblyUuid) addPair("assembly_uuid", currentAssemblyUuid);
     addPair("render_preview", "1");
     if (focusModeEnabled) addPair("focus", "1");
     if (tokenSelect && tokenSelect.value) addPair("highlight_token", String(tokenSelect.value));
@@ -1679,6 +1755,7 @@
   document.addEventListener("keydown", handleHotKeys, true);
 
   syncWorkspaceTextValue();
+  syncAssemblyUuid(currentAssemblyUuid);
   syncDownloadOverrides();
   syncDefaultReplaceValue();
   updatePreviewModeUi();
