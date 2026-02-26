@@ -1,5 +1,6 @@
 package net.familylawandprobate.controversies;
 
+import net.familylawandprobate.controversies.integrations.clio.ClioIntegrationService;
 import net.familylawandprobate.controversies.storage.DocumentStorageBackend;
 import net.familylawandprobate.controversies.storage.StorageBackendResolver;
 
@@ -48,6 +49,7 @@ public final class assembled_forms {
     private static final ConcurrentHashMap<String, ReentrantReadWriteLock> QUEUE_LOCKS = new ConcurrentHashMap<String, ReentrantReadWriteLock>();
     private static final AtomicBoolean WORKER_STARTED = new AtomicBoolean(false);
     private final StorageBackendResolver backendResolver;
+    private final ClioIntegrationService clioIntegrationService;
 
     private static final long SYNC_BASE_BACKOFF_MS = 2_000L;
     private static final long SYNC_MAX_BACKOFF_MS = 5 * 60_000L;
@@ -63,6 +65,7 @@ public final class assembled_forms {
 
     public assembled_forms(StorageBackendResolver backendResolver) {
         this.backendResolver = backendResolver == null ? new StorageBackendResolver() : backendResolver;
+        this.clioIntegrationService = new ClioIntegrationService();
         startWorkerIfNeeded();
     }
 
@@ -427,6 +430,7 @@ public final class assembled_forms {
             } else {
                 markSyncState(tu, mu, assemblyUuid, "synced", 0, "", "", "");
             }
+            clioIntegrationService.enqueueUploadTaskIfEligible(tu, mu, assemblyUuid);
             return completed;
         } finally {
             lock.writeLock().unlock();
