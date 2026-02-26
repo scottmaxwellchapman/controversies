@@ -11,7 +11,7 @@ public class app {
     private static final Logger LOG = Logger.getLogger(app.class.getName());
 
     public static void main(String[] args) {
-        configureHeadlessDefault();
+        configureHeadlessMode();
 
         tomcat t = new tomcat();
 
@@ -31,16 +31,22 @@ public class app {
         }
     }
 
-    private static void configureHeadlessDefault() {
+    private static void configureHeadlessMode() {
+        // Respect an explicitly configured JVM flag.
         String configured = System.getProperty("java.awt.headless");
-        if (configured != null && !configured.trim().isBlank()) return;
-
-        String allowDesktop = String.valueOf(System.getenv("CONTROVERSIES_ALLOW_DESKTOP")).trim();
-        if ("1".equals(allowDesktop) || "true".equalsIgnoreCase(allowDesktop)) {
-            System.setProperty("java.awt.headless", "false");
-        } else {
-            System.setProperty("java.awt.headless", "true");
+        if (configured != null && !configured.trim().isBlank()) {
+            return;
         }
+
+        // Optional env override for scripts/CI that want predictable behavior.
+        String headlessOverride = String.valueOf(System.getenv("CONTROVERSIES_HEADLESS")).trim();
+        if ("1".equals(headlessOverride) || "true".equalsIgnoreCase(headlessOverride)) {
+            System.setProperty("java.awt.headless", "true");
+        } else if ("0".equals(headlessOverride) || "false".equalsIgnoreCase(headlessOverride)) {
+            System.setProperty("java.awt.headless", "false");
+        }
+
+        // Otherwise, leave the default untouched so desktop environments can auto-open a browser.
     }
 
     private static void launchBrowserIfDesktop(String url) {
