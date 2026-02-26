@@ -1,0 +1,7 @@
+Tenant: {{tenant.name}}
+Case: {{case.caption}} (#{{case.number}})
+KV: {{kv.firm_name}}
+Bare: {{petitioner_name}}
+Bracket fallback: [Tenant City]
+Unknown: {{case.unknown_field}}
+Repeat: {{tenant.name}} | {{tenant.name}}

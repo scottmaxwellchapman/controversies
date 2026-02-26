@@ -1,0 +1,6 @@
+Header {{tenant.name}}
+{{#if case.has_children}}Children listed{{/if}}
+Schedule:
+{{#each kv.hearing_dates}}- {{this}}
+{{/each}}
+Date: {{format.date case.next_hearing "MMMM d, yyyy"}}
