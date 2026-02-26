@@ -12,6 +12,7 @@
 <%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.assembled_forms" %>
 <%@ page import="net.familylawandprobate.controversies.case_fields" %>
+<%@ page import="net.familylawandprobate.controversies.case_list_items" %>
 <%@ page import="net.familylawandprobate.controversies.document_assembler" %>
 <%@ page import="net.familylawandprobate.controversies.document_image_preview" %>
 <%@ page import="net.familylawandprobate.controversies.form_templates" %>
@@ -115,6 +116,7 @@
 
   matters matterStore = matters.defaultStore();
   case_fields caseStore = case_fields.defaultStore();
+  case_list_items caseListStore = case_list_items.defaultStore();
   tenant_fields tenantStore = tenant_fields.defaultStore();
   tenant_settings tenantSettingsStore = tenant_settings.defaultStore();
   form_templates templateStore = form_templates.defaultStore();
@@ -207,6 +209,11 @@
     try { caseKv.putAll(caseStore.read(tenantUuid, selectedCase.uuid)); } catch (Exception ignored) {}
   }
 
+  LinkedHashMap<String,String> caseListKv = new LinkedHashMap<String,String>();
+  if (selectedCase != null) {
+    try { caseListKv.putAll(caseListStore.read(tenantUuid, selectedCase.uuid)); } catch (Exception ignored) {}
+  }
+
   LinkedHashMap<String,String> tenantSettingsKv = new LinkedHashMap<String,String>();
   try { tenantSettingsKv.putAll(tenantSettingsStore.read(tenantUuid)); } catch (Exception ignored) {}
 
@@ -236,6 +243,17 @@
   for (Map.Entry<String,String> e : caseKv.entrySet()) {
     if (e == null) continue;
     String nk = caseStore.normalizeKey(e.getKey());
+    if (nk.isBlank()) continue;
+    String val = safe(e.getValue());
+
+    putToken(mergeValues, "case." + nk, val);
+    putToken(mergeValues, "kv." + nk, val);
+    putToken(mergeValues, nk, val);
+  }
+
+  for (Map.Entry<String,String> e : caseListKv.entrySet()) {
+    if (e == null) continue;
+    String nk = caseListStore.normalizeKey(e.getKey());
     if (nk.isBlank()) continue;
     String val = safe(e.getValue());
 
