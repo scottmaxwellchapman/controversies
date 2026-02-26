@@ -21,6 +21,7 @@ It supports:
 - [Running and packaging](#running-and-packaging)
 - [Project layout](#project-layout)
 - [Data and security notes](#data-and-security-notes)
+- [Clio integration by deployment topology](#clio-integration-by-deployment-topology)
 - [Troubleshooting](#troubleshooting)
 - [For experienced users](#for-experienced-users)
 
@@ -184,6 +185,40 @@ data/
 ```
 
 ---
+
+## Clio integration by deployment topology
+
+Use **Tenant Settings → Clio Connection** to choose an auth mode aligned with where this app is deployed.
+
+### Public mode (web-accessible app)
+
+Use this when Clio can reach your app over the public internet.
+
+1. Set **Auth Mode** to `Public mode`.
+2. Configure **Base URL**, **Client ID**, and **Client Secret**.
+3. Set **OAuth Callback URL** to a publicly reachable endpoint served by your deployment.
+4. Run **Test Clio Connection** and confirm status/health read `ok`.
+5. Save settings.
+
+Operational notes:
+- This is the standard OAuth redirect flow.
+- Callback endpoints must be reachable by Clio and match your Clio app registration.
+
+### Private mode (firewalled or VPN-only app)
+
+Use this when Clio cannot directly call into the running app.
+
+1. Set **Auth Mode** to `Private mode`.
+2. Configure **Base URL**, **Client ID**, and **Client Secret**.
+3. Enter **Relay/Admin Exchange Path** with either:
+   - A public relay URL that can complete OAuth and relay an auth code/token exchange, or
+   - An internal runbook/SOP reference for manual admin-mediated auth code exchange.
+4. Complete OAuth outside the private app boundary (relay/admin flow), then store only resulting token material in tenant settings storage.
+5. Run **Test Clio Connection**, confirm health, and save settings.
+
+Operational notes:
+- Keep access/refresh token material local to this app.
+- Do not expose private app endpoints publicly just to satisfy OAuth callback requirements.
 
 ## Data and security notes
 

@@ -86,6 +86,11 @@
     String clioClientId = tsSafe(request.getParameter("clio_client_id")).trim();
     String clioClientSecret = tsSafe(request.getParameter("clio_client_secret")).trim();
 
+    String clioAuthMode = tsSafe(request.getParameter("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
+    if (!"private".equals(clioAuthMode)) clioAuthMode = "public";
+    String clioOauthCallbackUrl = tsSafe(request.getParameter("clio_oauth_callback_url")).trim();
+    String clioPrivateRelayUrl = tsSafe(request.getParameter("clio_private_relay_url")).trim();
+
     boolean featureAdvancedAssembly = tsChecked(request.getParameter("feature_advanced_assembly"));
     boolean featureAsyncSync = tsChecked(request.getParameter("feature_async_sync"));
 
@@ -99,6 +104,9 @@
     settings.put("storage_access_key", storageAccessKey);
     settings.put("clio_base_url", clioBaseUrl);
     settings.put("clio_client_id", clioClientId);
+    settings.put("clio_auth_mode", clioAuthMode);
+    settings.put("clio_oauth_callback_url", clioOauthCallbackUrl);
+    settings.put("clio_private_relay_url", clioPrivateRelayUrl);
     settings.put("feature_advanced_assembly", featureAdvancedAssembly ? "true" : "false");
     settings.put("feature_async_sync", featureAsyncSync ? "true" : "false");
 
@@ -117,30 +125,70 @@
       message = ok ? "Storage connection test succeeded." : "Storage connection test failed. Check endpoint and credentials.";
 
     } else if ("test_clio_connection".equalsIgnoreCase(action)) {
-      boolean ok = !clioBaseUrl.isBlank() && clioBaseUrl.startsWith("http") && !clioClientId.isBlank() && !clioClientSecret.isBlank();
+      boolean hasShared = !clioBaseUrl.isBlank() && clioBaseUrl.startsWith("http") && !clioClientId.isBlank();
+      boolean hasSecret = !clioClientSecret.isBlank() || !tsSafe(settings.get("clio_client_secret")).isBlank();
+      boolean modeReady;
+      if ("public".equals(clioAuthMode)) {
+        modeReady = !clioOauthCallbackUrl.isBlank() && clioOauthCallbackUrl.startsWith("http");
+      } else {
+        modeReady = !clioPrivateRelayUrl.isBlank();
+      }
+
+      boolean ok = hasShared && hasSecret && modeReady;
       settings.put("clio_connection_status", ok ? "ok" : "failed");
       settings.put("clio_connection_checked_at", store.nowIso());
-      message = ok ? "Clio connection test succeeded." : "Clio connection test failed. Check URL and credentials.";
+      settings.put("clio_auth_health_status", ok ? "ok" : "failed");
+      settings.put("clio_auth_health_checked_at", store.nowIso());
+
+      if (ok) {
+        message = "Clio connection test succeeded for " + clioAuthMode + " auth mode.";
+      } else if ("public".equals(clioAuthMode)) {
+        message = "Clio connection test failed. Public mode requires Base URL, Client ID, Client Secret, and OAuth callback URL.";
+      } else {
+        message = "Clio connection test failed. Private mode requires Base URL, Client ID, Client Secret, and relay/admin path details.";
+      }
 
     } else if ("save_settings".equalsIgnoreCase(action)) {
-      try {
-        if (rotateStorage) settings.put("secret_rotation_storage_at", store.nowIso());
-        if (rotateClio) settings.put("secret_rotation_clio_at", store.nowIso());
+      boolean valid = true;
+      if ("public".equals(clioAuthMode) && (clioOauthCallbackUrl.isBlank() || !clioOauthCallbackUrl.startsWith("http"))) {
+        valid = false;
+        error = "Public mode requires a web-accessible OAuth callback URL.";
+      }
+      if ("private".equals(clioAuthMode) && clioPrivateRelayUrl.isBlank()) {
+        valid = false;
+        error = "Private mode requires relay/admin exchange instructions endpoint or note.";
+      }
 
-        store.write(tenantUuid, settings);
+      if (valid) {
+        try {
+          if (rotateStorage) settings.put("secret_rotation_storage_at", store.nowIso());
+          if (rotateClio) settings.put("secret_rotation_clio_at", store.nowIso());
 
-        Map<String, String> details = new LinkedHashMap<String, String>();
-        details.put("storage_backend", tsSafe(settings.get("storage_backend")));
-        details.put("feature_advanced_assembly", tsSafe(settings.get("feature_advanced_assembly")));
-        details.put("feature_async_sync", tsSafe(settings.get("feature_async_sync")));
-        details.put("storage_connection_status", tsSafe(settings.get("storage_connection_status")));
-        details.put("clio_connection_status", tsSafe(settings.get("clio_connection_status")));
-        logs.logVerbose("tenant_settings_changed", tenantUuid, userUuid, "", "", details);
+          if ("public".equals(clioAuthMode)) {
+            settings.put("clio_auth_health_status", settings.getOrDefault("clio_auth_health_status", "unknown"));
+          } else {
+            String hasTokens = !tsSafe(settings.get("clio_refresh_token")).isBlank() || !tsSafe(settings.get("clio_access_token")).isBlank() ? "ok" : "failed";
+            settings.put("clio_auth_health_status", hasTokens);
+          }
+          settings.put("clio_auth_health_checked_at", store.nowIso());
 
-        response.sendRedirect(ctx + "/tenant_settings.jsp?saved=1");
-        return;
-      } catch (Exception ex) {
-        error = "Unable to save tenant settings: " + tsSafe(ex.getMessage());
+          store.write(tenantUuid, settings);
+
+          Map<String, String> details = new LinkedHashMap<String, String>();
+          details.put("storage_backend", tsSafe(settings.get("storage_backend")));
+          details.put("feature_advanced_assembly", tsSafe(settings.get("feature_advanced_assembly")));
+          details.put("feature_async_sync", tsSafe(settings.get("feature_async_sync")));
+          details.put("storage_connection_status", tsSafe(settings.get("storage_connection_status")));
+          details.put("clio_connection_status", tsSafe(settings.get("clio_connection_status")));
+          details.put("clio_auth_mode", tsSafe(settings.get("clio_auth_mode")));
+          details.put("clio_auth_health_status", tsSafe(settings.get("clio_auth_health_status")));
+          logs.logVerbose("tenant_settings_changed", tenantUuid, userUuid, "", "", details);
+
+          response.sendRedirect(ctx + "/tenant_settings.jsp?saved=1");
+          return;
+        } catch (Exception ex) {
+          error = "Unable to save tenant settings: " + tsSafe(ex.getMessage());
+        }
       }
     }
   }
@@ -149,6 +197,8 @@
 
   String maskedStorageSecret = tsSafe(settings.get("storage_secret")).isBlank() ? "" : "********";
   String maskedClioSecret = tsSafe(settings.get("clio_client_secret")).isBlank() ? "" : "********";
+  String clioMode = tsSafe(settings.get("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
+  if (!"private".equals(clioMode)) clioMode = "public";
 %>
 
 <jsp:include page="header.jsp" />
@@ -205,6 +255,20 @@
 
   <section class="card" style="margin-top:12px;">
     <h2 style="margin-top:0;">Clio Connection</h2>
+
+    <label>Auth Mode
+      <select name="clio_auth_mode">
+        <option value="public" <%= "public".equals(clioMode) ? "selected" : "" %>>Public mode (web-accessible OAuth callback)</option>
+        <option value="private" <%= "private".equals(clioMode) ? "selected" : "" %>>Private mode (relay/admin-mediated exchange)</option>
+      </select>
+    </label>
+
+    <% if ("public".equals(clioMode)) { %>
+      <div class="alert alert-ok" style="margin-top:8px;">Public mode requires this app to expose a Clio OAuth callback URL reachable by Clio.</div>
+    <% } else { %>
+      <div class="alert alert-error" style="margin-top:8px;">Private mode is for VPN/firewalled deployments. Complete OAuth externally via relay/admin flow and store only resulting token material locally.</div>
+    <% } %>
+
     <div class="grid grid-2">
       <label>Base URL
         <input type="text" name="clio_base_url" value="<%= tsEsc(tsSafe(settings.get("clio_base_url"))) %>" placeholder="https://app.clio.com" />
@@ -214,6 +278,12 @@
       </label>
       <label>Client Secret
         <input type="password" name="clio_client_secret" value="" placeholder="<%= tsEsc(maskedClioSecret) %>" />
+      </label>
+      <label>OAuth Callback URL (public mode)
+        <input type="text" name="clio_oauth_callback_url" value="<%= tsEsc(tsSafe(settings.get("clio_oauth_callback_url"))) %>" placeholder="https://your-app.example.com/clio/oauth/callback" />
+      </label>
+      <label>Relay/Admin Exchange Path (private mode)
+        <input type="text" name="clio_private_relay_url" value="<%= tsEsc(tsSafe(settings.get("clio_private_relay_url"))) %>" placeholder="https://relay.example.com/clio/exchange or internal SOP reference" />
       </label>
     </div>
 
@@ -238,6 +308,7 @@
       <div>Clio secret last rotated: <strong><%= tsEsc(tsSafe(settings.get("secret_rotation_clio_at"))) %></strong></div>
       <div>Storage connection: <strong><%= tsEsc(tsSafe(settings.get("storage_connection_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("storage_connection_checked_at"))) %>)</div>
       <div>Clio connection: <strong><%= tsEsc(tsSafe(settings.get("clio_connection_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("clio_connection_checked_at"))) %>)</div>
+      <div>Clio auth mode health: <strong><%= tsEsc(tsSafe(settings.get("clio_auth_health_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("clio_auth_health_checked_at"))) %>)</div>
       <label><input type="checkbox" name="rotate_storage_secret" value="1" /> Mark storage secret rotated now</label>
       <label><input type="checkbox" name="rotate_clio_secret" value="1" /> Mark Clio secret rotated now</label>
     </div>
