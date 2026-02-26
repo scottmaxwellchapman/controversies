@@ -1,0 +1,7 @@
+Tenant: Acme Tenancy LLC
+Case: In re Example Household (#24-PB-1001)
+KV: Family Law & Probate Group
+Bare: John Q. Petitioner
+Bracket fallback: Phoenix
+Unknown: {{case.unknown_field}}
+Repeat: Acme Tenancy LLC | Acme Tenancy LLC
