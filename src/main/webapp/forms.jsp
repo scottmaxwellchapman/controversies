@@ -17,6 +17,7 @@
 <%@ page import="net.familylawandprobate.controversies.form_templates" %>
 <%@ page import="net.familylawandprobate.controversies.matters" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_fields" %>
+<%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 
 <%@ include file="security.jspf" %>
@@ -115,6 +116,7 @@
   matters matterStore = matters.defaultStore();
   case_fields caseStore = case_fields.defaultStore();
   tenant_fields tenantStore = tenant_fields.defaultStore();
+  tenant_settings tenantSettingsStore = tenant_settings.defaultStore();
   form_templates templateStore = form_templates.defaultStore();
   assembled_forms assembledStore = assembled_forms.defaultStore();
   document_assembler assembler = new document_assembler();
@@ -205,6 +207,9 @@
     try { caseKv.putAll(caseStore.read(tenantUuid, selectedCase.uuid)); } catch (Exception ignored) {}
   }
 
+  LinkedHashMap<String,String> tenantSettingsKv = new LinkedHashMap<String,String>();
+  try { tenantSettingsKv.putAll(tenantSettingsStore.read(tenantUuid)); } catch (Exception ignored) {}
+
   LinkedHashMap<String,String> mergeValues = new LinkedHashMap<String,String>();
 
   putToken(mergeValues, "tenant.uuid", tenantUuid);
@@ -238,6 +243,16 @@
     putToken(mergeValues, "kv." + nk, val);
     putToken(mergeValues, nk, val);
   }
+
+  boolean advancedAssemblyEnabled = "true".equalsIgnoreCase(safe(tenantSettingsKv.get("feature_advanced_assembly")));
+  putToken(mergeValues, "tenant.advanced_assembly_enabled", advancedAssemblyEnabled ? "true" : "false");
+  putToken(mergeValues, "advanced_assembly_enabled", advancedAssemblyEnabled ? "true" : "false");
+  putToken(mergeValues, "kv.advanced_assembly_enabled", advancedAssemblyEnabled ? "true" : "false");
+
+  boolean asyncSyncEnabled = "true".equalsIgnoreCase(safe(tenantSettingsKv.get("feature_async_sync")));
+  putToken(mergeValues, "tenant.async_sync_enabled", asyncSyncEnabled ? "true" : "false");
+  putToken(mergeValues, "async_sync_enabled", asyncSyncEnabled ? "true" : "false");
+  putToken(mergeValues, "kv.async_sync_enabled", asyncSyncEnabled ? "true" : "false");
 
   LinkedHashMap<String,String> literalOverrides = new LinkedHashMap<String,String>();
   if (selectedAssembly != null && selectedAssembly.overrides != null && !selectedAssembly.overrides.isEmpty()) {
