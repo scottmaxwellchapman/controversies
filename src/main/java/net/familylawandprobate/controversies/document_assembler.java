@@ -2,6 +2,7 @@ package net.familylawandprobate.controversies;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -17,6 +18,9 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
 import javax.swing.text.Document;
 import javax.swing.text.rtf.RTFEditorKit;
 
@@ -39,6 +43,10 @@ import org.apache.poi.xwpf.usermodel.XWPFTableRow;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTText;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTR;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.STFldCharType;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
 /**
  * document_assembler
@@ -1041,6 +1049,17 @@ public final class document_assembler {
         }
     }
 
+
+    private static final class EachItem {
+        final String text;
+        final LinkedHashMap<String, String> fields;
+
+        EachItem(String text, LinkedHashMap<String, String> fields) {
+            this.text = safe(text);
+            this.fields = fields == null ? new LinkedHashMap<String, String>() : fields;
+        }
+    }
+
     private static TokenScan scanTokens(String source, Map<String, String> values) {
         return scanTokens(source, values, optionsFromValues(values));
     }
@@ -1145,11 +1164,12 @@ public final class document_assembler {
             String body = out.substring(closeOpen + 2, end);
             String rawList = lookupValue(values, expr, normalizeLooseKey(expr));
             if (rawList == null) unresolved.add("each:" + expr);
-            ArrayList<String> items = splitEachItems(rawList);
+            ArrayList<EachItem> items = splitEachItems(rawList);
 
             StringBuilder repeated = new StringBuilder();
-            for (String item : items) {
-                String chunk = body.replace("{{this}}", safe(item));
+            for (EachItem item : items) {
+                String chunk = body.replace("{{this}}", item == null ? "" : safe(item.text));
+                chunk = replaceEachFields(chunk, item);
                 repeated.append(chunk);
             }
             out = out.substring(0, start) + repeated + out.substring(end + 9);
@@ -1208,17 +1228,118 @@ public final class document_assembler {
         return value;
     }
 
-    private static ArrayList<String> splitEachItems(String rawList) {
-        ArrayList<String> out = new ArrayList<String>();
+    private static String replaceEachFields(String body, EachItem item) {
+        String out = safe(body);
+        if (item == null || item.fields.isEmpty()) return out;
+        for (Map.Entry<String, String> e : item.fields.entrySet()) {
+            if (e == null) continue;
+            String key = normalizeLooseKey(e.getKey());
+            if (key.isBlank()) continue;
+            out = out.replace("{{item." + key + "}}", safe(e.getValue()));
+        }
+        return out;
+    }
+
+    private static ArrayList<EachItem> splitEachItems(String rawList) {
+        ArrayList<EachItem> out = new ArrayList<EachItem>();
         String raw = safe(rawList);
         if (raw.isBlank()) return out;
-        String[] parts = raw.split("\\r?\\n|\\|");
+
+        if (looksLikeXml(raw)) {
+            ArrayList<EachItem> xmlItems = parseEachItemsFromXml(raw);
+            if (!xmlItems.isEmpty()) return xmlItems;
+        }
+
+        String[] parts = raw.split("\r?\n|\|");
         if (parts.length <= 1) parts = raw.split(",");
         for (String p : parts) {
             String v = safe(p).trim();
-            if (!v.isBlank()) out.add(v);
+            if (!v.isBlank()) out.add(new EachItem(v, new LinkedHashMap<String, String>()));
         }
         return out;
+    }
+
+    private static boolean looksLikeXml(String raw) {
+        String s = safe(raw).trim();
+        return s.startsWith("<") && s.endsWith(">") && s.contains("</");
+    }
+
+    private static ArrayList<EachItem> parseEachItemsFromXml(String raw) {
+        ArrayList<EachItem> out = new ArrayList<EachItem>();
+        org.w3c.dom.Document doc = parseXmlSafe(raw);
+        if (doc == null || doc.getDocumentElement() == null) return out;
+
+        Element root = doc.getDocumentElement();
+        if ("list".equalsIgnoreCase(root.getTagName())) {
+            NodeList children = root.getChildNodes();
+            for (int i = 0; i < children.getLength(); i++) {
+                Node child = children.item(i);
+                if (!(child instanceof Element)) continue;
+                out.addAll(parseEachItemsFromContainer((Element) child));
+            }
+            return out;
+        }
+        out.addAll(parseEachItemsFromContainer(root));
+        return out;
+    }
+
+    private static ArrayList<EachItem> parseEachItemsFromContainer(Element container) {
+        ArrayList<EachItem> out = new ArrayList<EachItem>();
+        if (container == null) return out;
+        String tag = safe(container.getTagName()).toLowerCase(Locale.ROOT);
+
+        if ("item".equals(tag) || "row".equals(tag)) {
+            EachItem one = parseXmlEachItem(container);
+            if (one != null) out.add(one);
+            return out;
+        }
+
+        NodeList children = container.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node n = children.item(i);
+            if (!(n instanceof Element)) continue;
+            Element el = (Element) n;
+            String ctag = safe(el.getTagName()).toLowerCase(Locale.ROOT);
+            if ("item".equals(ctag) || "row".equals(ctag)) {
+                EachItem one = parseXmlEachItem(el);
+                if (one != null) out.add(one);
+            }
+        }
+        return out;
+    }
+
+    private static EachItem parseXmlEachItem(Element itemEl) {
+        if (itemEl == null) return null;
+        LinkedHashMap<String, String> fields = new LinkedHashMap<String, String>();
+        NodeList children = itemEl.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node node = children.item(i);
+            if (!(node instanceof Element)) continue;
+            Element fieldEl = (Element) node;
+            String key = normalizeLooseKey(fieldEl.getAttribute("key"));
+            if (key.isBlank()) key = normalizeLooseKey(fieldEl.getAttribute("name"));
+            if (key.isBlank()) key = normalizeLooseKey(fieldEl.getTagName());
+            if (key.isBlank()) continue;
+            fields.put(key, safe(fieldEl.getTextContent()).trim());
+        }
+        String text = safe(itemEl.getTextContent()).trim();
+        return new EachItem(text, fields);
+    }
+
+    private static org.w3c.dom.Document parseXmlSafe(String raw) {
+        try {
+            DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
+            f.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            f.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            f.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            f.setXIncludeAware(false);
+            f.setExpandEntityReferences(false);
+            DocumentBuilder b = f.newDocumentBuilder();
+            return b.parse(new InputSource(new StringReader(safe(raw))));
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static boolean containsDirectiveSyntax(String text) {

@@ -78,6 +78,34 @@ public class document_assembler_snapshot_test {
         assertArrayEquals(expected.getBytes(StandardCharsets.UTF_8), assembled.bytes, "directive enabled bytes must match golden fixture exactly");
     }
 
+
+    @Test
+    void each_directive_supports_xml_rows_with_item_fields_and_graceful_fallbacks() throws Exception {
+        document_assembler assembler = new document_assembler();
+        String template = "Service List:\n{{#each case.service_rows}}- {{item.name}} | {{item.address}} | {{item.method}}\n{{/each}}Done.";
+
+        Map<String, String> values = baseValues();
+        values.put("tenant.advanced_assembly_enabled", "true");
+        values.put("case.service_rows",
+                "<list><items>"
+                        + "<item><name>John Doe</name><address>123 Main St</address><method>Mail</method></item>"
+                        + "<item><name>Jane Roe</name><address>456 Oak Ave</address></item>"
+                        + "</items></list>");
+
+        document_assembler.PreviewResult preview = assembler.preview(template.getBytes(StandardCharsets.UTF_8), "txt", values);
+
+        String expected = "Service List:\n"
+                + "- John Doe | 123 Main St | Mail\n"
+                + "- Jane Roe | 456 Oak Ave | {{item.method}}\n"
+                + "Done.";
+
+        assertEquals(expected, preview.assembledText);
+
+        values.put("case.service_rows", "");
+        document_assembler.PreviewResult emptyPreview = assembler.preview(template.getBytes(StandardCharsets.UTF_8), "txt", values);
+        assertEquals("Service List:\nDone.", emptyPreview.assembledText);
+    }
+
     private static Map<String, String> baseValues() {
         Map<String, String> values = new LinkedHashMap<String, String>();
         values.put("tenant.name", "Acme Tenancy LLC");

@@ -23,6 +23,7 @@
   <ul>
     <li>Use explicit namespaces for clarity: <code>{{tenant.*}}</code>, <code>{{case.*}}</code>, <code>{{kv.*}}</code>.</li>
     <li>When a value can be blank, use switch notation with fallback: <code>[case.cause_docket_number/No Docket Number Yet]</code>.</li>
+    <li>Repeatable list/table data may be stored as XML and used in loops: <code>{{#each case.service_rows}}&lt;row&gt;{{item.name}} | {{item.address}}&lt;/row&gt;{{/each}}</code>.</li>
     <li>Prefer one token per legal fact to support audit logging.</li>
   </ul>
 </section>
