@@ -9,6 +9,7 @@
 <%@ page import="java.util.Locale" %>
 <%@ page import="java.util.Map" %>
 
+<%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.assembled_forms" %>
 <%@ page import="net.familylawandprobate.controversies.case_fields" %>
 <%@ page import="net.familylawandprobate.controversies.document_assembler" %>
@@ -118,6 +119,7 @@
   assembled_forms assembledStore = assembled_forms.defaultStore();
   document_assembler assembler = new document_assembler();
   document_image_preview imagePreviewer = new document_image_preview();
+  activity_log activityLog = activity_log.defaultStore();
 
   try { matterStore.ensure(tenantUuid); } catch (Exception ignored) {}
   try { templateStore.ensure(tenantUuid); } catch (Exception ignored) {}
@@ -290,6 +292,16 @@
   }
   ArrayList<document_image_preview.PageImage> imagePreviewPages = imagePreviewResult.pages;
   LinkedHashMap<String, ArrayList<document_image_preview.HitRect>> imagePreviewHits = imagePreviewResult.hitRects;
+
+  try {
+    LinkedHashMap<String,String> logDetails = new LinkedHashMap<String,String>();
+    logDetails.put("template_uuid", selectedTemplateUuid);
+    logDetails.put("used_token_count", String.valueOf(usedTokens.size()));
+    logDetails.put("missing_token_count", String.valueOf(missingTokens.size()));
+    logDetails.put("preview_mode", renderPreview ? "rendered" : "text");
+    if (selectedTemplate != null) logDetails.put("template_ext", safe(selectedTemplate.fileExt));
+    activityLog.logVerbose("form.preview.loaded", tenantUuid, userUuid, selectedMatterUuid, selectedTemplateUuid, logDetails);
+  } catch (Exception ignored) {}
   String imagePreviewWarning = safe(imagePreviewResult.warning);
   String imagePreviewEngine = safe(imagePreviewResult.engine);
   boolean renderedAvailable = imagePreviewPages != null && !imagePreviewPages.isEmpty();
@@ -393,6 +405,17 @@
   if (wantsDownload && selectedTemplate != null) {
     try {
       document_assembler.AssembledFile assembledFile = assembler.assemble(templateBytes, templateExt, mergeValues);
+      try {
+        LinkedHashMap<String,String> logDetails = new LinkedHashMap<String,String>();
+        logDetails.put("template_uuid", selectedTemplateUuid);
+        logDetails.put("assembly_uuid", selectedAssemblyUuid);
+        logDetails.put("output_extension", safe(assembledFile.extension));
+        logDetails.put("output_bytes", String.valueOf(assembledFile.bytes == null ? 0 : assembledFile.bytes.length));
+        logDetails.put("literal_override_count", String.valueOf(literalOverrides.size()));
+        logDetails.put("used_token_count", String.valueOf(usedTokens.size()));
+        logDetails.put("missing_token_count", String.valueOf(missingTokens.size()));
+        activityLog.logVerbose("form.assembly.download", tenantUuid, userUuid, selectedMatterUuid, selectedTemplateUuid, logDetails);
+      } catch (Exception ignored) {}
       String casePart = selectedCase == null ? "case" : fileSafe(selectedCase.label);
       String templatePart = fileSafe(templateLabel);
       String ext = safe(assembledFile.extension).isBlank() ? "txt" : safe(assembledFile.extension);
@@ -635,6 +658,8 @@
       <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Template Library</a>
       <a class="btn btn-ghost" href="<%= ctx %>/case_fields.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Case Fields</a>
       <a class="btn btn-ghost" href="<%= ctx %>/token_guide.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Token Guide</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/markup_notation.jsp">Markup Notation</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/log_viewer.jsp">Logs</a>
       <a class="btn btn-ghost" href="<%= ctx %>/assembled_forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Assembled Forms</a>
       <% if (renderPreview) { %>
         <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>&render_preview=0<%= assemblyQs %>">Disable Rendered Preview</a>
@@ -656,6 +681,8 @@
       <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Template Library</a>
       <a class="btn btn-ghost" href="<%= ctx %>/case_fields.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Case Fields</a>
       <a class="btn btn-ghost" href="<%= ctx %>/token_guide.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Token Guide</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/markup_notation.jsp">Markup Notation</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/log_viewer.jsp">Logs</a>
       <a class="btn btn-ghost" href="<%= ctx %>/assembled_forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Assembled Forms</a>
     </div>
   </div>
@@ -696,7 +723,7 @@
   <% } %>
 
   <div class="forms-compact-meta">
-    <div class="meta" id="tokenMatchMeta">Select a token to navigate matches.</div>
+    <div class="meta" id="tokenMatchMeta">Select a token to navigate matches. Replacements also apply inside table cells and tolerate common delimiter mistakes (smart quotes/full-width brackets).</div>
     <div class="meta">
       Tokens found: <%= workspaceTokenDefaults.size() %>
       <% if (!usedTokens.isEmpty()) { %>
