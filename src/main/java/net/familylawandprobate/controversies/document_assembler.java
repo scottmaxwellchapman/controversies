@@ -101,6 +101,8 @@ public final class document_assembler {
         String ext = normalizeExtension(templateExtOrName);
         String source;
 
+        if ("doc".equals(ext) && isLikelyRtfContent(templateBytes, null)) ext = "rtf";
+
         try {
             if ("docx".equals(ext)) {
                 source = extractDocxText(templateBytes);
@@ -127,6 +129,7 @@ public final class document_assembler {
 
     public AssembledFile assemble(byte[] templateBytes, String templateExtOrName, Map<String, String> values) throws Exception {
         String ext = normalizeExtension(templateExtOrName);
+        if ("doc".equals(ext) && isLikelyRtfContent(templateBytes, null)) ext = "rtf";
 
         if ("docx".equals(ext)) {
             byte[] out = assembleDocx(templateBytes, values);
@@ -1030,7 +1033,7 @@ public final class document_assembler {
     }
 
     private static ArrayList<TokenMatch> findTokenMatches(String source) {
-        String src = safe(source);
+        String src = normalizeTokenDelimiters(safe(source));
         ArrayList<TokenMatch> out = new ArrayList<TokenMatch>();
         if (src.isEmpty()) return out;
 
@@ -1060,7 +1063,7 @@ public final class document_assembler {
         int closeStart = -1;
         for (int i = start + 2; i + 1 < src.length(); i++) {
             if (i - start > MAX_TOKEN_BODY_LEN + 6) return null;
-            if (src.charAt(i) == '\r' || src.charAt(i) == '\n') return null;
+            if (src.charAt(i) == '\r' || src.charAt(i) == '\n') continue;
             if (src.charAt(i) == '}' && src.charAt(i + 1) == '}') {
                 closeStart = i;
                 break;
@@ -1130,6 +1133,17 @@ public final class document_assembler {
         String key = normalizeLooseKey(raw);
         if (key.isBlank()) key = raw;
         return new TokenMatch(start, close + 1, new TokenRef(full, key, raw, false));
+    }
+
+
+    private static String normalizeTokenDelimiters(String in) {
+        String src = safe(in);
+        if (src.isEmpty()) return src;
+        return src
+                .replace('“', '{').replace('”', '}')
+                .replace('‘', '[').replace('’', ']')
+                .replace('｛', '{').replace('｝', '}')
+                .replace('［', '[').replace('］', ']');
     }
 
     private static boolean isValidCurlyKey(String key) {
