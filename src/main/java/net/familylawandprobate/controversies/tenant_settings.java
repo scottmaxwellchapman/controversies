@@ -26,6 +26,11 @@ public final class tenant_settings {
             "clio_base_url",
             "clio_client_id",
             "clio_client_secret",
+            "clio_enabled",
+            "clio_access_token",
+            "clio_refresh_token",
+            "clio_storage_mode",
+            "clio_matters_last_sync_at",
             "feature_advanced_assembly",
             "feature_async_sync",
             "secret_rotation_storage_at",
@@ -140,6 +145,11 @@ public final class tenant_settings {
         d.put("clio_base_url", "");
         d.put("clio_client_id", "");
         d.put("clio_client_secret", "");
+        d.put("clio_enabled", "false");
+        d.put("clio_access_token", "");
+        d.put("clio_refresh_token", "");
+        d.put("clio_storage_mode", "disabled");
+        d.put("clio_matters_last_sync_at", "");
         d.put("feature_advanced_assembly", "false");
         d.put("feature_async_sync", "false");
         d.put("secret_rotation_storage_at", "");
@@ -161,8 +171,15 @@ public final class tenant_settings {
     private String normalizeValue(String key, String value) {
         String v = safe(value).trim();
 
-        if ("feature_advanced_assembly".equals(key) || "feature_async_sync".equals(key)) {
+        if ("feature_advanced_assembly".equals(key) || "feature_async_sync".equals(key) || "clio_enabled".equals(key)) {
             return truthy(v) ? "true" : "false";
+        }
+
+
+        if ("clio_storage_mode".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if (!"enabled".equals(mode) && !"disabled".equals(mode)) return "disabled";
+            return mode;
         }
 
         if ("storage_connection_status".equals(key) || "clio_connection_status".equals(key)) {

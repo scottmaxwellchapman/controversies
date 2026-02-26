@@ -56,6 +56,10 @@ public final class matters {
         // Optional fields (v1)
         public String causeDocketNumber;
         public String county;
+        public String source;
+        public String sourceMatterId;
+        public String clioCanonicalLabel;
+        public String clioUpdatedAt;
 public MatterRec(String uuid,
                          boolean enabled,
                          boolean trashed,
@@ -168,6 +172,10 @@ public MatterRec(String uuid,
             );
             rec.causeDocketNumber = "";
             rec.county = "";
+            rec.source = "";
+            rec.sourceMatterId = "";
+            rec.clioCanonicalLabel = "";
+            rec.clioUpdatedAt = "";
 
             all.add(rec);
             sortByLabel(all);
@@ -224,6 +232,10 @@ public MatterRec(String uuid,
                     // Preserve optional case metadata on updates that don't provide it.
                     next.causeDocketNumber = safe(m.causeDocketNumber);
                     next.county = safe(m.county);
+                    next.source = safe(m.source);
+                    next.sourceMatterId = safe(m.sourceMatterId);
+                    next.clioCanonicalLabel = safe(m.clioCanonicalLabel);
+                    next.clioUpdatedAt = safe(m.clioUpdatedAt);
                     out.add(next);
                     changed = true;
                 } else {
@@ -298,6 +310,10 @@ public MatterRec(String uuid,
                     // Preserve optional metadata when archiving/restoring.
                     next.causeDocketNumber = safe(m.causeDocketNumber);
                     next.county = safe(m.county);
+                    next.source = safe(m.source);
+                    next.sourceMatterId = safe(m.sourceMatterId);
+                    next.clioCanonicalLabel = safe(m.clioCanonicalLabel);
+                    next.clioUpdatedAt = safe(m.clioUpdatedAt);
                     out.add(next);
                 } else {
                     out.add(m);
@@ -377,8 +393,16 @@ public MatterRec(String uuid,
             MatterRec _r = new MatterRec(uuid, enabled, trashed, label, jur, cat, sub, st, sst);
             String _cause = text(e, "causeDocketNumber");
             String _county = text(e, "county");
+            String _source = text(e, "source");
+            String _sourceMatterId = text(e, "source_matter_id");
+            String _clioCanonicalLabel = text(e, "clio_canonical_label");
+            String _clioUpdatedAt = text(e, "clio_updated_at");
             _r.causeDocketNumber = _cause;
             _r.county = _county;
+            _r.source = _source;
+            _r.sourceMatterId = _sourceMatterId;
+            _r.clioCanonicalLabel = _clioCanonicalLabel;
+            _r.clioUpdatedAt = _clioUpdatedAt;
             out.add(_r);
         }
         }
@@ -412,6 +436,18 @@ public MatterRec(String uuid,
             }
             if (m.county != null && !m.county.isBlank()) {
                 sb.append("    <county>").append(xmlText(m.county)).append("</county>\n");
+            }
+            if (m.source != null && !m.source.isBlank()) {
+                sb.append("    <source>").append(xmlText(m.source)).append("</source>\n");
+            }
+            if (m.sourceMatterId != null && !m.sourceMatterId.isBlank()) {
+                sb.append("    <source_matter_id>").append(xmlText(m.sourceMatterId)).append("</source_matter_id>\n");
+            }
+            if (m.clioCanonicalLabel != null && !m.clioCanonicalLabel.isBlank()) {
+                sb.append("    <clio_canonical_label>").append(xmlText(m.clioCanonicalLabel)).append("</clio_canonical_label>\n");
+            }
+            if (m.clioUpdatedAt != null && !m.clioUpdatedAt.isBlank()) {
+                sb.append("    <clio_updated_at>").append(xmlText(m.clioUpdatedAt)).append("</clio_updated_at>\n");
             }
             sb.append("    <jurisdiction_uuid>").append(xmlText(m.jurisdictionUuid)).append("</jurisdiction_uuid>\n");
             sb.append("    <matter_category_uuid>").append(xmlText(m.matterCategoryUuid)).append("</matter_category_uuid>\n");
@@ -462,6 +498,10 @@ public MatterRec(String uuid,
             );
             rec.causeDocketNumber = safe(causeDocketNumber);
             rec.county = safe(county);
+            rec.source = "";
+            rec.sourceMatterId = "";
+            rec.clioCanonicalLabel = "";
+            rec.clioUpdatedAt = "";
 
             all.add(rec);
             sortByLabel(all);
@@ -519,6 +559,68 @@ public MatterRec(String uuid,
                     );
                     next.causeDocketNumber = safe(causeDocketNumber);
                     next.county = safe(county);
+                    next.source = safe(m.source);
+                    next.sourceMatterId = safe(m.sourceMatterId);
+                    next.clioCanonicalLabel = safe(m.clioCanonicalLabel);
+                    next.clioUpdatedAt = safe(m.clioUpdatedAt);
+                    out.add(next);
+                    changed = true;
+                } else {
+                    out.add(m);
+                }
+            }
+
+            if (changed) {
+                sortByLabel(out);
+                writeAllLocked(tu, out);
+            }
+            return changed;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+
+
+    public boolean updateSourceMetadata(String tenantUuid,
+                                        String uuid,
+                                        String source,
+                                        String sourceMatterId,
+                                        String canonicalLabel,
+                                        String sourceUpdatedAt) throws Exception {
+        String tu = safe(tenantUuid).trim();
+        String id = safe(uuid).trim();
+        if (tu.isBlank() || id.isBlank()) return false;
+
+        ReentrantReadWriteLock lock = lockFor(tu);
+        lock.writeLock().lock();
+        try {
+            ensure(tu);
+            List<MatterRec> all = readAllLocked(tu);
+            boolean changed = false;
+            List<MatterRec> out = new ArrayList<MatterRec>(all.size());
+
+            for (int i = 0; i < all.size(); i++) {
+                MatterRec m = all.get(i);
+                if (m == null) continue;
+                if (id.equals(safe(m.uuid).trim())) {
+                    MatterRec next = new MatterRec(
+                            m.uuid,
+                            m.enabled,
+                            m.trashed,
+                            m.label,
+                            m.jurisdictionUuid,
+                            m.matterCategoryUuid,
+                            m.matterSubcategoryUuid,
+                            m.matterStatusUuid,
+                            m.matterSubstatusUuid
+                    );
+                    next.causeDocketNumber = safe(m.causeDocketNumber);
+                    next.county = safe(m.county);
+                    next.source = safe(source).trim();
+                    next.sourceMatterId = safe(sourceMatterId).trim();
+                    next.clioCanonicalLabel = safe(canonicalLabel).trim();
+                    next.clioUpdatedAt = safe(sourceUpdatedAt).trim();
                     out.add(next);
                     changed = true;
                 } else {
