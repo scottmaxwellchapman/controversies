@@ -250,8 +250,13 @@
       if (tokenLiteral.isBlank()) continue;
       String tokenValue = safe(overrideValues[i]);
       literalOverrides.put(tokenLiteral, tokenValue);
-      mergeValues.put(tokenLiteral, tokenValue);
     }
+  }
+  for (Map.Entry<String,String> e : literalOverrides.entrySet()) {
+    if (e == null) continue;
+    String tokenLiteral = safe(e.getKey()).trim();
+    if (tokenLiteral.isBlank()) continue;
+    mergeValues.put(tokenLiteral, safe(e.getValue()));
   }
 
   byte[] templateBytes = new byte[0];
