@@ -3,7 +3,9 @@ package net.familylawandprobate.controversies.integrations.clio;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -127,13 +129,15 @@ public final class ClioClient {
 
     private static String readResponse(HttpURLConnection conn) throws Exception {
         int status = conn.getResponseCode();
-        InputStream stream = status >= 200 && status < 300 ? conn.getInputStream() : conn.getErrorStream();
         String body = "";
+        InputStream stream = status >= 200 && status < 300 ? conn.getInputStream() : conn.getErrorStream();
         if (stream != null) {
-            body = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            try (InputStream in = stream) {
+                body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            }
         }
         if (status < 200 || status >= 300) {
-            throw new IllegalStateException("Clio API error status=" + status + " body=" + body);
+            throw new IllegalStateException("Clio API error status=" + status + " body=" + safeErrorBody(body));
         }
         return body;
     }
@@ -168,6 +172,52 @@ public final class ClioClient {
         String v = safe(raw).trim();
         if (v.isBlank()) return "https://app.clio.com";
         while (v.endsWith("/")) v = v.substring(0, v.length() - 1);
+
+        URI uri;
+        try {
+            uri = URI.create(v);
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("invalid clio base url", ex);
+        }
+
+        String scheme = safe(uri.getScheme()).toLowerCase();
+        if (!"https".equals(scheme)) {
+            throw new IllegalArgumentException("clio base url must use https");
+        }
+
+        String host = safe(uri.getHost()).trim().toLowerCase();
+        if (host.isBlank()) {
+            throw new IllegalArgumentException("clio base url host is required");
+        }
+
+        if (isLocalAddressHost(host)) {
+            throw new IllegalArgumentException("clio base url host is not allowed");
+        }
+
+        return uri.toString();
+    }
+
+    private static boolean isLocalAddressHost(String host) {
+        if (host.isBlank()) return true;
+        if ("localhost".equals(host) || host.endsWith(".localhost")) return true;
+
+        try {
+            InetAddress[] addrs = InetAddress.getAllByName(host);
+            for (InetAddress a : addrs) {
+                if (a == null) continue;
+                if (a.isAnyLocalAddress() || a.isLoopbackAddress() || a.isSiteLocalAddress()) return true;
+            }
+        } catch (UnknownHostException ex) {
+            // If resolution fails, defer to network stack later; do not block valid hosts due to DNS noise.
+            return false;
+        }
+
+        return false;
+    }
+
+    private static String safeErrorBody(String body) {
+        String v = safe(body).replaceAll("[\r\n\t]+", " ").trim();
+        if (v.length() > 300) return v.substring(0, 300) + "...";
         return v;
     }
 
