@@ -1,0 +1,13 @@
+# Build outputs
+target/
+
+# OS/editor artifacts
+.DS_Store
+*.swp
+*.swo
+
+# Runtime data and secrets
+data/
+
+# Optional local IDE files
+*.iml

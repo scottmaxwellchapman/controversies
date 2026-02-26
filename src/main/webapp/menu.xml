@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<menu>
+  <item label="Home" href="/index.jsp" />
+  <item label="Users &amp; Security" href="/users_roles.jsp" />
+  <item label="Cases" href="/cases.jsp" />
+  <item label="Tenant Fields" href="/tenant_fields.jsp" />
+  <item label="Form Assembly" href="/forms.jsp" />
+  <item label="Template Library" href="/template_library.jsp" />
+  <item label="Case Fields" href="/case_fields.jsp" />
+  <item label="Token Guide" href="/token_guide.jsp" />
+</menu>

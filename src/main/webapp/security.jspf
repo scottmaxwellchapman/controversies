@@ -1,0 +1,5 @@
+<%@ page import="static net.familylawandprobate.controversies.security.*" %>
+<%
+  // Bind implicit JSP objects into the security ThreadLocal (idempotent).
+  sec_bind(request, response, pageContext, session);
+%>

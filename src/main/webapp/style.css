@@ -1,0 +1,904 @@
+/* css/style.css
+   Enterprise Neutral + Blue — sharp, high-clarity, professional
+   ===========================================================
+   Goals:
+   - Clean enterprise admin feel (crisp lines, readable type, restrained effects)
+   - Light theme only (consistent)
+   - Sticky header + sticky footer
+   - Dropdown menu ALWAYS opens to the RIGHT of the trigger and never clips
+   - Pastel filled alerts (green/yellow/red)
+   - App name in header uses the same blue as primary buttons
+   - Search input ~2 inches wide (CSS physical unit with clamp fallback)
+
+   Works with your existing markup/classes:
+   - .container, .card, .panel, .btn, .btn-ghost, .badge, .alert-*
+   - details.dropdown.nav-dropdown + .dropdown-trigger + .dropdown-panel
+   - .site-header, .site-footer, .mac-toolbar, .toolbar-left, .toolbar-search, .header-actions
+*/
+
+/* ===========================
+   0) Theme tokens (light-only)
+   =========================== */
+
+:root{
+  color-scheme: light;
+
+  /* Typography */
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+
+  /* Enterprise palette */
+  --bg: #EEF2F7;                 /* cool gray-blue background */
+  --surface: #FFFFFF;            /* card surface */
+  --surface-2: #F3F6FB;          /* headers/panels */
+  --popover: #FFFFFF;
+
+  --text: #0F172A;               /* deep slate */
+  --muted: #64748B;              /* muted slate */
+  --border: rgba(15, 23, 42, 0.14);
+  --stroke: rgba(15, 23, 42, 0.10);
+
+  --accent: #2563EB;             /* enterprise blue */
+  --accent-hover: #1D4ED8;
+  --accent-soft: rgba(37, 99, 235, 0.12);
+
+  --ok: #16A34A;
+  --warn: #D97706;
+  --danger: #DC2626;
+
+  /* Pastel fills (requested) */
+  --ok-fill: #EAF8EF;
+  --warn-fill: #FFF6DB;
+  --danger-fill: #FFE6E6;
+
+  /* Spacing (comfortable but disciplined) */
+  --s-1: .25rem;
+  --s-2: .5rem;
+  --s-3: .75rem;
+  --s-4: 1rem;
+  --s-5: 1.25rem;
+  --s-6: 1.5rem;
+  --s-7: 2rem;
+  --s-8: 2.5rem;
+  --s-9: 3rem;
+
+  /* Radii (slightly sharper than “mac” look) */
+  --r-sm: 10px;
+  --r-md: 12px;
+  --r-lg: 14px;
+  --r-xl: 16px;
+
+  /* Shadows (subtle, enterprise) */
+  --shadow-1: 0 1px 0 rgba(255,255,255,0.8) inset, 0 10px 26px rgba(2, 6, 23, 0.08);
+  --shadow-2: 0 1px 0 rgba(255,255,255,0.7) inset, 0 18px 50px rgba(2, 6, 23, 0.12);
+
+  /* Focus */
+  --focus: 0 0 0 3px rgba(37, 99, 235, 0.24);
+
+  /* Layout */
+  --content-max: 1120px;
+
+  /* Sticky bars sizing (keep in sync with your header/footer feel) */
+  --header-h: 72px;
+  --footer-h: 56px;
+}
+
+@media (prefers-contrast: more){
+  :root{
+    --border: rgba(15, 23, 42, 0.22);
+    --stroke: rgba(15, 23, 42, 0.18);
+    --focus: 0 0 0 4px rgba(37, 99, 235, 0.35);
+  }
+}
+
+@media (prefers-reduced-motion: reduce){
+  *{ scroll-behavior: auto !important; }
+}
+
+/* ===========================
+   1) Base reset + typography
+   =========================== */
+
+*{ box-sizing: border-box; }
+html, body{ height: 100%; }
+
+body{
+  margin: 0;
+  font-family: var(--font);
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
+}
+
+a{
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover{ text-decoration: underline; text-underline-offset: 2px; }
+a:focus-visible{
+  outline: none;
+  box-shadow: var(--focus);
+  border-radius: 8px;
+}
+
+h1, h2, h3{
+  margin: 0 0 var(--s-4);
+  letter-spacing: -0.01em;
+}
+h1{ font-size: 1.25rem; font-weight: 650; }
+h2{ font-size: 1.05rem; font-weight: 600; }
+h3{ font-size: 0.98rem; font-weight: 600; }
+
+p{ margin: 0 0 var(--s-4); }
+small{ color: var(--muted); }
+
+hr{
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--s-7) 0;
+}
+
+/* ===========================
+   2) Layout helpers
+   =========================== */
+
+.container{
+  width: min(var(--content-max), calc(100% - 3rem));
+  margin: 0 auto;
+}
+
+.main{
+  padding: calc(var(--s-8) + 0.5rem) 0 var(--s-9);
+}
+
+/* Make room so sticky header/footer don’t cover content */
+body{
+  padding-top: var(--header-h);
+  padding-bottom: var(--footer-h);
+}
+
+/* Optional app shell compatibility */
+.app-shell,
+.content,
+.content-inner,
+.window{
+  overflow: visible;
+}
+
+/* Grid helper */
+.grid{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-7);
+}
+@media (max-width: 860px){
+  .grid{ grid-template-columns: 1fr; gap: var(--s-6); }
+}
+
+/* ===========================
+   3) Sticky header + footer
+   =========================== */
+
+.site-header{
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-h);
+  z-index: 2000;
+
+  background: rgba(255,255,255,0.92);
+  border-bottom: 1px solid var(--border);
+
+  /* light “enterprise glass”, minimal blur */
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
+  overflow: visible;
+}
+
+.site-footer{
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--footer-h);
+  z-index: 1800;
+
+  background: rgba(255,255,255,0.92);
+  border-top: 1px solid var(--border);
+
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.footer-row{
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-5);
+  flex-wrap: wrap;
+}
+
+/* “mac chrome” area: reduce its impact if present */
+.mac-chrome{
+  display: none; /* enterprise: hide chrome by default */
+}
+
+/* Toolbar row */
+.mac-toolbar{
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-5);
+  overflow: visible;
+}
+
+/* Left side: app name + primary actions/buttons */
+.toolbar-left{
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  overflow: visible;
+  min-width: 240px;
+}
+
+/* App name */
+.brand-link{
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-size: 1.02rem;
+  color: var(--accent);
+}
+.brand-link:hover{ text-decoration: none; color: var(--accent-hover); }
+
+/* Separator */
+.toolbar-sep{
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  display: inline-block;
+}
+
+/* Search: ~2 inches wide, aligned right side of header area */
+.toolbar-search{
+  margin-left: auto;
+  margin-right: var(--s-3);
+}
+
+/* input system */
+input, select, textarea{
+  font-family: var(--font);
+  font-size: 0.98rem;
+  color: var(--text);
+}
+
+.toolbar-search input[type="search"]{
+  width: clamp(240px, 2in, 360px);
+  height: 36px;
+  padding: 0.5rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  outline: none;
+  box-shadow: none;
+}
+.toolbar-search input[type="search"]:focus{
+  box-shadow: var(--focus);
+  border-color: rgba(37,99,235,0.45);
+}
+
+/* Right side actions (Menu + user chip + auth buttons) */
+.header-actions,
+.toolbar-right.header-actions{
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  overflow: visible;
+}
+
+/* ===========================
+   4) Surfaces: cards/panels
+   =========================== */
+
+.card, .panel{
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-1);
+  padding: calc(var(--s-6) + 0.25rem);
+}
+
+.panel{
+  background: var(--surface-2);
+  border-radius: var(--r-lg);
+}
+
+.card.narrow{
+  width: min(720px, 100%);
+  margin: 0 auto;
+}
+
+/* Section head */
+.section-head{
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-5);
+  margin-bottom: var(--s-5);
+}
+.section-head .meta{
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+/* ===========================
+   5) Buttons
+   =========================== */
+
+.btn{
+  appearance: none;
+  border: 1px solid rgba(37,99,235,0.28);
+  border-radius: var(--r-md);
+  padding: 0.55rem 0.95rem;
+
+  font-weight: 600;
+  letter-spacing: -0.01em;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+
+  cursor: pointer;
+
+  background: linear-gradient(180deg, rgba(37,99,235,0.92), var(--accent));
+  color: #fff;
+
+  box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset, 0 10px 18px rgba(2,6,23,0.10);
+  transition: transform 120ms ease, filter 120ms ease, background 120ms ease;
+}
+.btn:hover{
+  filter: brightness(1.02);
+  background: linear-gradient(180deg, rgba(29,78,216,0.95), var(--accent-hover));
+  text-decoration: none;
+}
+.btn:active{ transform: translateY(1px); }
+.btn:focus-visible{ outline: none; box-shadow: var(--focus), 0 10px 18px rgba(2,6,23,0.10); }
+
+.btn-ghost{
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+.btn-ghost:hover{
+  background: rgba(15,23,42,0.04);
+}
+
+.btn-sm{
+  padding: 0.44rem 0.75rem;
+  border-radius: var(--r-sm);
+  font-weight: 550;
+}
+
+.btn-ok{
+  background: linear-gradient(180deg, rgba(22,163,74,0.92), #16A34A);
+  border-color: rgba(22,163,74,0.30);
+}
+.btn-danger{
+  background: linear-gradient(180deg, rgba(220,38,38,0.92), #DC2626);
+  border-color: rgba(220,38,38,0.30);
+}
+
+/* ===========================
+   6) Chips / badges
+   =========================== */
+
+.user-chip{
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+.user-chip-label{ color: var(--muted); font-size: 0.85rem; }
+.user-chip-name{ font-weight: 600; }
+
+.badge{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 550;
+  border: 1px solid var(--border);
+  background: rgba(15,23,42,0.04);
+  color: var(--text);
+}
+
+/* ===========================
+   7) Forms
+   =========================== */
+
+.form{ display: grid; gap: var(--s-5); }
+
+label > span{
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 550;
+  color: var(--muted);
+  margin-bottom: var(--s-2);
+}
+
+input, select, textarea{
+  width: 100%;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 0.70rem 0.85rem;
+  outline: none;
+  transition: box-shadow 120ms ease, border-color 120ms ease;
+}
+
+input:hover, select:hover, textarea:hover{
+  border-color: rgba(15,23,42,0.22);
+}
+
+input:focus, select:focus, textarea:focus{
+  box-shadow: var(--focus);
+  border-color: rgba(37,99,235,0.45);
+}
+
+textarea{ min-height: 120px; resize: vertical; }
+
+.help{ font-size: 0.90rem; color: var(--muted); }
+
+.actions{
+  display: flex;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: var(--s-2);
+}
+
+.field-row{
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.field-row input[type="checkbox"],
+.field-row input[type="radio"]{
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+/* ===========================
+   8) Alerts (pastel fills)
+   =========================== */
+
+.alert{
+  border-radius: var(--r-lg);
+  padding: 0.95rem 1.05rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.alert-ok{
+  background: var(--ok-fill);
+  border-color: rgba(22,163,74,0.22);
+}
+.alert-warn{
+  background: var(--warn-fill);
+  border-color: rgba(217,119,6,0.24);
+}
+.alert-error{
+  background: var(--danger-fill);
+  border-color: rgba(220,38,38,0.24);
+}
+
+/* ===========================
+   9) Tables + lists
+   =========================== */
+
+.table-wrap{
+  overflow: auto;
+  border-radius: var(--r-lg);
+  margin-top: var(--s-4);
+}
+
+.table{
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+
+.table th, .table td{
+  padding: 0.85rem 0.95rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.95rem;
+  vertical-align: middle;
+}
+
+.table th{
+  color: var(--muted);
+  font-weight: 600;
+  background: var(--surface-2);
+}
+
+.table tr:last-child td{ border-bottom: 0; }
+.table tr:hover td{ background: rgba(37,99,235,0.05); }
+
+/* Key-value list */
+.kv{
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.kv li{
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-6);
+  padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(15,23,42,0.10);
+}
+.kv li:last-child{ border-bottom: 0; }
+.kv span:first-child{ color: var(--muted); }
+
+/* ===========================
+   10) Dropdown (opens RIGHT, never clips)
+   =========================== */
+
+/* Ensure no ancestor clips the dropdown (but allow the panel itself to scroll) */
+.site-header,
+.site-header .container,
+.site-header .mac-toolbar,
+.site-header .toolbar-left,
+.site-header .header-actions,
+.site-header details.dropdown{
+  overflow: visible;
+}
+
+/* Trigger */
+.dropdown{ position: relative; }
+.dropdown > summary{ list-style: none; }
+.dropdown > summary::-webkit-details-marker{ display: none; }
+
+.dropdown-trigger{
+  cursor: pointer;
+  user-select: none;
+
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+
+  padding: 0.60rem 0.95rem;           /* wider trigger */
+  min-width: 112px;                   /* ensures it feels “button-like” */
+  border-radius: var(--r-md);
+
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  font-weight: 600;
+
+  transition: background 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+.dropdown-trigger:hover{ background: rgba(15,23,42,0.04); }
+.dropdown[open] .dropdown-trigger{ box-shadow: var(--focus); border-color: rgba(37,99,235,0.35); }
+.dropdown-trigger:focus-visible{ outline: none; box-shadow: var(--focus); }
+
+.chevron{ opacity: 0.75; transform: translateY(-1px); }
+
+/* Panel: anchored to LEFT edge of trigger, extends to the RIGHT */
+details.dropdown.nav-dropdown{ position: relative !important; z-index: 2500; }
+
+details.dropdown.nav-dropdown .dropdown-panel{
+  position: absolute;
+  left: 0 !important;               /* anchor left edge */
+  right: auto !important;           /* do NOT anchor right edge */
+  top: calc(100% + 10px);
+
+  width: min(440px, calc(100vw - 24px));
+  min-width: 320px;
+  padding: 0.75rem;
+
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--popover);
+  box-shadow: var(--shadow-2);
+
+  z-index: 99999;
+
+  /* Scroll inside if tall (dynamic to viewport; accounts for sticky header/footer) */
+max-height: var(--dropdown-max-h, min(560px, calc(100vh - var(--header-h) - var(--footer-h) - 32px)));
+max-height: var(--dropdown-max-h, min(560px, calc(100dvh - var(--header-h) - var(--footer-h) - 32px)));
+
+overflow: auto !important;
+scrollbar-gutter: stable;
+-webkit-overflow-scrolling: touch;
+overscroll-behavior: contain;
+
+}
+
+/* Group titles + items */
+.dropdown-group + .dropdown-group{
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(15,23,42,0.10);
+}
+
+.dropdown-title{
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0.15rem 0 0.6rem;
+  padding: 0 0.35rem;
+}
+
+.dropdown-items{ display: grid; gap: 0.4rem; padding-bottom: 0.25rem; }
+
+.dropdown-item{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 0.75rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid transparent;
+
+  color: var(--text);
+  background: rgba(15,23,42,0.03);
+
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.dropdown-item:hover{
+  background: rgba(37,99,235,0.08);
+  border-color: rgba(37,99,235,0.18);
+  text-decoration: none;
+}
+.dropdown-item.is-active{
+  background: rgba(37,99,235,0.12);
+  border-color: rgba(37,99,235,0.22);
+}
+.dropdown-item:focus-visible{ outline: none; box-shadow: var(--focus); }
+.dropdown-item-label{ font-weight: 600; }
+
+/* Small screens: stretch panel within viewport */
+@media (max-width: 720px){
+  details.dropdown.nav-dropdown .dropdown-panel{
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+    min-width: 0 !important;
+  }
+}
+
+/* ===========================
+   11) Small UI kit extras
+   =========================== */
+
+.tabs{
+  display: flex;
+  gap: var(--s-2);
+  border-bottom: 1px solid var(--border);
+  margin-top: var(--s-5);
+}
+.tab{
+  padding: 0.55rem 0.8rem;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  color: var(--muted);
+  border: 1px solid transparent;
+  font-weight: 550;
+}
+.tab.active{
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border);
+  border-bottom-color: transparent;
+}
+
+/* If you have a sidebar, make it feel enterprise */
+.sidebar{
+  background: rgba(255,255,255,0.60);
+  border-right: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.sidebar-title{
+  color: var(--muted);
+  font-weight: 650;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.sidebar-item{
+  display: block;
+  padding: 0.6rem 0.75rem;
+  border-radius: 12px;
+  color: var(--text);
+}
+.sidebar-item:hover{ background: rgba(15,23,42,0.04); text-decoration: none; }
+.sidebar-item.active{ background: var(--accent-soft); color: var(--text); }
+
+/* Make sure footer content aligns inside container if you use .container there */
+.site-footer .container{
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+/* =========================================================
+   PATCH: Password strength meter (Enterprise Neutral + Blue)
+   Paste at the END of style.css
+   ---------------------------------------------------------
+   Supports TWO patterns:
+   1) Custom div meter:
+      <div class="pw-meter" data-level="fair" style="--pw-score: 50%">
+        <div class="pw-meter-bar"><div class="pw-meter-fill"></div></div>
+        <div class="pw-meter-row">
+          <small class="pw-meter-label">Strength: Fair</small>
+          <small class="pw-meter-score">50%</small>
+        </div>
+      </div>
+
+   2) Native <meter> element:
+      <meter class="pw-strength" min="0" max="4" value="2"></meter>
+      <small class="pw-meter-label">Strength: Fair</small>
+   ========================================================= */
+
+:root{
+  /* Strength colors tuned to your existing semantic tokens */
+  --pw-weak:  var(--danger);
+  --pw-fair:  var(--warn);
+  --pw-good:  color-mix(in srgb, var(--accent) 75%, var(--ok));
+  --pw-strong: var(--ok);
+
+  /* Track */
+  --pw-track: rgba(15, 23, 42, 0.08);
+  --pw-track-border: rgba(15, 23, 42, 0.14);
+}
+
+/* ---------- Custom meter (recommended for consistent UI) ---------- */
+
+.pw-meter{
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.pw-meter-bar{
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--pw-track);
+  border: 1px solid var(--pw-track-border);
+  overflow: hidden;
+}
+
+.pw-meter-fill{
+  height: 100%;
+  width: var(--pw-score, 0%);
+  border-radius: 999px;
+
+  /* Default (weak) */
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--pw-weak) 92%, white),
+    var(--pw-weak)
+  );
+
+  transition: width 180ms ease, filter 180ms ease;
+}
+
+/* Level coloring via data attribute */
+.pw-meter[data-level="weak"]   .pw-meter-fill{ background: linear-gradient(90deg, color-mix(in srgb, var(--pw-weak) 92%, white), var(--pw-weak)); }
+.pw-meter[data-level="fair"]   .pw-meter-fill{ background: linear-gradient(90deg, color-mix(in srgb, var(--pw-fair) 92%, white), var(--pw-fair)); }
+.pw-meter[data-level="good"]   .pw-meter-fill{ background: linear-gradient(90deg, color-mix(in srgb, var(--pw-good) 90%, white), var(--pw-good)); }
+.pw-meter[data-level="strong"] .pw-meter-fill{ background: linear-gradient(90deg, color-mix(in srgb, var(--pw-strong) 92%, white), var(--pw-strong)); }
+
+/* Optional: subtle “shine” for modern polish */
+.pw-meter[data-level="good"] .pw-meter-fill,
+.pw-meter[data-level="strong"] .pw-meter-fill{
+  filter: saturate(1.05);
+}
+
+@media (prefers-reduced-motion: reduce){
+  .pw-meter-fill{ transition: none; }
+}
+
+.pw-meter-row{
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.pw-meter-label{
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.pw-meter-score{
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Small inline “status pill” (optional) */
+.pw-pill{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(15,23,42,0.03);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.pw-pill.weak{ border-color: rgba(220,38,38,0.25); background: rgba(220,38,38,0.08); }
+.pw-pill.fair{ border-color: rgba(217,119,6,0.25); background: rgba(217,119,6,0.10); }
+.pw-pill.good{ border-color: rgba(37,99,235,0.25); background: rgba(37,99,235,0.10); }
+.pw-pill.strong{ border-color: rgba(22,163,74,0.25); background: rgba(22,163,74,0.10); }
+
+/* ---------- Native <meter> styling (best effort; varies by browser) ---------- */
+
+meter.pw-strength{
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--pw-track);
+}
+
+/* WebKit (Chrome/Safari) */
+meter.pw-strength::-webkit-meter-bar{
+  background: var(--pw-track);
+  border: 1px solid var(--pw-track-border);
+  border-radius: 999px;
+}
+meter.pw-strength::-webkit-meter-optimum-value{
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--pw-strong) 92%, white), var(--pw-strong));
+}
+meter.pw-strength::-webkit-meter-suboptimum-value{
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--pw-fair) 92%, white), var(--pw-fair));
+}
+meter.pw-strength::-webkit-meter-even-less-good-value{
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--pw-weak) 92%, white), var(--pw-weak));
+}
+
+/* Firefox */
+meter.pw-strength::-moz-meter-bar{
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 92%, white), var(--accent));
+}
+
+/* ---------- Optional: password input grouping ---------- */
+
+.password-field{
+  display: grid;
+  gap: 0.5rem;
+}
+
+.password-hint{
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
