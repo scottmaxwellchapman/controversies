@@ -4,6 +4,7 @@
   <item label="Users &amp; Security" href="/users_roles.jsp" />
   <item label="Cases" href="/cases.jsp" />
   <item label="Tenant Fields" href="/tenant_fields.jsp" />
+  <item label="Tenant Settings" href="/tenant_settings.jsp" />
   <item label="Form Assembly" href="/forms.jsp" />
   <item label="Assembled Forms" href="/assembled_forms.jsp" />
   <item label="Template Library" href="/template_library.jsp" />
