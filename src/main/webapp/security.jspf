@@ -2,4 +2,9 @@
 <%
   // Bind implicit JSP objects into the security ThreadLocal (idempotent).
   sec_bind(request, response, pageContext, session);
+
+  String __secUri = request == null ? "" : String.valueOf(request.getRequestURI());
+  if (__secUri.endsWith("/tenant_settings.jsp") || __secUri.endsWith("tenant_settings.jsp")) {
+    if (!require_permission("tenant_admin")) return;
+  }
 %>
