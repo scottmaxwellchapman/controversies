@@ -210,6 +210,8 @@
 </section>
 
 <section class="card" style="margin-top:12px;">
+  <h2 style="margin:0 0 6px 0;">Standard Tokens (Default)</h2>
+  <div class="meta" style="margin-bottom:10px;">These are always supported and remain the default behavior for all tenants.</div>
   <div class="table-wrap">
     <table class="table">
       <thead>
@@ -237,6 +239,22 @@
            } %>
       </tbody>
     </table>
+  </div>
+</section>
+
+<section class="card" style="margin-top:12px;">
+  <h2 style="margin:0 0 6px 0;">Advanced (opt-in)</h2>
+  <div class="meta" style="margin-bottom:10px;">
+    Advanced directives only run when tenant feature flag <code>advanced_assembly_enabled</code> is enabled.
+    Otherwise they are treated as plain text and standard token replacement continues unchanged.
+  </div>
+  <ul style="margin:0; padding-left:18px; line-height:1.5;">
+    <li><code>{{#if kv.child_support}}...{{/if}}</code> – include enclosed text only when the referenced token is truthy.</li>
+    <li><code>{{#each case.parties}}Party: {{this}}&#10;{{/each}}</code> – repeat enclosed text for each list item (newline, pipe, or comma separated values).</li>
+    <li><code>{{format.date case.filing_date "MM/dd/yyyy"}}</code> – render a date token with a specific output format.</li>
+  </ul>
+  <div class="meta" style="margin-top:10px;">
+    Optional strict mode (<code>advanced_assembly_strict_mode</code>) records unresolved directives/tokens in activity logs and still produces the document.
   </div>
 </section>
 

@@ -3,11 +3,19 @@ package net.familylawandprobate.controversies;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.swing.text.Document;
 import javax.swing.text.rtf.RTFEditorKit;
@@ -44,6 +52,7 @@ import org.openxmlformats.schemas.wordprocessingml.x2006.main.STFldCharType;
  */
 public final class document_assembler {
     private static final int MAX_TOKEN_BODY_LEN = 600;
+    private static final Pattern FORMAT_DATE_PATTERN = Pattern.compile("\\{\\{\\s*format\\.date\\s+([^\\s}]+)\\s+\"([^\"]+)\"\\s*}}", Pattern.CASE_INSENSITIVE);
 
     public static final class PreviewResult {
         public final String sourceText;
@@ -984,6 +993,42 @@ public final class document_assembler {
         }
     }
 
+    private static final class AssemblyOptions {
+        final boolean advancedEnabled;
+        final boolean strictMode;
+        final String tenantUuid;
+        final String userUuid;
+        final String caseUuid;
+        final String documentUuid;
+        final activity_log logger;
+
+        AssemblyOptions(boolean advancedEnabled,
+                        boolean strictMode,
+                        String tenantUuid,
+                        String userUuid,
+                        String caseUuid,
+                        String documentUuid,
+                        activity_log logger) {
+            this.advancedEnabled = advancedEnabled;
+            this.strictMode = strictMode;
+            this.tenantUuid = safe(tenantUuid);
+            this.userUuid = safe(userUuid);
+            this.caseUuid = safe(caseUuid);
+            this.documentUuid = safe(documentUuid);
+            this.logger = logger;
+        }
+    }
+
+    private static final class DirectiveScan {
+        final String text;
+        final LinkedHashSet<String> unresolved;
+
+        DirectiveScan(String text, LinkedHashSet<String> unresolved) {
+            this.text = safe(text);
+            this.unresolved = unresolved == null ? new LinkedHashSet<String>() : unresolved;
+        }
+    }
+
     private static final class TokenMatch {
         final int start;
         final int end; // exclusive
@@ -997,7 +1042,13 @@ public final class document_assembler {
     }
 
     private static TokenScan scanTokens(String source, Map<String, String> values) {
+        return scanTokens(source, values, optionsFromValues(values));
+    }
+
+    private static TokenScan scanTokens(String source, Map<String, String> values, AssemblyOptions options) {
         String src = safe(source);
+        DirectiveScan directives = applyAdvancedDirectives(src, values, options);
+        src = directives.text;
         LinkedHashSet<String> used = new LinkedHashSet<String>();
         LinkedHashSet<String> missing = new LinkedHashSet<String>();
         LinkedHashMap<String, Integer> counts = new LinkedHashMap<String, Integer>();
@@ -1029,7 +1080,202 @@ public final class document_assembler {
         }
 
         if (cursor < src.length()) assembled.append(src.substring(cursor));
+        if (options != null && options.strictMode) {
+            missing.addAll(directives.unresolved);
+            logStrictUnresolved(options, missing);
+        }
         return new TokenScan(assembled.toString(), used, missing, counts, forms);
+    }
+
+    private static DirectiveScan applyAdvancedDirectives(String source, Map<String, String> values, AssemblyOptions options) {
+        String text = safe(source);
+        LinkedHashSet<String> unresolved = new LinkedHashSet<String>();
+        if (options == null || !options.advancedEnabled) return new DirectiveScan(text, unresolved);
+        if (!containsDirectiveSyntax(text)) return new DirectiveScan(text, unresolved);
+
+        text = applyIfBlocks(text, values, unresolved);
+        text = applyEachBlocks(text, values, unresolved);
+        text = applyFormatDate(text, values, unresolved);
+        return new DirectiveScan(text, unresolved);
+    }
+
+    private static String applyIfBlocks(String text, Map<String, String> values, LinkedHashSet<String> unresolved) {
+        String out = safe(text);
+        int guard = 0;
+        while (guard < 1000) {
+            guard++;
+            int start = out.indexOf("{{#if ");
+            if (start < 0) break;
+            int closeOpen = out.indexOf("}}", start);
+            if (closeOpen < 0) break;
+            int end = out.indexOf("{{/if}}", closeOpen + 2);
+            if (end < 0) {
+                unresolved.add("unclosed_if_directive");
+                break;
+            }
+
+            String expr = safe(out.substring(start + 6, closeOpen)).trim();
+            String body = out.substring(closeOpen + 2, end);
+            String value = lookupValue(values, expr, normalizeLooseKey(expr));
+            if (value == null) unresolved.add("if:" + expr);
+            boolean truthy = isTruthy(value);
+
+            String replacement = truthy ? body : "";
+            out = out.substring(0, start) + replacement + out.substring(end + 7);
+        }
+        return out;
+    }
+
+    private static String applyEachBlocks(String text, Map<String, String> values, LinkedHashSet<String> unresolved) {
+        String out = safe(text);
+        int guard = 0;
+        while (guard < 1000) {
+            guard++;
+            int start = out.indexOf("{{#each ");
+            if (start < 0) break;
+            int closeOpen = out.indexOf("}}", start);
+            if (closeOpen < 0) break;
+            int end = out.indexOf("{{/each}}", closeOpen + 2);
+            if (end < 0) {
+                unresolved.add("unclosed_each_directive");
+                break;
+            }
+
+            String expr = safe(out.substring(start + 8, closeOpen)).trim();
+            String body = out.substring(closeOpen + 2, end);
+            String rawList = lookupValue(values, expr, normalizeLooseKey(expr));
+            if (rawList == null) unresolved.add("each:" + expr);
+            ArrayList<String> items = splitEachItems(rawList);
+
+            StringBuilder repeated = new StringBuilder();
+            for (String item : items) {
+                String chunk = body.replace("{{this}}", safe(item));
+                repeated.append(chunk);
+            }
+            out = out.substring(0, start) + repeated + out.substring(end + 9);
+        }
+        return out;
+    }
+
+    private static String applyFormatDate(String text, Map<String, String> values, LinkedHashSet<String> unresolved) {
+        String src = safe(text);
+        Matcher m = FORMAT_DATE_PATTERN.matcher(src);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String key = safe(m.group(1)).trim();
+            String pattern = safe(m.group(2)).trim();
+            String raw = lookupValue(values, key, normalizeLooseKey(key));
+            String replacement = "";
+            if (raw == null || raw.isBlank()) {
+                unresolved.add("format.date:" + key);
+                replacement = m.group(0);
+            } else {
+                replacement = formatDate(raw, pattern);
+                if (replacement.equals(raw) && !pattern.equalsIgnoreCase("yyyy-MM-dd")) {
+                    unresolved.add("format.date:" + key + ":" + pattern);
+                }
+            }
+            m.appendReplacement(sb, Matcher.quoteReplacement(safe(replacement)));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    private static String formatDate(String raw, String pattern) {
+        String value = safe(raw).trim();
+        String fmt = safe(pattern).trim();
+        if (value.isBlank() || fmt.isBlank()) return value;
+        DateTimeFormatter out;
+        try {
+            out = DateTimeFormatter.ofPattern(fmt);
+        } catch (Exception ex) {
+            return value;
+        }
+
+        try { return LocalDate.parse(value).format(out); } catch (DateTimeParseException ignored) {}
+        try { return LocalDateTime.parse(value).format(out); } catch (DateTimeParseException ignored) {}
+        try { return OffsetDateTime.parse(value).format(out); } catch (DateTimeParseException ignored) {}
+        try { return ZonedDateTime.parse(value).format(out); } catch (DateTimeParseException ignored) {}
+
+        try {
+            DateTimeFormatter in = DateTimeFormatter.ofPattern("M/d/yyyy");
+            return LocalDate.parse(value, in).format(out);
+        } catch (DateTimeParseException ignored) {}
+        try {
+            DateTimeFormatter in = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+            return LocalDate.parse(value, in).format(out);
+        } catch (DateTimeParseException ignored) {}
+        return value;
+    }
+
+    private static ArrayList<String> splitEachItems(String rawList) {
+        ArrayList<String> out = new ArrayList<String>();
+        String raw = safe(rawList);
+        if (raw.isBlank()) return out;
+        String[] parts = raw.split("\\r?\\n|\\|");
+        if (parts.length <= 1) parts = raw.split(",");
+        for (String p : parts) {
+            String v = safe(p).trim();
+            if (!v.isBlank()) out.add(v);
+        }
+        return out;
+    }
+
+    private static boolean containsDirectiveSyntax(String text) {
+        String src = safe(text);
+        return src.contains("{{#if") || src.contains("{{#each") || src.contains("{{format.date");
+    }
+
+    private static boolean isTruthy(String value) {
+        String v = safe(value).trim().toLowerCase(Locale.ROOT);
+        if (v.isBlank()) return false;
+        return !("false".equals(v) || "0".equals(v) || "no".equals(v) || "off".equals(v));
+    }
+
+    private static AssemblyOptions optionsFromValues(Map<String, String> values) {
+        boolean advanced = parseBoolean(lookupValue(values,
+                "tenant.advanced_assembly_enabled",
+                "advanced_assembly_enabled",
+                "kv.advanced_assembly_enabled"));
+        boolean strict = parseBoolean(lookupValue(values,
+                "tenant.advanced_assembly_strict_mode",
+                "advanced_assembly_strict_mode",
+                "advanced_assembly_strict",
+                "kv.advanced_assembly_strict_mode"));
+
+        return new AssemblyOptions(
+                advanced,
+                strict,
+                lookupValue(values, "tenant.uuid", "tenant_uuid"),
+                lookupValue(values, "user.uuid", "user_uuid"),
+                lookupValue(values, "case.uuid", "case_uuid"),
+                lookupValue(values, "document.uuid", "document_uuid"),
+                activity_log.defaultStore()
+        );
+    }
+
+    private static boolean parseBoolean(String value) {
+        String v = safe(value).trim().toLowerCase(Locale.ROOT);
+        return "1".equals(v) || "true".equals(v) || "yes".equals(v) || "on".equals(v) || "enabled".equals(v);
+    }
+
+    private static void logStrictUnresolved(AssemblyOptions options, LinkedHashSet<String> unresolved) {
+        if (options == null || !options.strictMode || unresolved == null || unresolved.isEmpty()) return;
+        if (safe(options.tenantUuid).isBlank()) return;
+        try {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("count", String.valueOf(unresolved.size()));
+            details.put("entries", String.join(", ", unresolved));
+            details.put("advanced_enabled", String.valueOf(options.advancedEnabled));
+            options.logger.logVerbose(
+                    "document_assembly_strict_unresolved",
+                    options.tenantUuid,
+                    options.userUuid,
+                    options.caseUuid,
+                    options.documentUuid,
+                    details
+            );
+        } catch (Exception ignored) {}
     }
 
     private static ArrayList<TokenMatch> findTokenMatches(String source) {
