@@ -2,10 +2,17 @@ package net.familylawandprobate.controversies;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class tenant_settings_test {
 
@@ -39,5 +46,72 @@ public class tenant_settings_test {
 
         assertEquals("public", out.get("clio_auth_mode"));
         assertEquals("unknown", out.get("clio_auth_health_status"));
+    }
+
+    @Test
+    void writes_secrets_in_encrypted_blob_separate_from_general_settings() throws Exception {
+        Path pepper = Paths.get("data", "sec", "random_pepper.bin").toAbsolutePath();
+        Files.createDirectories(pepper.getParent());
+        if (!Files.exists(pepper)) {
+            Files.writeString(pepper, "test-pepper-material", StandardCharsets.UTF_8);
+        }
+
+        tenant_settings store = tenant_settings.defaultStore();
+        String tenantUuid = "test-" + UUID.randomUUID();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_backend", "filesystem_remote");
+        in.put("storage_endpoint", "smb://server/share");
+        in.put("storage_access_key", "AKIA_TEST");
+        in.put("storage_secret", "storage-secret");
+        in.put("clio_client_secret", "clio-secret");
+        store.write(tenantUuid, in);
+
+        Path settingsPath = Paths.get("data", "tenants", tenantUuid, "settings", "tenant_settings.json").toAbsolutePath();
+        Path secretsPath = Paths.get("data", "tenants", tenantUuid, "settings", "tenant_secrets.json").toAbsolutePath();
+
+        String settingsJson = Files.readString(settingsPath, StandardCharsets.UTF_8);
+        String secretsJson = Files.readString(secretsPath, StandardCharsets.UTF_8);
+
+        assertFalse(settingsJson.contains("storage-secret"));
+        assertFalse(settingsJson.contains("clio-secret"));
+        assertTrue(secretsJson.contains("ciphertext"));
+
+        Map<String, String> roundtrip = store.read(tenantUuid);
+        assertEquals("storage-secret", roundtrip.get("storage_secret"));
+        assertEquals("clio-secret", roundtrip.get("clio_client_secret"));
+    }
+
+    @Test
+    void startup_self_check_fails_only_for_enabled_integrations_with_invalid_secrets() throws Exception {
+        Path pepper = Paths.get("data", "sec", "random_pepper.bin").toAbsolutePath();
+        Files.createDirectories(pepper.getParent());
+        if (!Files.exists(pepper)) {
+            Files.writeString(pepper, "test-pepper-material", StandardCharsets.UTF_8);
+        }
+
+        tenant_settings store = tenant_settings.defaultStore();
+
+        String disabledTenant = "test-disabled-" + UUID.randomUUID();
+        LinkedHashMap<String, String> disabledCfg = new LinkedHashMap<String, String>();
+        disabledCfg.put("clio_enabled", "false");
+        disabledCfg.put("clio_base_url", "");
+        disabledCfg.put("clio_client_id", "");
+        store.write(disabledTenant, disabledCfg);
+
+        String enabledTenant = "test-enabled-" + UUID.randomUUID();
+        LinkedHashMap<String, String> enabledCfg = new LinkedHashMap<String, String>();
+        enabledCfg.put("clio_enabled", "true");
+        enabledCfg.put("clio_auth_mode", "public");
+        enabledCfg.put("clio_base_url", "https://app.clio.com");
+        enabledCfg.put("clio_client_id", "client-id");
+        // missing clio_client_secret and callback on purpose
+        store.write(enabledTenant, enabledCfg);
+
+        tenant_settings.StartupSelfCheckResult result = store.startupSelfCheckAllTenants();
+        assertFalse(result.ok);
+        String joined = String.join("\n", result.failures);
+        assertTrue(joined.contains(enabledTenant));
+        assertFalse(joined.contains(disabledTenant));
     }
 }

@@ -52,8 +52,9 @@ public final class activity_log {
                 if (e == null) continue;
                 String key = safe(e.getKey()).trim();
                 if (key.isBlank()) continue;
+                String redacted = secret_redactor.redactIfSensitive(key, e.getValue());
                 detailXml.append("    <detail key=\"").append(xmlAttr(key)).append("\">")
-                        .append(xmlText(safe(e.getValue()))).append("</detail>\n");
+                        .append(xmlText(redacted)).append("</detail>\n");
             }
         }
 
