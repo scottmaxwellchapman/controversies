@@ -88,6 +88,20 @@
   String selectedMatterUuid = safe(request.getParameter("matter_uuid")).trim();
   String selectedTemplateUuid = safe(request.getParameter("template_uuid")).trim();
 
+
+
+  if ("POST".equalsIgnoreCase(request.getMethod()) && "retry_sync".equalsIgnoreCase(safe(request.getParameter("action")).trim())) {
+    selectedMatterUuid = safe(request.getParameter("matter_uuid")).trim();
+    selectedTemplateUuid = safe(request.getParameter("template_uuid")).trim();
+    String assemblyUuid = safe(request.getParameter("assembly_uuid")).trim();
+    boolean retried = assembledStore.retrySyncNow(tenantUuid, selectedMatterUuid, assemblyUuid);
+    if (retried) {
+      message = "Sync retry queued.";
+    } else {
+      error = "Unable to queue sync retry.";
+    }
+  }
+
   if ("POST".equalsIgnoreCase(request.getMethod()) && "download_completed".equalsIgnoreCase(safe(request.getParameter("action")).trim())) {
     selectedMatterUuid = safe(request.getParameter("matter_uuid")).trim();
     selectedTemplateUuid = safe(request.getParameter("template_uuid")).trim();
@@ -293,7 +307,8 @@
               <th>Template</th>
               <th style="width:120px;">Overrides</th>
               <th style="width:140px;">Output Size</th>
-              <th style="width:230px;">Actions</th>
+              <th style="width:120px;">Sync</th>
+              <th style="width:280px;">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -312,8 +327,15 @@
                 </td>
                 <td><%= r.overrideCount %></td>
                 <td><%= r.outputSizeBytes %> bytes</td>
+                <%
+                  String syncState = safe(assembledStore.syncState(tenantUuid, selectedMatterUuid, safe(r.uuid))).toLowerCase(Locale.ROOT);
+                  String syncLabel = "Pending";
+                  if ("synced".equals(syncState)) syncLabel = "Synced";
+                  if ("failed".equals(syncState)) syncLabel = "Failed";
+                %>
+                <td><strong><%= esc(syncLabel) %></strong></td>
                 <td>
-                  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                  <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                     <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(openTemplateUuid) %>&assembly_uuid=<%= enc(safe(r.uuid)) %>&focus=1&render_preview=1">Open</a>
                     <form method="post" action="<%= ctx %>/assembled_forms.jsp" style="margin:0;">
                       <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
@@ -323,6 +345,16 @@
                       <input type="hidden" name="assembly_uuid" value="<%= esc(safe(r.uuid)) %>" />
                       <button class="btn" type="submit">Download</button>
                     </form>
+                    <% if ("failed".equals(syncState) || "pending".equals(syncState)) { %>
+                    <form method="post" action="<%= ctx %>/assembled_forms.jsp" style="margin:0;">
+                      <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                      <input type="hidden" name="action" value="retry_sync" />
+                      <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+                      <input type="hidden" name="template_uuid" value="<%= esc(selectedTemplateUuid) %>" />
+                      <input type="hidden" name="assembly_uuid" value="<%= esc(safe(r.uuid)) %>" />
+                      <button class="btn btn-ghost" type="submit">Retry Sync</button>
+                    </form>
+                    <% } %>
                   </div>
                 </td>
               </tr>

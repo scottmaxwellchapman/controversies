@@ -20,6 +20,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import javax.xml.XMLConstants;
@@ -42,7 +45,13 @@ import org.xml.sax.InputSource;
 public final class assembled_forms {
 
     private static final ConcurrentHashMap<String, ReentrantReadWriteLock> LOCKS = new ConcurrentHashMap<String, ReentrantReadWriteLock>();
+    private static final ConcurrentHashMap<String, ReentrantReadWriteLock> QUEUE_LOCKS = new ConcurrentHashMap<String, ReentrantReadWriteLock>();
+    private static final AtomicBoolean WORKER_STARTED = new AtomicBoolean(false);
     private final StorageBackendResolver backendResolver;
+
+    private static final long SYNC_BASE_BACKOFF_MS = 2_000L;
+    private static final long SYNC_MAX_BACKOFF_MS = 5 * 60_000L;
+    private static final int SYNC_MAX_ATTEMPTS = 8;
 
     public static assembled_forms defaultStore() {
         return new assembled_forms(new StorageBackendResolver());
@@ -54,6 +63,7 @@ public final class assembled_forms {
 
     public assembled_forms(StorageBackendResolver backendResolver) {
         this.backendResolver = backendResolver == null ? new StorageBackendResolver() : backendResolver;
+        startWorkerIfNeeded();
     }
 
     public static final class AssemblyRec {
@@ -112,6 +122,36 @@ public final class assembled_forms {
             this.storageObjectKey = safe(storageObjectKey);
             this.storageChecksumSha256 = safe(storageChecksumSha256).toLowerCase(Locale.ROOT);
             this.overrides = sanitizeOverrides(overrides);
+        }
+    }
+
+
+    public static final class SyncRec {
+        public final String tenantUuid;
+        public final String matterUuid;
+        public final String assemblyUuid;
+        public final String targetBackendType;
+        public final String targetObjectKey;
+        public final String state; // pending | retry | synced | dead_letter
+        public final int attempts;
+        public final String lastAttemptAt;
+        public final String nextAttemptAt;
+        public final String lastError;
+        public final String updatedAt;
+
+        public SyncRec(String tenantUuid, String matterUuid, String assemblyUuid, String targetBackendType, String targetObjectKey,
+                       String state, int attempts, String lastAttemptAt, String nextAttemptAt, String lastError, String updatedAt) {
+            this.tenantUuid = safeFileToken(tenantUuid);
+            this.matterUuid = safeFileToken(matterUuid);
+            this.assemblyUuid = safe(assemblyUuid).trim();
+            this.targetBackendType = normalizeBackendType(targetBackendType);
+            this.targetObjectKey = safe(targetObjectKey).trim();
+            this.state = normalizeSyncState(state);
+            this.attempts = Math.max(0, attempts);
+            this.lastAttemptAt = safe(lastAttemptAt).trim();
+            this.nextAttemptAt = safe(nextAttemptAt).trim();
+            this.lastError = safe(lastError);
+            this.updatedAt = safe(updatedAt).trim();
         }
     }
 
@@ -347,11 +387,10 @@ public final class assembled_forms {
             if (assemblyUuid.isBlank()) assemblyUuid = UUID.randomUUID().toString();
 
             String configuredBackendType = normalizeBackendType(backendResolver.resolveBackendType(tu));
-            String backendType = configuredBackendType.isBlank() ? normalizeBackendType(current == null ? "" : current.storageBackendType) : configuredBackendType;
             String objectKey = storageKey(mu, assemblyUuid, normalizedOutExt);
-            DocumentStorageBackend backend = backendResolver.resolve(tu, mu, backendType);
-            objectKey = backend.put(objectKey, outputBytes);
-            Map<String, String> metadata = backend.metadata(objectKey);
+            DocumentStorageBackend localBackend = backendResolver.resolve(tu, mu, "local");
+            objectKey = localBackend.put(objectKey, outputBytes);
+            Map<String, String> metadata = localBackend.metadata(objectKey);
             String checksum = safe(metadata.get("checksum_sha256"));
 
             AssemblyRec completed = new AssemblyRec(
@@ -369,7 +408,7 @@ public final class assembled_forms {
                     sanitizeOutputName(outputFileName, normalizedOutExt),
                     normalizedOutExt,
                     outputBytes.length,
-                    backendType,
+                    "local",
                     objectKey,
                     checksum,
                     cleanedOverrides
@@ -383,6 +422,11 @@ public final class assembled_forms {
 
             sortByUpdatedDesc(all);
             writeAllLocked(tu, mu, all);
+            if (!"local".equals(configuredBackendType)) {
+                enqueueSyncJob(tu, mu, assemblyUuid, configuredBackendType, objectKey);
+            } else {
+                markSyncState(tu, mu, assemblyUuid, "synced", 0, "", "", "");
+            }
             return completed;
         } finally {
             lock.writeLock().unlock();
@@ -467,6 +511,51 @@ public final class assembled_forms {
                 writeAllLocked(tu, mu, all);
                 return true;
             }
+            return false;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+
+    public String syncState(String tenantUuid, String matterUuid, String assemblyUuid) {
+        String tu = safeFileToken(tenantUuid);
+        String mu = safeFileToken(matterUuid);
+        String au = safe(assemblyUuid).trim();
+        if (tu.isBlank() || mu.isBlank() || au.isBlank()) return "synced";
+        try {
+            String backendType = normalizeBackendType(backendResolver.resolveBackendType(tu));
+            if ("local".equals(backendType)) return "synced";
+            SyncRec rec = getSyncRecord(tu, mu, au);
+            if (rec == null) return "synced";
+            if ("dead_letter".equals(rec.state)) return "failed";
+            if ("synced".equals(rec.state)) return "synced";
+            return "pending";
+        } catch (Exception ignored) {
+            return "pending";
+        }
+    }
+
+    public boolean retrySyncNow(String tenantUuid, String matterUuid, String assemblyUuid) {
+        String tu = safeFileToken(tenantUuid);
+        String mu = safeFileToken(matterUuid);
+        String au = safe(assemblyUuid).trim();
+        if (tu.isBlank() || mu.isBlank() || au.isBlank()) return false;
+        ReentrantReadWriteLock lock = queueLockFor(tu);
+        lock.writeLock().lock();
+        try {
+            List<SyncRec> all = readSyncQueueLocked(tu);
+            for (int i = 0; i < all.size(); i++) {
+                SyncRec rec = all.get(i);
+                if (rec == null) continue;
+                if (!mu.equals(rec.matterUuid) || !au.equals(rec.assemblyUuid)) continue;
+                SyncRec updated = new SyncRec(tu, mu, au, rec.targetBackendType, rec.targetObjectKey, "pending", 0, "", Instant.now().toString(), "", Instant.now().toString());
+                all.set(i, updated);
+                writeSyncQueueLocked(tu, all);
+                return true;
+            }
+            return false;
+        } catch (Exception ignored) {
             return false;
         } finally {
             lock.writeLock().unlock();
@@ -734,6 +823,241 @@ public final class assembled_forms {
         String v = safe(s).trim().toLowerCase(Locale.ROOT);
         if ("completed".equals(v)) return "completed";
         return "in_progress";
+    }
+
+
+    private static String normalizeSyncState(String s) {
+        String v = safe(s).trim().toLowerCase(Locale.ROOT);
+        if ("synced".equals(v)) return "synced";
+        if ("dead_letter".equals(v)) return "dead_letter";
+        if ("retry".equals(v)) return "retry";
+        return "pending";
+    }
+
+    private void enqueueSyncJob(String tenantUuid, String matterUuid, String assemblyUuid, String targetBackendType, String targetObjectKey) {
+        String tu = safeFileToken(tenantUuid);
+        if (tu.isBlank()) return;
+        ReentrantReadWriteLock lock = queueLockFor(tu);
+        lock.writeLock().lock();
+        try {
+            List<SyncRec> all = readSyncQueueLocked(tu);
+            String now = Instant.now().toString();
+            boolean replaced = false;
+            for (int i = 0; i < all.size(); i++) {
+                SyncRec rec = all.get(i);
+                if (rec == null) continue;
+                if (!safeFileToken(matterUuid).equals(rec.matterUuid) || !safe(assemblyUuid).trim().equals(rec.assemblyUuid)) continue;
+                all.set(i, new SyncRec(tu, matterUuid, assemblyUuid, targetBackendType, targetObjectKey, "pending", 0, "", now, "", now));
+                replaced = true;
+                break;
+            }
+            if (!replaced) all.add(new SyncRec(tu, matterUuid, assemblyUuid, targetBackendType, targetObjectKey, "pending", 0, "", now, "", now));
+            writeSyncQueueLocked(tu, all);
+        } catch (Exception ex) {
+            logSyncFailure(tu, matterUuid, assemblyUuid, 0, ex.getMessage());
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    private void markSyncState(String tenantUuid, String matterUuid, String assemblyUuid, String state, int attempts, String lastAttemptAt, String nextAttemptAt, String lastError) {
+        String tu = safeFileToken(tenantUuid);
+        ReentrantReadWriteLock lock = queueLockFor(tu);
+        lock.writeLock().lock();
+        try {
+            List<SyncRec> all = readSyncQueueLocked(tu);
+            String mu = safeFileToken(matterUuid);
+            String au = safe(assemblyUuid).trim();
+            String now = Instant.now().toString();
+            boolean found = false;
+            for (int i = 0; i < all.size(); i++) {
+                SyncRec rec = all.get(i);
+                if (rec == null) continue;
+                if (!mu.equals(rec.matterUuid) || !au.equals(rec.assemblyUuid)) continue;
+                all.set(i, new SyncRec(tu, mu, au, rec.targetBackendType, rec.targetObjectKey, state, attempts, lastAttemptAt, nextAttemptAt, lastError, now));
+                found = true;
+                break;
+            }
+            if (!found) all.add(new SyncRec(tu, mu, au, "local", "", state, attempts, lastAttemptAt, nextAttemptAt, lastError, now));
+            writeSyncQueueLocked(tu, all);
+        } catch (Exception ignored) {
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    private SyncRec getSyncRecord(String tenantUuid, String matterUuid, String assemblyUuid) {
+        String tu = safeFileToken(tenantUuid);
+        ReentrantReadWriteLock lock = queueLockFor(tu);
+        lock.readLock().lock();
+        try {
+            List<SyncRec> all = readSyncQueueLocked(tu);
+            String mu = safeFileToken(matterUuid);
+            String au = safe(assemblyUuid).trim();
+            for (int i = 0; i < all.size(); i++) {
+                SyncRec rec = all.get(i);
+                if (rec == null) continue;
+                if (mu.equals(rec.matterUuid) && au.equals(rec.assemblyUuid)) return rec;
+            }
+        } catch (Exception ignored) {
+        } finally {
+            lock.readLock().unlock();
+        }
+        return null;
+    }
+
+    private static ReentrantReadWriteLock queueLockFor(String tenantUuid) {
+        String key = safeFileToken(tenantUuid);
+        return QUEUE_LOCKS.computeIfAbsent(key, k -> new ReentrantReadWriteLock());
+    }
+
+    private static Path syncQueuePath(String tenantUuid) {
+        return Paths.get("data", "tenants", safeFileToken(tenantUuid), "sync", "storage_queue.xml").toAbsolutePath();
+    }
+
+    private static List<SyncRec> readSyncQueueLocked(String tenantUuid) throws Exception {
+        ArrayList<SyncRec> out = new ArrayList<SyncRec>();
+        Path p = syncQueuePath(tenantUuid);
+        if (!Files.exists(p)) return out;
+        Document d = parseXml(p);
+        Element root = d == null ? null : d.getDocumentElement();
+        if (root == null) return out;
+        NodeList nl = root.getElementsByTagName("job");
+        for (int i = 0; i < nl.getLength(); i++) {
+            Node n = nl.item(i);
+            if (!(n instanceof Element)) continue;
+            Element e = (Element) n;
+            out.add(new SyncRec(
+                    tenantUuid,
+                    text(e, "matter_uuid"),
+                    text(e, "assembly_uuid"),
+                    text(e, "target_backend"),
+                    text(e, "target_object_key"),
+                    text(e, "state"),
+                    parseInt(text(e, "attempts"), 0),
+                    text(e, "last_attempt_at"),
+                    text(e, "next_attempt_at"),
+                    text(e, "last_error"),
+                    text(e, "updated_at")
+            ));
+        }
+        return out;
+    }
+
+    private static void writeSyncQueueLocked(String tenantUuid, List<SyncRec> rows) throws Exception {
+        Path p = syncQueuePath(tenantUuid);
+        Files.createDirectories(p.getParent());
+        String now = Instant.now().toString();
+        StringBuilder sb = new StringBuilder(2048);
+        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        sb.append("<storage_sync_queue updated=\"").append(xmlAttr(now)).append("\">\n");
+        for (int i = 0; i < (rows == null ? 0 : rows.size()); i++) {
+            SyncRec r = rows.get(i);
+            if (r == null) continue;
+            sb.append("  <job>\n");
+            sb.append("    <matter_uuid>").append(xmlText(r.matterUuid)).append("</matter_uuid>\n");
+            sb.append("    <assembly_uuid>").append(xmlText(r.assemblyUuid)).append("</assembly_uuid>\n");
+            sb.append("    <target_backend>").append(xmlText(r.targetBackendType)).append("</target_backend>\n");
+            sb.append("    <target_object_key>").append(xmlText(r.targetObjectKey)).append("</target_object_key>\n");
+            sb.append("    <state>").append(xmlText(normalizeSyncState(r.state))).append("</state>\n");
+            sb.append("    <attempts>").append(r.attempts).append("</attempts>\n");
+            sb.append("    <last_attempt_at>").append(xmlText(r.lastAttemptAt)).append("</last_attempt_at>\n");
+            sb.append("    <next_attempt_at>").append(xmlText(r.nextAttemptAt)).append("</next_attempt_at>\n");
+            sb.append("    <last_error>").append(xmlText(r.lastError)).append("</last_error>\n");
+            sb.append("    <updated_at>").append(xmlText(r.updatedAt)).append("</updated_at>\n");
+            sb.append("  </job>\n");
+        }
+        sb.append("</storage_sync_queue>\n");
+        writeAtomic(p, sb.toString());
+    }
+
+    private void startWorkerIfNeeded() {
+        if (!WORKER_STARTED.compareAndSet(false, true)) return;
+        Thread t = new Thread(() -> {
+            while (true) {
+                try {
+                    processSyncQueues();
+                } catch (Exception ignored) {
+                }
+                try {
+                    TimeUnit.SECONDS.sleep(5);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }, "assembled-storage-sync-worker");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void processSyncQueues() {
+        Path tenantsRoot = Paths.get("data", "tenants").toAbsolutePath();
+        if (!Files.isDirectory(tenantsRoot)) return;
+        try (var stream = Files.list(tenantsRoot)) {
+            stream.filter(Files::isDirectory).forEach(tenantPath -> {
+                String tenantUuid = safe(tenantPath.getFileName() == null ? "" : tenantPath.getFileName().toString()).trim();
+                if (tenantUuid.isBlank()) return;
+                processTenantSyncQueue(tenantUuid);
+            });
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void processTenantSyncQueue(String tenantUuid) {
+        ReentrantReadWriteLock lock = queueLockFor(tenantUuid);
+        lock.writeLock().lock();
+        try {
+            List<SyncRec> all = readSyncQueueLocked(tenantUuid);
+            boolean changed = false;
+            String now = Instant.now().toString();
+            for (int i = 0; i < all.size(); i++) {
+                SyncRec rec = all.get(i);
+                if (rec == null) continue;
+                if ("synced".equals(rec.state) || "dead_letter".equals(rec.state)) continue;
+                if (!safe(rec.nextAttemptAt).isBlank() && safe(rec.nextAttemptAt).compareTo(now) > 0) continue;
+
+                int attempts = rec.attempts + 1;
+                try {
+                    byte[] bytes = readOutputBytes(tenantUuid, rec.matterUuid, rec.assemblyUuid);
+                    if (bytes.length == 0) throw new IllegalStateException("local output missing");
+                    DocumentStorageBackend backend = backendResolver.resolve(tenantUuid, rec.matterUuid, rec.targetBackendType);
+                    String remoteKey = backend.put(rec.targetObjectKey, bytes);
+                    Map<String, String> md = backend.metadata(remoteKey);
+                    rebindStorageMetadata(tenantUuid, rec.matterUuid, rec.assemblyUuid, rec.targetBackendType, remoteKey, md.getOrDefault("checksum_sha256", ""));
+                    all.set(i, new SyncRec(tenantUuid, rec.matterUuid, rec.assemblyUuid, rec.targetBackendType, remoteKey, "synced", attempts, now, now, "", now));
+                    changed = true;
+                } catch (Exception ex) {
+                    String err = safe(ex.getMessage());
+                    if (attempts >= SYNC_MAX_ATTEMPTS) {
+                        all.set(i, new SyncRec(tenantUuid, rec.matterUuid, rec.assemblyUuid, rec.targetBackendType, rec.targetObjectKey, "dead_letter", attempts, now, "", err, now));
+                    } else {
+                        long delay = Math.min(SYNC_MAX_BACKOFF_MS, (long) (SYNC_BASE_BACKOFF_MS * Math.pow(2.0d, Math.max(0, attempts - 1))));
+                        long jitter = ThreadLocalRandom.current().nextLong(250L, 1200L);
+                        String nextAt = Instant.now().plusMillis(delay + jitter).toString();
+                        all.set(i, new SyncRec(tenantUuid, rec.matterUuid, rec.assemblyUuid, rec.targetBackendType, rec.targetObjectKey, "retry", attempts, now, nextAt, err, now));
+                    }
+                    changed = true;
+                    logSyncFailure(tenantUuid, rec.matterUuid, rec.assemblyUuid, attempts, err);
+                }
+            }
+            if (changed) writeSyncQueueLocked(tenantUuid, all);
+        } catch (Exception ignored) {
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    private void logSyncFailure(String tenantUuid, String matterUuid, String assemblyUuid, int attempts, String error) {
+        try {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("matter_uuid", safe(matterUuid));
+            details.put("assembly_uuid", safe(assemblyUuid));
+            details.put("attempt", String.valueOf(attempts));
+            details.put("error", safe(error));
+            activity_log.defaultStore().logVerbose("assembled_forms.sync.failure", tenantUuid, "system", matterUuid, assemblyUuid, details);
+        } catch (Exception ignored) {
+        }
     }
 
     private static String normalizeExtension(String extOrFileName) {
