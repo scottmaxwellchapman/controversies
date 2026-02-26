@@ -5,6 +5,7 @@
 <%@ page import="java.util.Map" %>
 
 <%@ page import="net.familylawandprobate.controversies.activity_log" %>
+<%@ page import="net.familylawandprobate.controversies.secret_redactor" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 
@@ -29,6 +30,11 @@
   private static boolean tsChecked(String s) {
     String v = tsSafe(s).trim().toLowerCase(Locale.ROOT);
     return "1".equals(v) || "true".equals(v) || "on".equals(v) || "yes".equals(v);
+  }
+
+  private static String tsRotationLabel(String iso) {
+    String s = tsSafe(iso).trim();
+    return s.isBlank() ? "Never" : s;
   }
 
   private static String csrfForRender(jakarta.servlet.http.HttpServletRequest req) {
@@ -94,14 +100,12 @@
     boolean featureAdvancedAssembly = tsChecked(request.getParameter("feature_advanced_assembly"));
     boolean featureAsyncSync = tsChecked(request.getParameter("feature_async_sync"));
 
-    boolean rotateStorage = tsChecked(request.getParameter("rotate_storage_secret"));
-    boolean rotateClio = tsChecked(request.getParameter("rotate_clio_secret"));
     boolean saveStorageSecret = tsChecked(request.getParameter("save_storage_secret"));
     boolean saveClioSecret = tsChecked(request.getParameter("save_clio_secret"));
 
     settings.put("storage_backend", storageBackend);
     settings.put("storage_endpoint", storageEndpoint);
-    settings.put("storage_access_key", storageAccessKey);
+    if (!storageAccessKey.isBlank()) settings.put("storage_access_key", storageAccessKey);
     settings.put("clio_base_url", clioBaseUrl);
     settings.put("clio_client_id", clioClientId);
     settings.put("clio_auth_mode", clioAuthMode);
@@ -113,10 +117,14 @@
     if (saveStorageSecret && !storageSecret.isBlank()) settings.put("storage_secret", storageSecret);
     if (saveClioSecret && !clioClientSecret.isBlank()) settings.put("clio_client_secret", clioClientSecret);
 
+    String effectiveStorageAccessKey = tsSafe(settings.get("storage_access_key")).trim();
+    String effectiveStorageSecret = !storageSecret.isBlank() ? storageSecret : tsSafe(settings.get("storage_secret")).trim();
+    String effectiveClioSecret = !clioClientSecret.isBlank() ? clioClientSecret : tsSafe(settings.get("clio_client_secret")).trim();
+
     if ("test_storage_connection".equalsIgnoreCase(action)) {
       boolean ok;
       if ("filesystem_remote".equalsIgnoreCase(storageBackend)) {
-        ok = !storageEndpoint.isBlank() && !storageAccessKey.isBlank() && !storageSecret.isBlank();
+        ok = !storageEndpoint.isBlank() && !effectiveStorageAccessKey.isBlank() && !effectiveStorageSecret.isBlank();
       } else {
         ok = true;
       }
@@ -126,7 +134,7 @@
 
     } else if ("test_clio_connection".equalsIgnoreCase(action)) {
       boolean hasShared = !clioBaseUrl.isBlank() && clioBaseUrl.startsWith("http") && !clioClientId.isBlank();
-      boolean hasSecret = !clioClientSecret.isBlank() || !tsSafe(settings.get("clio_client_secret")).isBlank();
+      boolean hasSecret = !effectiveClioSecret.isBlank();
       boolean modeReady;
       if ("public".equals(clioAuthMode)) {
         modeReady = !clioOauthCallbackUrl.isBlank() && clioOauthCallbackUrl.startsWith("http");
@@ -148,7 +156,28 @@
         message = "Clio connection test failed. Private mode requires Base URL, Client ID, Client Secret, and relay/admin path details.";
       }
 
-    } else if ("save_settings".equalsIgnoreCase(action)) {
+    } else if ("rotate_storage_secret".equalsIgnoreCase(action)) {
+      if (storageSecret.isBlank()) {
+        error = "Enter a new storage secret before rotating.";
+      } else {
+        settings.put("storage_secret", storageSecret);
+        settings.put("secret_rotation_storage_at", store.nowIso());
+        message = "Storage secret rotated.";
+      }
+    } else if ("rotate_clio_secret".equalsIgnoreCase(action)) {
+      if (clioClientSecret.isBlank()) {
+        error = "Enter a new Clio secret before rotating.";
+      } else {
+        settings.put("clio_client_secret", clioClientSecret);
+        settings.put("secret_rotation_clio_at", store.nowIso());
+        message = "Clio secret rotated.";
+      }
+    }
+
+    if (("save_settings".equalsIgnoreCase(action)
+            || "rotate_storage_secret".equalsIgnoreCase(action)
+            || "rotate_clio_secret".equalsIgnoreCase(action))
+            && error == null) {
       boolean valid = true;
       if ("public".equals(clioAuthMode) && (clioOauthCallbackUrl.isBlank() || !clioOauthCallbackUrl.startsWith("http"))) {
         valid = false;
@@ -161,9 +190,6 @@
 
       if (valid) {
         try {
-          if (rotateStorage) settings.put("secret_rotation_storage_at", store.nowIso());
-          if (rotateClio) settings.put("secret_rotation_clio_at", store.nowIso());
-
           if ("public".equals(clioAuthMode)) {
             settings.put("clio_auth_health_status", settings.getOrDefault("clio_auth_health_status", "unknown"));
           } else {
@@ -182,21 +208,30 @@
           details.put("clio_connection_status", tsSafe(settings.get("clio_connection_status")));
           details.put("clio_auth_mode", tsSafe(settings.get("clio_auth_mode")));
           details.put("clio_auth_health_status", tsSafe(settings.get("clio_auth_health_status")));
+          details.put("storage_secret", tsSafe(settings.get("storage_secret")));
+          details.put("clio_client_secret", tsSafe(settings.get("clio_client_secret")));
           logs.logVerbose("tenant_settings_changed", tenantUuid, userUuid, "", "", details);
 
-          response.sendRedirect(ctx + "/tenant_settings.jsp?saved=1");
+          String status = "saved";
+          if ("rotate_storage_secret".equalsIgnoreCase(action)) status = "rotated_storage";
+          if ("rotate_clio_secret".equalsIgnoreCase(action)) status = "rotated_clio";
+          response.sendRedirect(ctx + "/tenant_settings.jsp?status=" + status);
           return;
         } catch (Exception ex) {
-          error = "Unable to save tenant settings: " + tsSafe(ex.getMessage());
+          error = "Unable to save tenant settings.";
         }
       }
     }
   }
 
-  if ("1".equals(request.getParameter("saved"))) message = "Tenant settings saved.";
+  String status = tsSafe(request.getParameter("status"));
+  if ("saved".equals(status)) message = "Tenant settings saved.";
+  if ("rotated_storage".equals(status)) message = "Storage secret rotated and saved.";
+  if ("rotated_clio".equals(status)) message = "Clio secret rotated and saved.";
 
   String maskedStorageSecret = tsSafe(settings.get("storage_secret")).isBlank() ? "" : "********";
   String maskedClioSecret = tsSafe(settings.get("clio_client_secret")).isBlank() ? "" : "********";
+  String maskedStorageAccessKey = tsSafe(settings.get("storage_access_key")).isBlank() ? "" : "********";
   String clioMode = tsSafe(settings.get("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
   if (!"private".equals(clioMode)) clioMode = "public";
 %>
@@ -227,7 +262,7 @@
 
   <section class="card" style="margin-top:12px;">
     <h2 style="margin-top:0;">Storage Backend</h2>
-    <div class="meta" style="margin-bottom:10px;">Select storage backend and validate credentials without saving until you click Save Settings.</div>
+    <div class="meta" style="margin-bottom:10px;">Secrets are encrypted and stored separately from general settings.</div>
 
     <div class="grid grid-2">
       <label>Backend
@@ -240,15 +275,16 @@
         <input type="text" name="storage_endpoint" value="<%= tsEsc(tsSafe(settings.get("storage_endpoint"))) %>" placeholder="smb://fileserver/share or mount path" />
       </label>
       <label>Access Key
-        <input type="text" name="storage_access_key" value="<%= tsEsc(tsSafe(settings.get("storage_access_key"))) %>" />
+        <input type="password" name="storage_access_key" value="" placeholder="<%= tsEsc(maskedStorageAccessKey) %>" />
       </label>
       <label>Secret
         <input type="password" name="storage_secret" value="" placeholder="<%= tsEsc(maskedStorageSecret) %>" />
       </label>
     </div>
 
-    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center;">
+    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
       <button type="submit" class="btn btn-ghost" name="action" value="test_storage_connection">Test Storage Connection</button>
+      <button type="submit" class="btn btn-ghost" name="action" value="rotate_storage_secret">Rotate Storage Secret</button>
       <label><input type="checkbox" name="save_storage_secret" value="1" /> Persist entered storage secret on Save</label>
     </div>
   </section>
@@ -287,8 +323,9 @@
       </label>
     </div>
 
-    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center;">
+    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
       <button type="submit" class="btn btn-ghost" name="action" value="test_clio_connection">Test Clio Connection</button>
+      <button type="submit" class="btn btn-ghost" name="action" value="rotate_clio_secret">Rotate Clio Secret</button>
       <label><input type="checkbox" name="save_clio_secret" value="1" /> Persist entered Clio secret on Save</label>
     </div>
   </section>
@@ -304,13 +341,12 @@
   <section class="card" style="margin-top:12px;">
     <h2 style="margin-top:0;">Security Controls</h2>
     <div class="grid grid-2">
-      <div>Storage secret last rotated: <strong><%= tsEsc(tsSafe(settings.get("secret_rotation_storage_at"))) %></strong></div>
-      <div>Clio secret last rotated: <strong><%= tsEsc(tsSafe(settings.get("secret_rotation_clio_at"))) %></strong></div>
+      <div>Storage secret last rotated: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("secret_rotation_storage_at")))) %></strong></div>
+      <div>Clio secret last rotated: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("secret_rotation_clio_at")))) %></strong></div>
       <div>Storage connection: <strong><%= tsEsc(tsSafe(settings.get("storage_connection_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("storage_connection_checked_at"))) %>)</div>
       <div>Clio connection: <strong><%= tsEsc(tsSafe(settings.get("clio_connection_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("clio_connection_checked_at"))) %>)</div>
       <div>Clio auth mode health: <strong><%= tsEsc(tsSafe(settings.get("clio_auth_health_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("clio_auth_health_checked_at"))) %>)</div>
-      <label><input type="checkbox" name="rotate_storage_secret" value="1" /> Mark storage secret rotated now</label>
-      <label><input type="checkbox" name="rotate_clio_secret" value="1" /> Mark Clio secret rotated now</label>
+      <div>Sensitive output policy: <strong><%= tsEsc(secret_redactor.redactValue("hidden")) %></strong></div>
     </div>
   </section>
 

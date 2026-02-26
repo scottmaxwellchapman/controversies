@@ -13,6 +13,15 @@ public class app {
     public static void main(String[] args) {
         configureHeadlessMode();
 
+        tenant_settings.StartupSelfCheckResult startupCheck = tenant_settings.defaultStore().startupSelfCheckAllTenants();
+        if (!startupCheck.ok) {
+            for (String failure : startupCheck.failures) {
+                LOG.severe("Startup integration self-check failed: " + failure);
+            }
+            LOG.severe("Aborting startup because enabled integrations have invalid secrets.");
+            return;
+        }
+
         tomcat t = new tomcat();
 
         int httpPort = 8080;

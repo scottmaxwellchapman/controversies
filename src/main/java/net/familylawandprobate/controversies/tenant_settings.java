@@ -1,12 +1,20 @@
 package net.familylawandprobate.controversies;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -15,6 +23,8 @@ import java.util.Map;
  *
  * Stores tenant settings in:
  *   data/tenants/{tenantUuid}/settings/tenant_settings.json
+ * Stores encrypted secrets in:
+ *   data/tenants/{tenantUuid}/settings/tenant_secrets.json
  */
 public final class tenant_settings {
 
@@ -46,6 +56,24 @@ public final class tenant_settings {
             "clio_auth_health_checked_at"
     };
 
+    private static final String[] SECRET_KEYS = new String[] {
+            "storage_access_key",
+            "storage_secret",
+            "clio_client_secret",
+            "clio_access_token",
+            "clio_refresh_token"
+    };
+
+    public static final class StartupSelfCheckResult {
+        public final boolean ok;
+        public final List<String> failures;
+
+        public StartupSelfCheckResult(boolean ok, List<String> failures) {
+            this.ok = ok;
+            this.failures = failures == null ? List.of() : failures;
+        }
+    }
+
     public static tenant_settings defaultStore() {
         return new tenant_settings();
     }
@@ -54,11 +82,16 @@ public final class tenant_settings {
         LinkedHashMap<String, String> out = defaults();
         try {
             Path p = settingsPath(tenantUuid);
-            if (p == null || !Files.exists(p)) return out;
+            if (p != null && Files.exists(p)) {
+                String raw = Files.readString(p, StandardCharsets.UTF_8);
+                LinkedHashMap<String, String> parsed = parseSimpleJsonObject(raw);
+                for (Map.Entry<String, String> e : sanitizeSettings(parsed).entrySet()) {
+                    out.put(e.getKey(), e.getValue());
+                }
+            }
 
-            String raw = Files.readString(p, StandardCharsets.UTF_8);
-            LinkedHashMap<String, String> parsed = parseSimpleJsonObject(raw);
-            for (Map.Entry<String, String> e : sanitizeSettings(parsed).entrySet()) {
+            LinkedHashMap<String, String> secrets = readSecrets(tenantUuid);
+            for (Map.Entry<String, String> e : secrets.entrySet()) {
                 out.put(e.getKey(), e.getValue());
             }
             return out;
@@ -75,14 +108,43 @@ public final class tenant_settings {
         LinkedHashMap<String, String> merged = defaults();
         merged.putAll(clean);
 
+        LinkedHashMap<String, String> general = new LinkedHashMap<String, String>();
+        LinkedHashMap<String, String> secrets = new LinkedHashMap<String, String>();
+        for (Map.Entry<String, String> e : merged.entrySet()) {
+            if (e == null) continue;
+            String k = normalizeKey(e.getKey());
+            if (k.isBlank()) continue;
+            if (isSecretKey(k)) secrets.put(k, safe(e.getValue()));
+            else general.put(k, safe(e.getValue()));
+        }
+
         Files.createDirectories(p.getParent());
         Files.writeString(
                 p,
-                toSimpleJsonObject(merged),
+                toSimpleJsonObject(general),
                 StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING
         );
+        writeSecrets(tenantUuid, secrets);
+    }
+
+    public StartupSelfCheckResult startupSelfCheckAllTenants() {
+        List<String> failures = new ArrayList<String>();
+        try {
+            Path tenantsRoot = Paths.get("data", "tenants").toAbsolutePath();
+            if (!Files.exists(tenantsRoot)) return new StartupSelfCheckResult(true, failures);
+            for (Path p : Files.list(tenantsRoot).toList()) {
+                if (p == null || !Files.isDirectory(p)) continue;
+                String tenantUuid = safe(p.getFileName() == null ? "" : p.getFileName().toString()).trim();
+                if (tenantUuid.isBlank()) continue;
+                LinkedHashMap<String, String> cfg = read(tenantUuid);
+                validateEnabledIntegrationSecrets(tenantUuid, cfg, failures);
+            }
+        } catch (Exception ex) {
+            failures.add("startup_self_check_failed: " + safe(ex.getMessage()));
+        }
+        return new StartupSelfCheckResult(failures.isEmpty(), failures);
     }
 
     public LinkedHashMap<String, String> sanitizeSettings(Map<String, String> settings) {
@@ -111,8 +173,8 @@ public final class tenant_settings {
 
             boolean ok =
                     (ch >= 'a' && ch <= 'z') ||
-                    (ch >= '0' && ch <= '9') ||
-                    ch == '_' || ch == '-' || ch == '.';
+                            (ch >= '0' && ch <= '9') ||
+                            ch == '_' || ch == '-' || ch == '.';
 
             if (ok) {
                 sb.append(ch);
@@ -178,6 +240,13 @@ public final class tenant_settings {
         return false;
     }
 
+    private boolean isSecretKey(String key) {
+        for (int i = 0; i < SECRET_KEYS.length; i++) {
+            if (SECRET_KEYS[i].equals(key)) return true;
+        }
+        return false;
+    }
+
     private String normalizeValue(String key, String value) {
         String v = safe(value).trim();
 
@@ -208,6 +277,31 @@ public final class tenant_settings {
         return v;
     }
 
+    private void validateEnabledIntegrationSecrets(String tenantUuid, Map<String, String> cfg, List<String> failures) {
+        String storageBackend = safe(cfg.get("storage_backend")).trim().toLowerCase(Locale.ROOT);
+        if ("filesystem_remote".equals(storageBackend)) {
+            if (safe(cfg.get("storage_endpoint")).isBlank()
+                    || safe(cfg.get("storage_access_key")).isBlank()
+                    || safe(cfg.get("storage_secret")).isBlank()) {
+                failures.add("tenant=" + safeFileToken(tenantUuid) + " storage backend enabled with invalid credentials");
+            }
+        }
+
+        boolean clioEnabled = "true".equalsIgnoreCase(safe(cfg.get("clio_enabled")));
+        if (clioEnabled) {
+            String clioMode = safe(cfg.get("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
+            if (!"private".equals(clioMode)) clioMode = "public";
+            boolean baseReady = safe(cfg.get("clio_base_url")).startsWith("http") && !safe(cfg.get("clio_client_id")).isBlank();
+            boolean secretReady = !safe(cfg.get("clio_client_secret")).isBlank();
+            boolean modeReady = "public".equals(clioMode)
+                    ? safe(cfg.get("clio_oauth_callback_url")).startsWith("http")
+                    : !safe(cfg.get("clio_private_relay_url")).isBlank();
+            if (!(baseReady && secretReady && modeReady)) {
+                failures.add("tenant=" + safeFileToken(tenantUuid) + " clio enabled with invalid credentials");
+            }
+        }
+    }
+
     private boolean truthy(String s) {
         String v = safe(s).trim().toLowerCase(Locale.ROOT);
         return "1".equals(v) || "true".equals(v) || "on".equals(v) || "yes".equals(v);
@@ -217,6 +311,81 @@ public final class tenant_settings {
         String tu = safeFileToken(tenantUuid);
         if (tu.isBlank()) return null;
         return Paths.get("data", "tenants", tu, "settings", "tenant_settings.json").toAbsolutePath();
+    }
+
+    private static Path secretsPath(String tenantUuid) {
+        String tu = safeFileToken(tenantUuid);
+        if (tu.isBlank()) return null;
+        return Paths.get("data", "tenants", tu, "settings", "tenant_secrets.json").toAbsolutePath();
+    }
+
+    private void writeSecrets(String tenantUuid, Map<String, String> secrets) throws Exception {
+        Path p = secretsPath(tenantUuid);
+        if (p == null) return;
+        Files.createDirectories(p.getParent());
+
+        String plaintext = toSimpleJsonObject(secrets);
+        byte[] iv = new byte[12];
+        new SecureRandom().nextBytes(iv);
+
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(deriveTenantKey(tenantUuid), "AES"), new GCMParameterSpec(128, iv));
+        byte[] encrypted = c.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
+
+        LinkedHashMap<String, String> envelope = new LinkedHashMap<String, String>();
+        envelope.put("alg", "AES/GCM/NoPadding");
+        envelope.put("iv", Base64.getEncoder().encodeToString(iv));
+        envelope.put("ciphertext", Base64.getEncoder().encodeToString(encrypted));
+
+        Files.writeString(
+                p,
+                toSimpleJsonObject(envelope),
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING
+        );
+    }
+
+    private LinkedHashMap<String, String> readSecrets(String tenantUuid) {
+        LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
+        try {
+            Path p = secretsPath(tenantUuid);
+            if (p == null || !Files.exists(p)) return out;
+            String raw = Files.readString(p, StandardCharsets.UTF_8);
+            Map<String, String> env = parseSimpleJsonObject(raw);
+
+            byte[] iv = Base64.getDecoder().decode(safe(env.get("iv")));
+            byte[] ciphertext = Base64.getDecoder().decode(safe(env.get("ciphertext")));
+
+            Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(deriveTenantKey(tenantUuid), "AES"), new GCMParameterSpec(128, iv));
+            byte[] plaintext = c.doFinal(ciphertext);
+            Map<String, String> parsed = parseSimpleJsonObject(new String(plaintext, StandardCharsets.UTF_8));
+            for (Map.Entry<String, String> e : sanitizeSettings(parsed).entrySet()) {
+                if (isSecretKey(e.getKey())) out.put(e.getKey(), safe(e.getValue()));
+            }
+        } catch (Exception ignored) {
+            return new LinkedHashMap<String, String>();
+        }
+        return out;
+    }
+
+    private byte[] deriveTenantKey(String tenantUuid) throws Exception {
+        byte[] seed = readSecuritySeedMaterial();
+        MessageDigest d = MessageDigest.getInstance("SHA-256");
+        d.update(seed);
+        d.update((byte) ':');
+        d.update(safe(tenantUuid).getBytes(StandardCharsets.UTF_8));
+        return d.digest();
+    }
+
+    private byte[] readSecuritySeedMaterial() throws Exception {
+        Path sec = Paths.get("data", "sec").toAbsolutePath();
+        Path pepper = sec.resolve("random_pepper.bin");
+        if (!Files.exists(pepper)) {
+            throw new IllegalStateException("Missing data/sec/random_pepper.bin");
+        }
+        return Files.readAllBytes(pepper);
     }
 
     private static String safeFileToken(String s) {
