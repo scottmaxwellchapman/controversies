@@ -1,5 +1,8 @@
 package net.familylawandprobate.controversies;
 
+import net.familylawandprobate.controversies.storage.DocumentStorageBackend;
+import net.familylawandprobate.controversies.storage.StorageBackendResolver;
+
 import java.io.InputStream;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
@@ -39,9 +42,18 @@ import org.xml.sax.InputSource;
 public final class assembled_forms {
 
     private static final ConcurrentHashMap<String, ReentrantReadWriteLock> LOCKS = new ConcurrentHashMap<String, ReentrantReadWriteLock>();
+    private final StorageBackendResolver backendResolver;
 
     public static assembled_forms defaultStore() {
-        return new assembled_forms();
+        return new assembled_forms(new StorageBackendResolver());
+    }
+
+    public assembled_forms() {
+        this(new StorageBackendResolver());
+    }
+
+    public assembled_forms(StorageBackendResolver backendResolver) {
+        this.backendResolver = backendResolver == null ? new StorageBackendResolver() : backendResolver;
     }
 
     public static final class AssemblyRec {
@@ -59,6 +71,9 @@ public final class assembled_forms {
         public final String outputFileName;
         public final String outputFileExt;
         public final long outputSizeBytes;
+        public final String storageBackendType;
+        public final String storageObjectKey;
+        public final String storageChecksumSha256;
         public final LinkedHashMap<String, String> overrides;
 
         public AssemblyRec(String uuid,
@@ -75,6 +90,9 @@ public final class assembled_forms {
                            String outputFileName,
                            String outputFileExt,
                            long outputSizeBytes,
+                           String storageBackendType,
+                           String storageObjectKey,
+                           String storageChecksumSha256,
                            Map<String, String> overrides) {
             this.uuid = safe(uuid);
             this.matterUuid = safe(matterUuid);
@@ -90,6 +108,9 @@ public final class assembled_forms {
             this.outputFileName = safe(outputFileName);
             this.outputFileExt = normalizeExtension(safe(outputFileExt));
             this.outputSizeBytes = Math.max(0L, outputSizeBytes);
+            this.storageBackendType = normalizeBackendType(storageBackendType);
+            this.storageObjectKey = safe(storageObjectKey);
+            this.storageChecksumSha256 = safe(storageChecksumSha256).toLowerCase(Locale.ROOT);
             this.overrides = sanitizeOverrides(overrides);
         }
     }
@@ -102,7 +123,7 @@ public final class assembled_forms {
         ReentrantReadWriteLock lock = lockFor(tu, mu);
         lock.writeLock().lock();
         try {
-            Files.createDirectories(outputsDir(tu, mu));
+            Files.createDirectories(caseDir(tu, mu));
             Path idx = indexPath(tu, mu);
             if (!Files.exists(idx)) writeAtomic(idx, emptyXml());
         } finally {
@@ -217,6 +238,9 @@ public final class assembled_forms {
                         "",
                         "",
                         0L,
+                        "local",
+                        "",
+                        "",
                         cleanedOverrides
                 );
                 all.add(outRec);
@@ -240,6 +264,9 @@ public final class assembled_forms {
                     "",
                     "",
                     0L,
+                    normalizeBackendType(current.storageBackendType),
+                    safe(current.storageObjectKey),
+                    safe(current.storageChecksumSha256),
                     cleanedOverrides
             );
 
@@ -319,9 +346,13 @@ public final class assembled_forms {
             String assemblyUuid = current == null ? UUID.randomUUID().toString() : safe(current.uuid).trim();
             if (assemblyUuid.isBlank()) assemblyUuid = UUID.randomUUID().toString();
 
-            Path outPath = outputPath(tu, mu, assemblyUuid, normalizedOutExt);
-            Files.createDirectories(outPath.getParent());
-            Files.write(outPath, outputBytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            String configuredBackendType = normalizeBackendType(backendResolver.resolveBackendType(tu));
+            String backendType = configuredBackendType.isBlank() ? normalizeBackendType(current == null ? "" : current.storageBackendType) : configuredBackendType;
+            String objectKey = storageKey(mu, assemblyUuid, normalizedOutExt);
+            DocumentStorageBackend backend = backendResolver.resolve(tu, mu, backendType);
+            objectKey = backend.put(objectKey, outputBytes);
+            Map<String, String> metadata = backend.metadata(objectKey);
+            String checksum = safe(metadata.get("checksum_sha256"));
 
             AssemblyRec completed = new AssemblyRec(
                     assemblyUuid,
@@ -338,6 +369,9 @@ public final class assembled_forms {
                     sanitizeOutputName(outputFileName, normalizedOutExt),
                     normalizedOutExt,
                     outputBytes.length,
+                    backendType,
+                    objectKey,
+                    checksum,
                     cleanedOverrides
             );
 
@@ -370,13 +404,72 @@ public final class assembled_forms {
             if (ext.isBlank()) ext = normalizeExtension(rec.templateExt);
             if (ext.isBlank()) ext = "txt";
 
-            Path p = outputPath(tu, mu, au, ext);
-            if (!Files.exists(p)) return new byte[0];
-            return Files.readAllBytes(p);
+            String backendType = normalizeBackendType(rec.storageBackendType);
+            String objectKey = safe(rec.storageObjectKey).trim();
+            if (objectKey.isBlank()) objectKey = storageKey(mu, au, ext);
+
+            DocumentStorageBackend backend = backendResolver.resolve(tu, mu, backendType);
+            if (backend.exists(objectKey)) return backend.get(objectKey);
+
+            Path fallbackPath = outputPath(tu, mu, au, ext);
+            if (!Files.exists(fallbackPath)) return new byte[0];
+            return Files.readAllBytes(fallbackPath);
         } catch (Exception ignored) {
             return new byte[0];
         } finally {
             lock.readLock().unlock();
+        }
+    }
+
+
+    public boolean rebindStorageMetadata(String tenantUuid,
+                                         String matterUuid,
+                                         String assemblyUuid,
+                                         String storageBackendType,
+                                         String storageObjectKey,
+                                         String storageChecksumSha256) throws Exception {
+        String tu = safeFileToken(tenantUuid);
+        String mu = safeFileToken(matterUuid);
+        String au = safe(assemblyUuid).trim();
+        if (tu.isBlank() || mu.isBlank() || au.isBlank()) return false;
+
+        ReentrantReadWriteLock lock = lockFor(tu, mu);
+        lock.writeLock().lock();
+        try {
+            List<AssemblyRec> all = readAllLocked(tu, mu);
+            for (int i = 0; i < all.size(); i++) {
+                AssemblyRec current = all.get(i);
+                if (current == null) continue;
+                if (!au.equals(safe(current.uuid).trim())) continue;
+
+                AssemblyRec updated = new AssemblyRec(
+                        current.uuid,
+                        current.matterUuid,
+                        current.templateUuid,
+                        current.templateLabel,
+                        current.templateExt,
+                        current.status,
+                        current.createdAt,
+                        Instant.now().toString(),
+                        current.userUuid,
+                        current.userEmail,
+                        current.overrideCount,
+                        current.outputFileName,
+                        current.outputFileExt,
+                        current.outputSizeBytes,
+                        storageBackendType,
+                        storageObjectKey,
+                        storageChecksumSha256,
+                        current.overrides
+                );
+                all.set(i, updated);
+                sortByUpdatedDesc(all);
+                writeAllLocked(tu, mu, all);
+                return true;
+            }
+            return false;
+        } finally {
+            lock.writeLock().unlock();
         }
     }
 
@@ -454,6 +547,9 @@ public final class assembled_forms {
                     outName,
                     outExt,
                     outSize,
+                    text(e, "storage_backend"),
+                    text(e, "storage_object_key"),
+                    text(e, "storage_checksum_sha256"),
                     overrides
             );
             out.add(rec);
@@ -515,6 +611,9 @@ public final class assembled_forms {
             sb.append("    <output_file_name>").append(xmlText(r.outputFileName)).append("</output_file_name>\n");
             sb.append("    <output_file_ext>").append(xmlText(r.outputFileExt)).append("</output_file_ext>\n");
             sb.append("    <output_size_bytes>").append(r.outputSizeBytes).append("</output_size_bytes>\n");
+            sb.append("    <storage_backend>").append(xmlText(normalizeBackendType(r.storageBackendType))).append("</storage_backend>\n");
+            sb.append("    <storage_object_key>").append(xmlText(r.storageObjectKey)).append("</storage_object_key>\n");
+            sb.append("    <storage_checksum_sha256>").append(xmlText(r.storageChecksumSha256)).append("</storage_checksum_sha256>\n");
             sb.append("    <overrides>\n");
             for (Map.Entry<String, String> e : r.overrides.entrySet()) {
                 if (e == null) continue;
@@ -572,6 +671,9 @@ public final class assembled_forms {
         if (!safe(a.userUuid).equals(safe(b.userUuid))) return false;
         if (!safe(a.userEmail).equalsIgnoreCase(safe(b.userEmail))) return false;
         if (a.overrideCount != b.overrideCount) return false;
+        if (!normalizeBackendType(a.storageBackendType).equals(normalizeBackendType(b.storageBackendType))) return false;
+        if (!safe(a.storageObjectKey).equals(safe(b.storageObjectKey))) return false;
+        if (!safe(a.storageChecksumSha256).equalsIgnoreCase(safe(b.storageChecksumSha256))) return false;
         if (a.overrides.size() != b.overrides.size()) return false;
 
         for (Map.Entry<String, String> e : a.overrides.entrySet()) {
@@ -611,6 +713,21 @@ public final class assembled_forms {
         String currentExt = normalizeExtension(in);
         if (!cleanExt.equals(currentExt)) return in + "." + cleanExt;
         return in;
+    }
+
+    private static String normalizeBackendType(String backendType) {
+        String v = safe(backendType).trim().toLowerCase(Locale.ROOT);
+        if (v.isBlank()) return "local";
+        if ("local".equals(v) || "ftp".equals(v) || "ftps".equals(v) || "sftp".equals(v) || "s3_compatible".equals(v)) return v;
+        return "local";
+    }
+
+    private static String storageKey(String matterUuid, String assemblyUuid, String ext) {
+        String mu = safeFileToken(matterUuid);
+        String au = safeFileToken(assemblyUuid);
+        String outExt = normalizeExtension(ext);
+        if (outExt.isBlank()) outExt = "txt";
+        return "matters/" + mu + "/assembled/files/" + au + "." + outExt;
     }
 
     private static String normalizeStatus(String s) {
