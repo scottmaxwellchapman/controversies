@@ -1,5 +1,7 @@
 package net.familylawandprobate.controversies;
 
+import net.familylawandprobate.controversies.plugins.PluginManager;
+
 import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
 import java.net.URI;
@@ -23,11 +25,13 @@ public class app {
         }
 
         tomcat t = new tomcat();
+        PluginManager plugins = PluginManager.defaultManager();
 
         int httpPort = 8080;
         int httpsPort = 8443;
 
         try {
+            plugins.start();
             t.start(httpPort, httpsPort);
 
             // Launch the browser only when a desktop UI is available
@@ -37,6 +41,12 @@ public class app {
             t.await();
         } catch (Exception ex) {
             LOG.log(Level.SEVERE, null, ex);
+        } finally {
+            try {
+                plugins.stop();
+            } catch (Exception e) {
+                LOG.log(Level.WARNING, "Plugin manager stop failed: " + e.getMessage(), e);
+            }
         }
     }
 

@@ -10,6 +10,8 @@
 <%@ page import="org.w3c.dom.Document,org.w3c.dom.Element,org.w3c.dom.Node,org.w3c.dom.NodeList" %>
 
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
+<%@ page import="net.familylawandprobate.controversies.plugins.MenuContribution" %>
+<%@ page import="net.familylawandprobate.controversies.plugins.PluginManager" %>
 
 <%!
     // -----------------------------
@@ -115,6 +117,60 @@
         return java.util.List.of(g);
     }
 
+    private static String normalizeHref(String href) {
+        String h = (href == null) ? "" : href.trim();
+        if (h.isBlank()) return "";
+        if (h.contains("://") || h.startsWith("//") || h.contains("\r") || h.contains("\n")) return "";
+        if (!h.startsWith("/")) h = "/" + h;
+        return h;
+    }
+
+    private static MenuGroup findGroup(List<MenuGroup> groups, String label) {
+        String target = (label == null) ? "" : label.trim();
+        for (MenuGroup g : groups) {
+            if (g == null) continue;
+            String gl = (g.label == null) ? "" : g.label.trim();
+            if (gl.equalsIgnoreCase(target)) return g;
+        }
+        return null;
+    }
+
+    private static boolean hasMenuItem(MenuGroup group, String label, String href) {
+        if (group == null) return false;
+        String lbl = (label == null) ? "" : label.trim();
+        String h = normalizeHref(href);
+        if (lbl.isBlank() || h.isBlank()) return false;
+        for (MenuItem existing : group.items) {
+            if (existing == null) continue;
+            String el = (existing.label == null) ? "" : existing.label.trim();
+            String eh = normalizeHref(existing.href);
+            if (el.equalsIgnoreCase(lbl) && eh.equalsIgnoreCase(h)) return true;
+        }
+        return false;
+    }
+
+    private static void mergePluginMenu(List<MenuGroup> groups, List<MenuContribution> contributions) {
+        if (groups == null || contributions == null || contributions.isEmpty()) return;
+
+        for (MenuContribution c : contributions) {
+            if (c == null) continue;
+            String label = (c.label() == null) ? "" : c.label().trim();
+            String href = normalizeHref(c.href());
+            if (label.isBlank() || href.isBlank()) continue;
+
+            String groupLabel = (c.groupLabel() == null) ? "" : c.groupLabel().trim();
+            MenuGroup target = findGroup(groups, groupLabel);
+            if (target == null) {
+                target = new MenuGroup(groupLabel);
+                groups.add(target);
+            }
+
+            if (!hasMenuItem(target, label, href)) {
+                target.items.add(new MenuItem(label, href));
+            }
+        }
+    }
+
     private static boolean isActive(String requestUri, String ctx, String href) {
         if (requestUri == null || href == null) return false;
         String h = href.startsWith("/") ? href : ("/" + href);
@@ -166,6 +222,11 @@
     } catch (Exception e) {
         menuGroups = defaultMenu();
     }
+
+    try {
+        List<MenuContribution> pluginMenu = PluginManager.defaultManager().menuContributions();
+        mergePluginMenu(menuGroups, pluginMenu);
+    } catch (Exception ignored) {}
 
     String ctx = request.getContextPath();
     String uri = request.getRequestURI();

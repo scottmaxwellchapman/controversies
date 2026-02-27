@@ -19,6 +19,7 @@ It supports:
 - [Daily workflow](#daily-workflow)
 - [Browser auto-open behavior](#browser-auto-open-behavior)
 - [Running and packaging](#running-and-packaging)
+- [Plugins and modularity](#plugins-and-modularity)
 - [Project layout](#project-layout)
 - [Data and security notes](#data-and-security-notes)
 - [Clio integration by deployment topology](#clio-integration-by-deployment-topology)
@@ -76,22 +77,19 @@ mvn -version
 
 5. **Log in (default bootstrap account)**
    - Tenant label: `Default Tenant`
-   - Tenant password: `password`
-
-6. **Then complete user login**
-   Use the UI flow to create/manage users and roles, then sign in as a user.
+   - Email: `tenant_admin`
+   - Password: `password`
 
 ---
 
 ## Daily workflow
 
-1. **Tenant login** (`tenant_login.jsp`)
-2. **User login** (`user_login.jsp`)
-3. **Users & Security**: define roles/permissions and users
-4. **Cases**: create matters and case-specific values
-5. **Tenant Fields**: define shared/global tenant values
-6. **Form Assembly**: assemble templates with token replacement
-7. **Assembled Forms / Logs**: inspect output and diagnostics
+1. **Sign in** (`tenant_login.jsp`) with tenant + email + password
+2. **Users & Security**: define roles/permissions and users
+3. **Cases**: create matters and case-specific values
+4. **Tenant Fields**: define shared/global tenant values
+5. **Form Assembly**: assemble templates with token replacement
+6. **Assembled Forms / Logs**: inspect output and diagnostics
 
 Main navigation is in `menu.xml` and links these pages from the header.
 
@@ -152,6 +150,54 @@ java -jar target/controversies-1.0-SNAPSHOT-all.jar
 
 ---
 
+## Plugins and modularity
+
+The application supports runtime modularity through a plugin system designed for safe production rollout.
+
+- Discovery:
+  - Classpath providers via `ServiceLoader`
+  - External plugin jars from `data/plugins/*.jar`
+- Contract:
+  - `net.familylawandprobate.controversies.plugins.ControversiesPlugin`
+- Runtime gating:
+  - `data/plugins/plugins.properties`
+  - `enabled.ids=...` optional allowlist
+  - `disabled.ids=...` optional denylist
+- Plugin state:
+  - `data/plugins/state/<plugin-id>/`
+- Current extension points:
+  - Startup lifecycle hooks (`onLoad`, servlet-context hook, shutdown)
+  - Header navigation contributions (`menuContributions`)
+
+If no plugins are installed, behavior remains identical to the base application.
+
+### Minimal plugin skeleton
+
+```java
+public final class ExamplePlugin implements ControversiesPlugin {
+    public String id() { return "example.plugin"; }
+    public String displayName() { return "Example Plugin"; }
+    public void onLoad(PluginContext context) { /* init */ }
+    public List<MenuContribution> menuContributions() {
+        return List.of(MenuContribution.of("Plugins", "Example", "/example.jsp"));
+    }
+}
+```
+
+Also include this service file in the plugin JAR:
+
+```text
+META-INF/services/net.familylawandprobate.controversies.plugins.ControversiesPlugin
+```
+
+with one line containing the plugin class name, e.g.:
+
+```text
+com.example.ExamplePlugin
+```
+
+---
+
 ## Project layout
 
 ```text
@@ -160,6 +206,7 @@ src/main/java/net/familylawandprobate/controversies/
   tomcat.java              # embedded Tomcat + HTTPS/HTTP connectors
   users_roles.java         # users, roles, auth helpers, bindings
   tenants.java             # tenant store + bootstrap default tenant
+  plugins/                 # plugin interfaces + runtime manager
   ...
 
 src/main/webapp/
@@ -178,6 +225,9 @@ src/main/webapp/
 
 data/
   tenants.xml
+  plugins/
+    plugins.properties
+    state/<plugin-id>/
   sec/
     random_pepper.bin
     ssl/keystore.p12

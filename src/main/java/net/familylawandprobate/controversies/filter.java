@@ -1,6 +1,8 @@
 // filter.java (NO CORS)
 package net.familylawandprobate.controversies;
 
+import net.familylawandprobate.controversies.plugins.PluginManager;
+
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -162,6 +164,14 @@ public final class filter implements Filter {
                 ", enableHsts=" + enableHsts +
                 ", blockNonBrowserClients=" + blockNonBrowserClients +
                 ", enableAccessLog=" + enableAccessLog);
+
+        try {
+            PluginManager pm = PluginManager.defaultManager();
+            pm.start();
+            pm.bindServletContext(cfg.getServletContext());
+        } catch (Exception e) {
+            LOG.log(Level.SEVERE, "Plugin manager initialization failed: " + e.getMessage(), e);
+        }
     }
 
     @Override
@@ -254,7 +264,11 @@ public final class filter implements Filter {
 
     @Override
     public void destroy() {
-        // no-op
+        try {
+            PluginManager.defaultManager().stop();
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Plugin manager stop failed during filter destroy: " + e.getMessage(), e);
+        }
     }
 
     // -----------------------------
