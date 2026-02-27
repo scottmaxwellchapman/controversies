@@ -10,7 +10,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -43,6 +42,18 @@ public final class activity_log {
     public static activity_log defaultStore() { return new activity_log(); }
 
     public void logVerbose(String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
+        log("verbose", action, tenantUuid, userUuid, caseUuid, documentUuid, details);
+    }
+
+    public void logWarning(String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
+        log("warning", action, tenantUuid, userUuid, caseUuid, documentUuid, details);
+    }
+
+    public void logError(String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
+        log("error", action, tenantUuid, userUuid, caseUuid, documentUuid, details);
+    }
+
+    private void log(String level, String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
         String tenant = safe(tenantUuid).trim();
         if (tenant.isBlank()) return;
         String now = Instant.now().toString();
@@ -58,7 +69,7 @@ public final class activity_log {
             }
         }
 
-        String entry = "  <event time=\"" + xmlAttr(now) + "\" level=\"verbose\" action=\"" + xmlAttr(action)
+        String entry = "  <event time=\"" + xmlAttr(now) + "\" level=\"" + xmlAttr(level) + "\" action=\"" + xmlAttr(action)
                 + "\" tenant_uuid=\"" + xmlAttr(tenant) + "\" user_uuid=\"" + xmlAttr(userUuid)
                 + "\" case_uuid=\"" + xmlAttr(caseUuid) + "\" document_uuid=\"" + xmlAttr(documentUuid) + "\">\n"
                 + detailXml + "  </event>\n";
@@ -97,14 +108,14 @@ public final class activity_log {
                     String attrs = safe(m.group(1));
                     String body = safe(m.group(2)).trim();
                     out.add(new LogEntry(
-                            attr(attrs, "time"),
-                            attr(attrs, "level"),
-                            attr(attrs, "action"),
-                            attr(attrs, "tenant_uuid"),
-                            attr(attrs, "user_uuid"),
-                            attr(attrs, "case_uuid"),
-                            attr(attrs, "document_uuid"),
-                            body.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim()
+                            xmlUnescape(attr(attrs, "time")),
+                            xmlUnescape(attr(attrs, "level")),
+                            xmlUnescape(attr(attrs, "action")),
+                            xmlUnescape(attr(attrs, "tenant_uuid")),
+                            xmlUnescape(attr(attrs, "user_uuid")),
+                            xmlUnescape(attr(attrs, "case_uuid")),
+                            xmlUnescape(attr(attrs, "document_uuid")),
+                            xmlUnescape(body.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim())
                     ));
                 }
             } catch (Exception ignored) {}
@@ -119,6 +130,15 @@ public final class activity_log {
                 .compile(key + "=\\\"([^\\\"]*)\\\"")
                 .matcher(safe(attrs));
         return m.find() ? m.group(1) : "";
+    }
+
+    private static String xmlUnescape(String s) {
+        return safe(s)
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&");
     }
 
     private static Path logPath(String tenantUuid) {
