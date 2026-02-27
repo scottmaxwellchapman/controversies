@@ -305,7 +305,9 @@
   }
 
   document_assembler.PreviewResult preview = assembler.preview(templateBytes, templateExt, mergeValues);
-  String sourcePreviewText = safe(preview.sourceText);
+  document_assembler.PreviewResult workspacePreview = assembler.preview(templateBytes, templateExt, new LinkedHashMap<String,String>());
+  String sourcePreviewText = safe(workspacePreview.sourceText);
+  if (sourcePreviewText.isBlank()) sourcePreviewText = safe(preview.sourceText);
   LinkedHashSet<String> usedTokens = preview.usedTokens;
   LinkedHashSet<String> missingTokens = preview.missingTokens;
   LinkedHashMap<String, Integer> tokenCounts = preview.tokenCounts;
@@ -1397,8 +1399,7 @@
     if (!renderPreviewEnabled) return;
     var key = String(tokenLiteral || "");
     if (!key) {
-      if (contextPreviewMeta) contextPreviewMeta.textContent = "Select a token to preview.";
-      clearContextPreview();
+      drawPageFallback(0, "Showing page 1. Select a token to focus highlights.");
       return;
     }
 
@@ -1649,7 +1650,9 @@
       applyRenderedPreviewData(data);
     })
     .catch(function () {
-      // Keep token navigation fully functional even when preview refresh fails.
+      if (contextPreviewMeta) {
+        contextPreviewMeta.textContent = "Live preview refresh failed. Showing last rendered image.";
+      }
     });
   }
 
