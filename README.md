@@ -21,7 +21,9 @@ It supports:
 - [Running and packaging](#running-and-packaging)
 - [Project layout](#project-layout)
 - [Data and security notes](#data-and-security-notes)
+- [Tenant settings guide (first-time and advanced)](#tenant-settings-guide-first-time-and-advanced)
 - [Clio integration by deployment topology](#clio-integration-by-deployment-topology)
+- [Logging and audit visibility](#logging-and-audit-visibility)
 - [Troubleshooting](#troubleshooting)
 - [For experienced users](#for-experienced-users)
 
@@ -186,6 +188,34 @@ data/
 
 ---
 
+
+## Tenant settings guide (first-time and advanced)
+
+Open **Tenant Settings** from the main navigation to configure storage, Clio integration, feature flags, and security controls.
+
+### First-time tenant setup
+
+1. Choose a **Storage Backend** and required endpoint/credentials.
+2. If using S3 with KMS, provide **S3 SSE KMS Key Id**.
+3. Click **Test Storage Connection** until it reports success.
+4. Configure **Clio Connection** only if this tenant needs Clio synchronization.
+5. Click **Test Clio Connection** and resolve any validation messages.
+6. Click **Save Settings** to persist all changes.
+
+### Advanced/admin usage
+
+- Leave password/secret fields blank if you are not rotating secrets.
+- Use **Rotate Storage Secret** or **Rotate Clio Secret** to timestamp key rotation activity before final save.
+- Feature flags can be toggled independently without changing integration credentials.
+- Security Controls summarizes current status, last check times, and redaction policy.
+
+Validation behavior:
+- Clio URL/auth checks run when Clio configuration is present.
+- Tenant-managed encryption requires a non-empty application encryption key.
+- SSE-KMS requires a KMS key id when enabled.
+
+---
+
 ## Clio integration by deployment topology
 
 Use **Tenant Settings → Clio Connection** to choose an auth mode aligned with where this app is deployed.
@@ -226,6 +256,24 @@ Operational notes:
 - A random pepper file is maintained at `data/sec/random_pepper.bin`.
 - Dev HTTPS keystore is auto-generated at `data/sec/ssl/keystore.p12`.
 - Tenant bootstrap credentials are intended for first-run setup; change credentials and role assignments promptly.
+
+---
+
+
+## Logging and audit visibility
+
+Tenant events are written to per-tenant XML activity logs under:
+
+- `data/tenants/<tenant-uuid>/logs/activity_YYYY-MM-DD.xml`
+
+The settings workflow records detailed events for:
+- Storage connection tests (including validation issues)
+- Clio connection tests (including auth-mode requirements)
+- Secret rotation acceptance/rejection
+- Validation failures on save
+- Successful setting updates
+
+Sensitive values (secrets, tokens, keys, passwords) are automatically redacted in log detail payloads.
 
 ---
 

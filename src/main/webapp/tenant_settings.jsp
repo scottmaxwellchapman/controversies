@@ -1,7 +1,9 @@
 <%@ page contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" %>
 
 <%@ page import="java.util.LinkedHashMap" %>
+<%@ page import="java.util.ArrayList" %>
 <%@ page import="java.util.Locale" %>
+<%@ page import="java.util.List" %>
 <%@ page import="java.util.Map" %>
 
 <%@ page import="net.familylawandprobate.controversies.activity_log" %>
@@ -35,6 +37,14 @@
   private static String tsRotationLabel(String iso) {
     String s = tsSafe(iso).trim();
     return s.isBlank() ? "Never" : s;
+  }
+
+  private static String tsStatusLabel(String raw) {
+    String s = tsSafe(raw).trim().toLowerCase(Locale.ROOT);
+    if ("ok".equals(s)) return "OK";
+    if ("failed".equals(s)) return "Failed";
+    if (s.isBlank()) return "Not tested";
+    return s;
   }
 
   private static String csrfForRender(jakarta.servlet.http.HttpServletRequest req) {
@@ -78,6 +88,15 @@
 
   LinkedHashMap<String,String> settings = new LinkedHashMap<String,String>();
   settings.putAll(store.read(tenantUuid));
+
+  List<String> setupChecklist = new ArrayList<String>();
+  String loadedStorageBackend = tsSafe(settings.get("storage_backend")).trim().toLowerCase(Locale.ROOT);
+  String loadedStorageStatus = tsSafe(settings.get("storage_connection_status")).trim().toLowerCase(Locale.ROOT);
+  String loadedClioStatus = tsSafe(settings.get("clio_connection_status")).trim().toLowerCase(Locale.ROOT);
+  if (loadedStorageBackend.isBlank()) setupChecklist.add("Choose and save a storage backend.");
+  if (!"ok".equals(loadedStorageStatus)) setupChecklist.add("Run 'Test Storage Connection' until status is OK.");
+  if (tsSafe(settings.get("clio_base_url")).isBlank()) setupChecklist.add("Enter Clio Base URL if this tenant uses Clio sync.");
+  if (!"ok".equals(loadedClioStatus)) setupChecklist.add("Run 'Test Clio Connection' after credentials are configured.");
 
   if ("POST".equalsIgnoreCase(request.getMethod())) {
     String action = tsSafe(request.getParameter("action")).trim();
@@ -134,30 +153,54 @@
     String effectiveClioSecret = !clioClientSecret.isBlank() ? clioClientSecret : tsSafe(settings.get("clio_client_secret")).trim();
 
     if ("test_storage_connection".equalsIgnoreCase(action)) {
+      List<String> storageFailures = new ArrayList<String>();
       boolean ok;
       if (!"local".equalsIgnoreCase(storageBackend) && !"localfs".equalsIgnoreCase(storageBackend)) {
         ok = !storageEndpoint.isBlank() && !effectiveStorageAccessKey.isBlank() && !effectiveStorageSecret.isBlank();
+        if (storageEndpoint.isBlank()) storageFailures.add("Missing storage endpoint");
+        if (effectiveStorageAccessKey.isBlank()) storageFailures.add("Missing storage access key");
+        if (effectiveStorageSecret.isBlank()) storageFailures.add("Missing storage secret");
       } else {
         ok = true;
       }
-      if (ok && "tenant_managed".equals(storageEncryptionMode) && effectiveStorageEncryptionKey.isBlank()) {
+      if ("tenant_managed".equals(storageEncryptionMode) && effectiveStorageEncryptionKey.isBlank()) {
         ok = false;
+        storageFailures.add("Tenant-managed encryption selected without encryption key");
       }
-      if (ok && "s3_compatible".equalsIgnoreCase(storageBackend) && "aws_kms".equals(storageS3SseMode) && storageS3SseKmsKeyId.isBlank()) {
+      if ("s3_compatible".equalsIgnoreCase(storageBackend) && "aws_kms".equals(storageS3SseMode) && storageS3SseKmsKeyId.isBlank()) {
         ok = false;
+        storageFailures.add("SSE-KMS selected without KMS key id");
       }
       settings.put("storage_connection_status", ok ? "ok" : "failed");
       settings.put("storage_connection_checked_at", store.nowIso());
-      message = ok ? "Storage connection test succeeded." : "Storage connection test failed. Check endpoint and credentials.";
+      if (ok) {
+        message = "Storage connection test succeeded.";
+      } else {
+        message = "Storage connection test failed: " + String.join("; ", storageFailures) + ".";
+      }
+      Map<String, String> details = new LinkedHashMap<String, String>();
+      details.put("action", "test_storage_connection");
+      details.put("result", ok ? "ok" : "failed");
+      details.put("storage_backend", storageBackend);
+      details.put("storage_encryption_mode", storageEncryptionMode);
+      details.put("storage_s3_sse_mode", storageS3SseMode);
+      details.put("validation_issues", storageFailures.isEmpty() ? "none" : String.join(" | ", storageFailures));
+      logs.logVerbose("tenant_settings_storage_test", tenantUuid, userUuid, "", "", details);
 
     } else if ("test_clio_connection".equalsIgnoreCase(action)) {
+      List<String> clioFailures = new ArrayList<String>();
       boolean hasShared = !clioBaseUrl.isBlank() && clioBaseUrl.startsWith("http") && !clioClientId.isBlank();
+      if (clioBaseUrl.isBlank() || !clioBaseUrl.startsWith("http")) clioFailures.add("Base URL must start with http/https");
+      if (clioClientId.isBlank()) clioFailures.add("Missing Clio Client ID");
       boolean hasSecret = !effectiveClioSecret.isBlank();
+      if (!hasSecret) clioFailures.add("Missing Clio Client Secret");
       boolean modeReady;
       if ("public".equals(clioAuthMode)) {
         modeReady = !clioOauthCallbackUrl.isBlank() && clioOauthCallbackUrl.startsWith("http");
+        if (!modeReady) clioFailures.add("Public mode requires web-accessible OAuth callback URL");
       } else {
         modeReady = !clioPrivateRelayUrl.isBlank();
+        if (!modeReady) clioFailures.add("Private mode requires relay/admin exchange path");
       }
 
       boolean ok = hasShared && hasSecret && modeReady;
@@ -168,27 +211,36 @@
 
       if (ok) {
         message = "Clio connection test succeeded for " + clioAuthMode + " auth mode.";
-      } else if ("public".equals(clioAuthMode)) {
-        message = "Clio connection test failed. Public mode requires Base URL, Client ID, Client Secret, and OAuth callback URL.";
       } else {
-        message = "Clio connection test failed. Private mode requires Base URL, Client ID, Client Secret, and relay/admin path details.";
+        message = "Clio connection test failed: " + String.join("; ", clioFailures) + ".";
       }
+      Map<String, String> details = new LinkedHashMap<String, String>();
+      details.put("action", "test_clio_connection");
+      details.put("result", ok ? "ok" : "failed");
+      details.put("clio_auth_mode", clioAuthMode);
+      details.put("clio_auth_health_status", tsSafe(settings.get("clio_auth_health_status")));
+      details.put("validation_issues", clioFailures.isEmpty() ? "none" : String.join(" | ", clioFailures));
+      logs.logVerbose("tenant_settings_clio_test", tenantUuid, userUuid, "", "", details);
 
     } else if ("rotate_storage_secret".equalsIgnoreCase(action)) {
       if (storageSecret.isBlank()) {
         error = "Enter a new storage secret before rotating.";
+        logs.logVerbose("tenant_settings_storage_secret_rotation_rejected", tenantUuid, userUuid, "", "", Map.of("reason", "missing_new_secret"));
       } else {
         settings.put("storage_secret", storageSecret);
         settings.put("secret_rotation_storage_at", store.nowIso());
         message = "Storage secret rotated.";
+        logs.logVerbose("tenant_settings_storage_secret_rotated", tenantUuid, userUuid, "", "", Map.of("status", "accepted_pending_save"));
       }
     } else if ("rotate_clio_secret".equalsIgnoreCase(action)) {
       if (clioClientSecret.isBlank()) {
         error = "Enter a new Clio secret before rotating.";
+        logs.logVerbose("tenant_settings_clio_secret_rotation_rejected", tenantUuid, userUuid, "", "", Map.of("reason", "missing_new_secret"));
       } else {
         settings.put("clio_client_secret", clioClientSecret);
         settings.put("secret_rotation_clio_at", store.nowIso());
         message = "Clio secret rotated.";
+        logs.logVerbose("tenant_settings_clio_secret_rotated", tenantUuid, userUuid, "", "", Map.of("status", "accepted_pending_save"));
       }
     }
 
@@ -197,11 +249,17 @@
             || "rotate_clio_secret".equalsIgnoreCase(action))
             && error == null) {
       boolean valid = true;
-      if ("public".equals(clioAuthMode) && (clioOauthCallbackUrl.isBlank() || !clioOauthCallbackUrl.startsWith("http"))) {
+      boolean clioConfigured = !clioBaseUrl.isBlank() || !clioClientId.isBlank() || !effectiveClioSecret.isBlank()
+              || !clioOauthCallbackUrl.isBlank() || !clioPrivateRelayUrl.isBlank();
+      if (clioConfigured && "public".equals(clioAuthMode) && (clioOauthCallbackUrl.isBlank() || !clioOauthCallbackUrl.startsWith("http"))) {
         valid = false;
         error = "Public mode requires a web-accessible OAuth callback URL.";
       }
-      if ("private".equals(clioAuthMode) && clioPrivateRelayUrl.isBlank()) {
+      if (clioConfigured && (clioBaseUrl.isBlank() || !clioBaseUrl.startsWith("http"))) {
+        valid = false;
+        error = "Clio Base URL must start with http:// or https://.";
+      }
+      if (clioConfigured && "private".equals(clioAuthMode) && clioPrivateRelayUrl.isBlank()) {
         valid = false;
         error = "Private mode requires relay/admin exchange instructions endpoint or note.";
       }
@@ -212,6 +270,10 @@
       if ("s3_compatible".equalsIgnoreCase(storageBackend) && "aws_kms".equals(storageS3SseMode) && storageS3SseKmsKeyId.isBlank()) {
         valid = false;
         error = "S3 SSE aws_kms requires a KMS key id.";
+      }
+
+      if (!valid) {
+        logs.logVerbose("tenant_settings_validation_failed", tenantUuid, userUuid, "", "", Map.of("action", action, "error", tsSafe(error)));
       }
 
       if (valid) {
@@ -236,8 +298,12 @@
           details.put("clio_connection_status", tsSafe(settings.get("clio_connection_status")));
           details.put("clio_auth_mode", tsSafe(settings.get("clio_auth_mode")));
           details.put("clio_auth_health_status", tsSafe(settings.get("clio_auth_health_status")));
-          details.put("storage_secret", tsSafe(settings.get("storage_secret")));
-          details.put("clio_client_secret", tsSafe(settings.get("clio_client_secret")));
+          details.put("storage_secret_saved", tsSafe(settings.get("storage_secret")).isBlank() ? "no" : "yes");
+          details.put("storage_encryption_key_saved", tsSafe(settings.get("storage_encryption_key")).isBlank() ? "no" : "yes");
+          details.put("clio_client_secret_saved", tsSafe(settings.get("clio_client_secret")).isBlank() ? "no" : "yes");
+          details.put("save_storage_secret_requested", saveStorageSecret ? "true" : "false");
+          details.put("save_storage_encryption_key_requested", saveStorageEncryptionKey ? "true" : "false");
+          details.put("save_clio_secret_requested", saveClioSecret ? "true" : "false");
           logs.logVerbose("tenant_settings_changed", tenantUuid, userUuid, "", "", details);
 
           String status = "saved";
@@ -247,6 +313,7 @@
           return;
         } catch (Exception ex) {
           error = "Unable to save tenant settings.";
+          logs.logVerbose("tenant_settings_save_failed", tenantUuid, userUuid, "", "", Map.of("reason", ex.getClass().getSimpleName()));
         }
       }
     }
@@ -290,8 +357,35 @@
   <input type="hidden" name="csrfToken" value="<%= tsEsc(csrfToken) %>" />
 
   <section class="card" style="margin-top:12px;">
+    <h2 style="margin-top:0;">Setup Guide (Quick + Advanced)</h2>
+    <div class="meta" style="margin-bottom:8px;">For first-time setup: complete Storage, then Clio (if used), test both, then Save Settings. Experienced admins can update only the fields they need and run targeted tests.</div>
+    <div class="grid grid-2">
+      <div>
+        <h3 style="margin:0 0 6px 0;">First-time checklist</h3>
+        <% if (setupChecklist.isEmpty()) { %>
+          <div class="alert alert-ok">Great news: baseline setup checks look complete.</div>
+        <% } else { %>
+          <ul style="margin:0; padding-left:20px;">
+            <% for (String item : setupChecklist) { %>
+              <li><%= tsEsc(item) %></li>
+            <% } %>
+          </ul>
+        <% } %>
+      </div>
+      <div>
+        <h3 style="margin:0 0 6px 0;">Experienced-user tips</h3>
+        <ul style="margin:0; padding-left:20px;">
+          <li>Use <strong>Test</strong> actions before Save to validate targeted updates.</li>
+          <li>Leave password fields blank to keep current secrets unchanged.</li>
+          <li>Use rotation buttons to timestamp key changes for audit trail visibility.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px;">
     <h2 style="margin-top:0;">Storage Backend</h2>
-    <div class="meta" style="margin-bottom:10px;">Secrets are encrypted and stored separately from general settings.</div>
+    <div class="meta" style="margin-bottom:10px;">Configure where assembled documents are stored. Keep secret fields blank to retain currently saved values.</div>
 
     <div class="grid grid-2">
       <label>Backend
@@ -395,12 +489,13 @@
     <div class="grid grid-2">
       <div>Storage secret last rotated: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("secret_rotation_storage_at")))) %></strong></div>
       <div>Clio secret last rotated: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("secret_rotation_clio_at")))) %></strong></div>
-      <div>Storage connection: <strong><%= tsEsc(tsSafe(settings.get("storage_connection_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("storage_connection_checked_at"))) %>)</div>
+      <div>Storage connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("storage_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("storage_connection_checked_at")))) %>)</div>
       <div>Application encryption: <strong><%= tsEsc(tsSafe(settings.get("storage_encryption_mode"))) %></strong></div>
       <div>S3 SSE mode: <strong><%= tsEsc(tsSafe(settings.get("storage_s3_sse_mode"))) %></strong></div>
-      <div>Clio connection: <strong><%= tsEsc(tsSafe(settings.get("clio_connection_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("clio_connection_checked_at"))) %>)</div>
-      <div>Clio auth mode health: <strong><%= tsEsc(tsSafe(settings.get("clio_auth_health_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("clio_auth_health_checked_at"))) %>)</div>
+      <div>Clio connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_connection_checked_at")))) %>)</div>
+      <div>Clio auth mode health: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_auth_health_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_auth_health_checked_at")))) %>)</div>
       <div>Sensitive output policy: <strong><%= tsEsc(secret_redactor.redactValue("hidden")) %></strong></div>
+      <div>Audit logging: <strong>Verbose tenant events with secret redaction enabled</strong></div>
     </div>
   </section>
 
