@@ -48,6 +48,23 @@ public class tenant_settings_test {
         assertEquals("unknown", out.get("clio_auth_health_status"));
     }
 
+
+    @Test
+    void sanitize_supports_storage_encryption_and_s3_sse_modes() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_backend", "s3_compatible");
+        in.put("storage_encryption_mode", "TENANT_MANAGED");
+        in.put("storage_s3_sse_mode", "AWS_KMS");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("s3_compatible", out.get("storage_backend"));
+        assertEquals("tenant_managed", out.get("storage_encryption_mode"));
+        assertEquals("aws_kms", out.get("storage_s3_sse_mode"));
+    }
+
     @Test
     void writes_secrets_in_encrypted_blob_separate_from_general_settings() throws Exception {
         Path pepper = Paths.get("data", "sec", "random_pepper.bin").toAbsolutePath();
@@ -60,10 +77,14 @@ public class tenant_settings_test {
         String tenantUuid = "test-" + UUID.randomUUID();
 
         LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
-        in.put("storage_backend", "filesystem_remote");
+        in.put("storage_backend", "s3_compatible");
         in.put("storage_endpoint", "smb://server/share");
         in.put("storage_access_key", "AKIA_TEST");
         in.put("storage_secret", "storage-secret");
+        in.put("storage_encryption_mode", "tenant_managed");
+        in.put("storage_encryption_key", "encryption-secret");
+        in.put("storage_s3_sse_mode", "aws_kms");
+        in.put("storage_s3_sse_kms_key_id", "kms-key-123");
         in.put("clio_client_secret", "clio-secret");
         store.write(tenantUuid, in);
 
@@ -79,6 +100,10 @@ public class tenant_settings_test {
 
         Map<String, String> roundtrip = store.read(tenantUuid);
         assertEquals("storage-secret", roundtrip.get("storage_secret"));
+        assertEquals("tenant_managed", roundtrip.get("storage_encryption_mode"));
+        assertEquals("encryption-secret", roundtrip.get("storage_encryption_key"));
+        assertEquals("aws_kms", roundtrip.get("storage_s3_sse_mode"));
+        assertEquals("kms-key-123", roundtrip.get("storage_s3_sse_kms_key_id"));
         assertEquals("clio-secret", roundtrip.get("clio_client_secret"));
     }
 

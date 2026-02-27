@@ -83,10 +83,16 @@
     String action = tsSafe(request.getParameter("action")).trim();
 
     String storageBackend = tsSafe(request.getParameter("storage_backend")).trim();
-    if (storageBackend.isBlank()) storageBackend = "localfs";
+    if (storageBackend.isBlank()) storageBackend = "local";
     String storageEndpoint = tsSafe(request.getParameter("storage_endpoint")).trim();
     String storageAccessKey = tsSafe(request.getParameter("storage_access_key")).trim();
     String storageSecret = tsSafe(request.getParameter("storage_secret")).trim();
+    String storageEncryptionMode = tsSafe(request.getParameter("storage_encryption_mode")).trim().toLowerCase(Locale.ROOT);
+    if (!"tenant_managed".equals(storageEncryptionMode)) storageEncryptionMode = "disabled";
+    String storageEncryptionKey = tsSafe(request.getParameter("storage_encryption_key")).trim();
+    String storageS3SseMode = tsSafe(request.getParameter("storage_s3_sse_mode")).trim().toLowerCase(Locale.ROOT);
+    if (!"aes256".equals(storageS3SseMode) && !"aws_kms".equals(storageS3SseMode)) storageS3SseMode = "none";
+    String storageS3SseKmsKeyId = tsSafe(request.getParameter("storage_s3_sse_kms_key_id")).trim();
 
     String clioBaseUrl = tsSafe(request.getParameter("clio_base_url")).trim();
     String clioClientId = tsSafe(request.getParameter("clio_client_id")).trim();
@@ -101,10 +107,14 @@
     boolean featureAsyncSync = tsChecked(request.getParameter("feature_async_sync"));
 
     boolean saveStorageSecret = tsChecked(request.getParameter("save_storage_secret"));
+    boolean saveStorageEncryptionKey = tsChecked(request.getParameter("save_storage_encryption_key"));
     boolean saveClioSecret = tsChecked(request.getParameter("save_clio_secret"));
 
     settings.put("storage_backend", storageBackend);
     settings.put("storage_endpoint", storageEndpoint);
+    settings.put("storage_encryption_mode", storageEncryptionMode);
+    settings.put("storage_s3_sse_mode", storageS3SseMode);
+    settings.put("storage_s3_sse_kms_key_id", storageS3SseKmsKeyId);
     if (!storageAccessKey.isBlank()) settings.put("storage_access_key", storageAccessKey);
     settings.put("clio_base_url", clioBaseUrl);
     settings.put("clio_client_id", clioClientId);
@@ -115,18 +125,26 @@
     settings.put("feature_async_sync", featureAsyncSync ? "true" : "false");
 
     if (saveStorageSecret && !storageSecret.isBlank()) settings.put("storage_secret", storageSecret);
+    if (saveStorageEncryptionKey && !storageEncryptionKey.isBlank()) settings.put("storage_encryption_key", storageEncryptionKey);
     if (saveClioSecret && !clioClientSecret.isBlank()) settings.put("clio_client_secret", clioClientSecret);
 
     String effectiveStorageAccessKey = tsSafe(settings.get("storage_access_key")).trim();
     String effectiveStorageSecret = !storageSecret.isBlank() ? storageSecret : tsSafe(settings.get("storage_secret")).trim();
+    String effectiveStorageEncryptionKey = !storageEncryptionKey.isBlank() ? storageEncryptionKey : tsSafe(settings.get("storage_encryption_key")).trim();
     String effectiveClioSecret = !clioClientSecret.isBlank() ? clioClientSecret : tsSafe(settings.get("clio_client_secret")).trim();
 
     if ("test_storage_connection".equalsIgnoreCase(action)) {
       boolean ok;
-      if ("filesystem_remote".equalsIgnoreCase(storageBackend)) {
+      if (!"local".equalsIgnoreCase(storageBackend) && !"localfs".equalsIgnoreCase(storageBackend)) {
         ok = !storageEndpoint.isBlank() && !effectiveStorageAccessKey.isBlank() && !effectiveStorageSecret.isBlank();
       } else {
         ok = true;
+      }
+      if (ok && "tenant_managed".equals(storageEncryptionMode) && effectiveStorageEncryptionKey.isBlank()) {
+        ok = false;
+      }
+      if (ok && "s3_compatible".equalsIgnoreCase(storageBackend) && "aws_kms".equals(storageS3SseMode) && storageS3SseKmsKeyId.isBlank()) {
+        ok = false;
       }
       settings.put("storage_connection_status", ok ? "ok" : "failed");
       settings.put("storage_connection_checked_at", store.nowIso());
@@ -187,6 +205,14 @@
         valid = false;
         error = "Private mode requires relay/admin exchange instructions endpoint or note.";
       }
+      if ("tenant_managed".equals(storageEncryptionMode) && effectiveStorageEncryptionKey.isBlank()) {
+        valid = false;
+        error = "Tenant-managed encryption requires an application encryption key.";
+      }
+      if ("s3_compatible".equalsIgnoreCase(storageBackend) && "aws_kms".equals(storageS3SseMode) && storageS3SseKmsKeyId.isBlank()) {
+        valid = false;
+        error = "S3 SSE aws_kms requires a KMS key id.";
+      }
 
       if (valid) {
         try {
@@ -205,6 +231,8 @@
           details.put("feature_advanced_assembly", tsSafe(settings.get("feature_advanced_assembly")));
           details.put("feature_async_sync", tsSafe(settings.get("feature_async_sync")));
           details.put("storage_connection_status", tsSafe(settings.get("storage_connection_status")));
+          details.put("storage_encryption_mode", tsSafe(settings.get("storage_encryption_mode")));
+          details.put("storage_s3_sse_mode", tsSafe(settings.get("storage_s3_sse_mode")));
           details.put("clio_connection_status", tsSafe(settings.get("clio_connection_status")));
           details.put("clio_auth_mode", tsSafe(settings.get("clio_auth_mode")));
           details.put("clio_auth_health_status", tsSafe(settings.get("clio_auth_health_status")));
@@ -231,6 +259,7 @@
 
   String maskedStorageSecret = tsSafe(settings.get("storage_secret")).isBlank() ? "" : "********";
   String maskedClioSecret = tsSafe(settings.get("clio_client_secret")).isBlank() ? "" : "********";
+  String maskedStorageEncryptionKey = tsSafe(settings.get("storage_encryption_key")).isBlank() ? "" : "********";
   String maskedStorageAccessKey = tsSafe(settings.get("storage_access_key")).isBlank() ? "" : "********";
   String clioMode = tsSafe(settings.get("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
   if (!"private".equals(clioMode)) clioMode = "public";
@@ -267,12 +296,15 @@
     <div class="grid grid-2">
       <label>Backend
         <select name="storage_backend">
-          <option value="localfs" <%= "localfs".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>Local Filesystem</option>
-          <option value="filesystem_remote" <%= "filesystem_remote".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>Remote Filesystem</option>
+          <option value="local" <%= "local".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>Local Filesystem</option>
+          <option value="ftp" <%= "ftp".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>FTP</option>
+          <option value="ftps" <%= "ftps".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>FTPS</option>
+          <option value="sftp" <%= "sftp".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>SFTP</option>
+          <option value="s3_compatible" <%= "s3_compatible".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>S3 Compatible</option>
         </select>
       </label>
       <label>Endpoint
-        <input type="text" name="storage_endpoint" value="<%= tsEsc(tsSafe(settings.get("storage_endpoint"))) %>" placeholder="smb://fileserver/share or mount path" />
+        <input type="text" name="storage_endpoint" value="<%= tsEsc(tsSafe(settings.get("storage_endpoint"))) %>" placeholder="ftp://, sftp://, or https://s3.endpoint.example" />
       </label>
       <label>Access Key
         <input type="password" name="storage_access_key" value="" placeholder="<%= tsEsc(maskedStorageAccessKey) %>" />
@@ -280,12 +312,32 @@
       <label>Secret
         <input type="password" name="storage_secret" value="" placeholder="<%= tsEsc(maskedStorageSecret) %>" />
       </label>
+      <label>Application Encryption
+        <select name="storage_encryption_mode">
+          <option value="disabled" <%= "disabled".equalsIgnoreCase(tsSafe(settings.get("storage_encryption_mode"))) ? "selected" : "" %>>Disabled</option>
+          <option value="tenant_managed" <%= "tenant_managed".equalsIgnoreCase(tsSafe(settings.get("storage_encryption_mode"))) ? "selected" : "" %>>Tenant-managed key</option>
+        </select>
+      </label>
+      <label>Application Encryption Key
+        <input type="password" name="storage_encryption_key" value="" placeholder="<%= tsEsc(maskedStorageEncryptionKey) %>" />
+      </label>
+      <label>S3 SSE Mode
+        <select name="storage_s3_sse_mode">
+          <option value="none" <%= "none".equalsIgnoreCase(tsSafe(settings.get("storage_s3_sse_mode"))) ? "selected" : "" %>>None</option>
+          <option value="aes256" <%= "aes256".equalsIgnoreCase(tsSafe(settings.get("storage_s3_sse_mode"))) ? "selected" : "" %>>SSE-S3 (AES256)</option>
+          <option value="aws_kms" <%= "aws_kms".equalsIgnoreCase(tsSafe(settings.get("storage_s3_sse_mode"))) ? "selected" : "" %>>SSE-KMS (aws:kms)</option>
+        </select>
+      </label>
+      <label>S3 SSE KMS Key Id
+        <input type="text" name="storage_s3_sse_kms_key_id" value="<%= tsEsc(tsSafe(settings.get("storage_s3_sse_kms_key_id"))) %>" placeholder="arn:aws:kms:... or key id" />
+      </label>
     </div>
 
     <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
       <button type="submit" class="btn btn-ghost" name="action" value="test_storage_connection">Test Storage Connection</button>
       <button type="submit" class="btn btn-ghost" name="action" value="rotate_storage_secret">Rotate Storage Secret</button>
       <label><input type="checkbox" name="save_storage_secret" value="1" /> Persist entered storage secret on Save</label>
+      <label><input type="checkbox" name="save_storage_encryption_key" value="1" /> Persist entered application encryption key on Save</label>
     </div>
   </section>
 
@@ -344,6 +396,8 @@
       <div>Storage secret last rotated: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("secret_rotation_storage_at")))) %></strong></div>
       <div>Clio secret last rotated: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("secret_rotation_clio_at")))) %></strong></div>
       <div>Storage connection: <strong><%= tsEsc(tsSafe(settings.get("storage_connection_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("storage_connection_checked_at"))) %>)</div>
+      <div>Application encryption: <strong><%= tsEsc(tsSafe(settings.get("storage_encryption_mode"))) %></strong></div>
+      <div>S3 SSE mode: <strong><%= tsEsc(tsSafe(settings.get("storage_s3_sse_mode"))) %></strong></div>
       <div>Clio connection: <strong><%= tsEsc(tsSafe(settings.get("clio_connection_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("clio_connection_checked_at"))) %>)</div>
       <div>Clio auth mode health: <strong><%= tsEsc(tsSafe(settings.get("clio_auth_health_status"))) %></strong> (<%= tsEsc(tsSafe(settings.get("clio_auth_health_checked_at"))) %>)</div>
       <div>Sensitive output policy: <strong><%= tsEsc(secret_redactor.redactValue("hidden")) %></strong></div>

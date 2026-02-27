@@ -4,7 +4,10 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.LinkedHashMap;
 import java.util.Properties;
+
+import net.familylawandprobate.controversies.tenant_settings;
 
 public final class StorageBackendResolver {
 
@@ -15,8 +18,17 @@ public final class StorageBackendResolver {
 
     public DocumentStorageBackend resolve(String tenantUuid, String matterUuid, String backendType) {
         String normalized = FilesystemRemoteStorageBackend.normalizeBackendType(backendType);
-        if ("local".equals(normalized)) return new LocalFsStorageBackend(tenantUuid, matterUuid);
-        return new FilesystemRemoteStorageBackend(normalized, tenantUuid);
+        DocumentStorageBackend base = "local".equals(normalized)
+                ? new LocalFsStorageBackend(tenantUuid, matterUuid)
+                : new FilesystemRemoteStorageBackend(normalized, tenantUuid);
+        LinkedHashMap<String, String> settings = tenant_settings.defaultStore().read(tenantUuid);
+        return new EncryptedDocumentStorageBackend(
+                base,
+                safe(settings.get("storage_encryption_mode")),
+                safe(settings.get("storage_encryption_key")),
+                "s3_compatible".equals(normalized) ? safe(settings.get("storage_s3_sse_mode")) : "none",
+                "s3_compatible".equals(normalized) ? safe(settings.get("storage_s3_sse_kms_key_id")) : ""
+        );
     }
 
     public String resolveBackendType(String tenantUuid) throws Exception {
@@ -27,6 +39,10 @@ public final class StorageBackendResolver {
         String envKey = ("CONTROVERSIES_TENANT_" + sanitizedTenant + "_ASSEMBLED_STORAGE_BACKEND").toUpperCase();
         String env = safe(System.getenv(envKey)).trim();
         if (!env.isBlank()) return FilesystemRemoteStorageBackend.normalizeBackendType(env);
+
+        LinkedHashMap<String, String> settings = tenant_settings.defaultStore().read(tenantUuid);
+        String tenantSettingBackend = safe(settings.get("storage_backend")).trim();
+        if (!tenantSettingBackend.isBlank()) return FilesystemRemoteStorageBackend.normalizeBackendType(tenantSettingBackend);
 
         Path cfg = Paths.get("data", "tenants", sanitizedTenant, "assembled", "storage.properties").toAbsolutePath();
         if (Files.exists(cfg)) {
