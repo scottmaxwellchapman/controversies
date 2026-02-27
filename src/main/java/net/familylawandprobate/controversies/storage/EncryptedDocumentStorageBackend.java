@@ -58,6 +58,7 @@ public final class EncryptedDocumentStorageBackend implements DocumentStorageBac
         if (isAppEncryptionEnabled()) {
             byte[] decrypted = get(key);
             out.put("checksum_sha256", StorageCrypto.checksumSha256Hex(decrypted));
+            out.put("checksum_md5", StorageCrypto.checksumMd5Hex(decrypted));
             out.put("plaintext_size_bytes", Long.toString(decrypted.length));
         }
         if (!"none".equals(s3SseMode)) {

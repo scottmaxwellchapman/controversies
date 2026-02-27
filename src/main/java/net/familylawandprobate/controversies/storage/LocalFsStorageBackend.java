@@ -4,7 +4,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-import java.security.MessageDigest;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -20,7 +19,9 @@ public final class LocalFsStorageBackend implements DocumentStorageBackend {
         String normalized = normalizeKey(key);
         Path p = pathFor(normalized);
         Files.createDirectories(p.getParent());
-        Files.write(p, bytes == null ? new byte[0] : bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        byte[] src = bytes == null ? new byte[0] : bytes;
+        Files.write(p, src, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        verifyWriteIntegrity(p, src);
         return normalized;
     }
 
@@ -51,7 +52,8 @@ public final class LocalFsStorageBackend implements DocumentStorageBackend {
         if (!Files.exists(p)) return out;
         byte[] bytes = Files.readAllBytes(p);
         out.put("size_bytes", Long.toString(bytes.length));
-        out.put("checksum_sha256", sha256Hex(bytes));
+        out.put("checksum_sha256", StorageCrypto.checksumSha256Hex(bytes));
+        out.put("checksum_md5", StorageCrypto.checksumMd5Hex(bytes));
         return out;
     }
 
@@ -76,11 +78,11 @@ public final class LocalFsStorageBackend implements DocumentStorageBackend {
         return s == null ? "" : s;
     }
 
-    private static String sha256Hex(byte[] bytes) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] out = digest.digest(bytes == null ? new byte[0] : bytes);
-        StringBuilder sb = new StringBuilder(out.length * 2);
-        for (int i = 0; i < out.length; i++) sb.append(String.format("%02x", out[i]));
-        return sb.toString();
+
+    private static void verifyWriteIntegrity(Path p, byte[] expected) throws Exception {
+        byte[] actual = Files.readAllBytes(p);
+        String expectedMd5 = StorageCrypto.checksumMd5Hex(expected);
+        String actualMd5 = StorageCrypto.checksumMd5Hex(actual);
+        if (!expectedMd5.equals(actualMd5)) throw new IllegalStateException("file write integrity check failed: md5 mismatch");
     }
 }
