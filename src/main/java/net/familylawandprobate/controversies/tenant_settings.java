@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /**
  * tenant_settings
@@ -139,12 +140,14 @@ public final class tenant_settings {
         try {
             Path tenantsRoot = Paths.get("data", "tenants").toAbsolutePath();
             if (!Files.exists(tenantsRoot)) return new StartupSelfCheckResult(true, failures);
-            for (Path p : Files.list(tenantsRoot).toList()) {
-                if (p == null || !Files.isDirectory(p)) continue;
-                String tenantUuid = safe(p.getFileName() == null ? "" : p.getFileName().toString()).trim();
-                if (tenantUuid.isBlank()) continue;
-                LinkedHashMap<String, String> cfg = read(tenantUuid);
-                validateEnabledIntegrationSecrets(tenantUuid, cfg, failures);
+            try (Stream<Path> tenantDirs = Files.list(tenantsRoot)) {
+                for (Path p : tenantDirs.toList()) {
+                    if (p == null || !Files.isDirectory(p)) continue;
+                    String tenantUuid = safe(p.getFileName() == null ? "" : p.getFileName().toString()).trim();
+                    if (tenantUuid.isBlank()) continue;
+                    LinkedHashMap<String, String> cfg = read(tenantUuid);
+                    validateEnabledIntegrationSecrets(tenantUuid, cfg, failures);
+                }
             }
         } catch (Exception ex) {
             failures.add("startup_self_check_failed: " + safe(ex.getMessage()));
