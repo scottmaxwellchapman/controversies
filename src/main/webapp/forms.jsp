@@ -991,6 +991,20 @@
     return String(s || "").replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&");
   }
 
+  function normalizeTokenDelimitersJs(input) {
+    var src = String(input == null ? "" : input);
+    if (!src) return "";
+    return src
+      .replace(/\u201c/g, "{")
+      .replace(/\u201d/g, "}")
+      .replace(/\u2018/g, "[")
+      .replace(/\u2019/g, "]")
+      .replace(/\uff5b/g, "{")
+      .replace(/\uff5d/g, "}")
+      .replace(/\uff3b/g, "[")
+      .replace(/\uff3d/g, "]");
+  }
+
   function tokenRegex(token) {
     var t = String(token || "").trim();
     if (!t) return null;
@@ -1440,7 +1454,7 @@
       return;
     }
 
-    var text = workspace.value || "";
+    var text = normalizeTokenDelimitersJs(workspace.value || "");
     var m;
     while ((m = re.exec(text)) !== null) {
       tokenMatches.push({ start: m.index, end: m.index + m[0].length });

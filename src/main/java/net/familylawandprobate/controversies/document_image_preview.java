@@ -450,14 +450,16 @@ public final class document_image_preview {
                                           int pageIndex,
                                           ArrayList<HitRect> out) {
         if (pageText == null || glyphs == null || needle == null || out == null) return;
-        if (needle.isBlank()) return;
+        String normalizedPageText = normalizeTokenDelimiters(pageText);
+        String normalizedNeedle = normalizeTokenDelimiters(needle);
+        if (normalizedNeedle.isBlank()) return;
 
         int from = 0;
-        while (from < pageText.length()) {
-            int idx = pageText.indexOf(needle, from);
+        while (from < normalizedPageText.length()) {
+            int idx = normalizedPageText.indexOf(normalizedNeedle, from);
             if (idx < 0) break;
 
-            int end = idx + needle.length();
+            int end = idx + normalizedNeedle.length();
             if (end > glyphs.size()) break;
 
             int x1 = Integer.MAX_VALUE;
@@ -517,6 +519,16 @@ public final class document_image_preview {
         int dot = v.lastIndexOf('.');
         if (dot >= 0 && dot + 1 < v.length()) v = v.substring(dot + 1);
         return v.replaceAll("[^a-z0-9]", "");
+    }
+
+    private static String normalizeTokenDelimiters(String input) {
+        String src = safe(input);
+        if (src.isEmpty()) return src;
+        return src
+                .replace('“', '{').replace('”', '}')
+                .replace('‘', '[').replace('’', ']')
+                .replace('｛', '{').replace('｝', '}')
+                .replace('［', '[').replace('］', ']');
     }
 
     private static int clamp(int v, int min, int max) {
