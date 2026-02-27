@@ -19,6 +19,7 @@
 
 <%@ page import="net.familylawandprobate.controversies.tenants" %>
 <%@ page import="net.familylawandprobate.controversies.ip_lists" %>
+<%@ page import="net.familylawandprobate.controversies.users_roles" %>
 <%@ include file="security.jspf" %>
 
 <%
@@ -37,6 +38,7 @@
 
     // Cookie binding
     private static final String TENANT_BIND_COOKIE = "TENANT_BIND";
+    private static final String USER_BIND_COOKIE = "USER_BIND";
 
     // CSRF session key (matches filter default)
     private static final String CSRF_SESSION_KEY = "CSRF_TOKEN";
@@ -382,11 +384,9 @@
     String ctx = request.getContextPath();
     if (ctx == null) ctx = "";
 
-    // FINAL destination (after USER login completes)
+    // Final destination after successful sign-in
     String next = normalizeNext(request.getParameter("next"));
-
-    // ALWAYS go to USER login next, carrying next=
-    String userLoginUrl = ctx + "/user_login.jsp?next=" + java.net.URLEncoder.encode(next, StandardCharsets.UTF_8);
+    String redirectTo = ctx + next;
 
     String clientIp = getClientIp(request);
     String cookieBind = getCookieValue(request, TENANT_BIND_COOKIE);
@@ -403,6 +403,7 @@
 
     try { store.ensure(); } catch (Exception ignored) {}
     try { lists.ensure(); } catch (Exception ignored) {}
+    users_roles ur = users_roles.defaultStore();
 
     // Build dropdown list: enabled tenants only
     List<tenants.Tenant> enabledTenants = new ArrayList<>();
@@ -416,7 +417,12 @@
         error = "Unable to load tenants: " + e.getMessage();
     }
 
-    // If already authenticated, enforce binding; if ok -> ALWAYS go to user_login.jsp (carrying next)
+    // Handle login POST
+    String selectedLabel = safe(request.getParameter("tenantLabel")).trim();
+    String email = safe(request.getParameter("email")).trim();
+
+    // If already authenticated at tenant layer, enforce binding.
+    // If full user auth is still valid, go straight to destination.
     String sessUuid  = (String) session.getAttribute(S_TENANT_UUID);
     String sessLabel = (String) session.getAttribute(S_TENANT_LABEL);
 
@@ -438,23 +444,56 @@
         }
 
         if (b != null && bindingMatches(b, clientIp, session.getId(), cookieBind)) {
-            response.sendRedirect(userLoginUrl);
-            return;
+            String sessUserUuid = safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim();
+            String sessUserEmail = safe((String) session.getAttribute(users_roles.S_USER_EMAIL)).trim();
+            String sessRoleUuid = safe((String) session.getAttribute(users_roles.S_ROLE_UUID)).trim();
+            String userCookieBind = getCookieValue(request, USER_BIND_COOKIE);
+            boolean userOk = false;
+
+            if (!sessUserUuid.isBlank() && !sessUserEmail.isBlank() && !sessRoleUuid.isBlank()) {
+                try {
+                    ur.ensure(tu);
+                    userOk = ur.userBindingMatches(tu, sessUserUuid, session.getId(), clientIp, userCookieBind);
+                    if (userOk) {
+                        users_roles.UserRec u = ur.getUserByUuid(tu, sessUserUuid);
+                        users_roles.RoleRec r = ur.getRoleByUuid(tu, sessRoleUuid);
+                        userOk = (u != null && u.enabled && r != null && r.enabled);
+                    }
+                } catch (Exception ignored) {
+                    userOk = false;
+                }
+            }
+
+            if (userOk) {
+                response.sendRedirect(redirectTo);
+                return;
+            }
+
+            // Keep tenant layer, clear stale user layer.
+            try { ur.clearSessionAuth(session); } catch (Exception ignored) {}
+            if (!sessUserUuid.isBlank()) {
+                try { ur.deleteUserBinding(tu, sessUserUuid, session.getId()); } catch (Exception ignored) {}
+            }
+            deleteCookie(request, response, USER_BIND_COOKIE);
+            if (selectedLabel.isBlank()) selectedLabel = safe(sessLabel).trim();
         } else {
+            String sessUserUuid = safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim();
+            try { ur.clearSessionAuth(session); } catch (Exception ignored) {}
+            if (!sessUserUuid.isBlank()) {
+                try { ur.deleteUserBinding(tu, sessUserUuid, session.getId()); } catch (Exception ignored) {}
+            }
             session.removeAttribute(S_TENANT_UUID);
             session.removeAttribute(S_TENANT_LABEL);
             session.removeAttribute(S_TENANT_SID);
             session.removeAttribute(S_TENANT_IP);
             session.removeAttribute(S_TENANT_CB);
             deleteCookie(request, response, TENANT_BIND_COOKIE);
+            deleteCookie(request, response, USER_BIND_COOKIE);
 
             // remove this session's binding file (if any)
             deleteQuiet(p);
         }
     }
-
-    // Handle login POST
-    String selectedLabel = safe(request.getParameter("tenantLabel")).trim();
 
     if ("POST".equalsIgnoreCase(request.getMethod()) && "login".equalsIgnoreCase(request.getParameter("action"))) {
 
@@ -473,11 +512,13 @@
                 } catch (Exception ignored) {}
                 error = "Too many login attempts. Please try again in " + formatRemaining(until) + ".";
             } else {
-                String pw = safe(request.getParameter("password"));
+                String pwStr = safe(request.getParameter("password"));
 
                 if (selectedLabel.length() < 3) {
                     error = "Please select a tenant.";
-                } else if (pw.isBlank()) {
+                } else if (email.isBlank() || email.length() < 3) {
+                    error = "Email is required.";
+                } else if (pwStr.isBlank()) {
                     error = "Password is required.";
                 } else {
                     tenants.Tenant found = null;
@@ -492,7 +533,7 @@
 
                     if (found == null) {
                         int c = noteFailure(application, clientIp);
-                        error = "Invalid tenant or password.";
+                        error = "Invalid tenant, email, or password.";
                         if (!isLocalhostIp(clientIp)) {
                             try {
                                 if (c == 5) lists.banTemporary(clientIp, 10 * 60, "tenant_login: 5 failures");
@@ -501,12 +542,17 @@
                             } catch (Exception ignored) {}
                         }
                     } else {
-                        boolean ok = false;
-                        try { ok = store.verifyPassword(found.uuid, pw.toCharArray()); } catch (Exception ignored) { ok = false; }
+                        users_roles.AuthResult ar = null;
+                        try {
+                            ur.ensure(found.uuid);
+                            ar = ur.authenticate(found.uuid, email, pwStr.toCharArray());
+                        } catch (Exception ignored) {
+                            ar = null;
+                        }
 
-                        if (!ok) {
+                        if (ar == null || ar.user == null || ar.role == null) {
                             int c = noteFailure(application, clientIp);
-                            error = "Invalid tenant or password.";
+                            error = "Invalid tenant, email, or password.";
                             if (!isLocalhostIp(clientIp)) {
                                 try {
                                     if (c == 5) lists.banTemporary(clientIp, 10 * 60, "tenant_login: 5 failures");
@@ -518,29 +564,45 @@
                             // SUCCESS
                             clearFailures(application, clientIp);
 
-                            // rotate cookie binding
-                            String newCookieBind = randomTokenUrlSafe(32);
-                            setHttpOnlyCookie(request, response, TENANT_BIND_COOKIE, newCookieBind, 30 * 24 * 60 * 60); // 30 days
+                            // rotate cookie bindings
+                            String newTenantCookieBind = randomTokenUrlSafe(32);
+                            String newUserCookieBind = randomTokenUrlSafe(32);
+                            setHttpOnlyCookie(request, response, TENANT_BIND_COOKIE, newTenantCookieBind, 30 * 24 * 60 * 60); // 30 days
+                            setHttpOnlyCookie(request, response, USER_BIND_COOKIE, newUserCookieBind, 30 * 24 * 60 * 60); // 30 days
 
                             // rotate session to prevent fixation
                             try { session.invalidate(); } catch (Exception ignored) {}
                             HttpSession s2 = request.getSession(true);
 
-                            // store tenant uuid + label in session
+                            // store tenant identity in session
                             s2.setAttribute(S_TENANT_UUID, found.uuid);
                             s2.setAttribute(S_TENANT_LABEL, found.label);
                             s2.setAttribute(S_TENANT_SID, s2.getId());
                             s2.setAttribute(S_TENANT_IP, clientIp);
-                            s2.setAttribute(S_TENANT_CB, newCookieBind);
+                            s2.setAttribute(S_TENANT_CB, newTenantCookieBind);
+
+                            // bind signed-in user + role + permissions
+                            ur.bindToSession(s2, ar);
 
                             // write binding file (IP + session + cookie) - PER SESSION
                             try {
-                                Binding b = new Binding(found.uuid, found.label, clientIp, s2.getId(), newCookieBind);
+                                Binding b = new Binding(found.uuid, found.label, clientIp, s2.getId(), newTenantCookieBind);
                                 writeBinding(bindingPath(found.uuid, s2.getId()), b);
                             } catch (Exception ignored) {}
 
-                            // ALWAYS go to user_login.jsp next (carrying next=final destination)
-                            response.sendRedirect(userLoginUrl);
+                            try {
+                                ur.writeUserBinding(
+                                        found.uuid,
+                                        ar.user.uuid,
+                                        ar.user.emailAddress,
+                                        ar.role.uuid,
+                                        clientIp,
+                                        s2.getId(),
+                                        newUserCookieBind
+                                );
+                            } catch (Exception ignored) {}
+
+                            response.sendRedirect(redirectTo);
                             return;
                         }
                     }
@@ -563,7 +625,7 @@
     <div class="section-head">
       <div>
         <h1>Tenant login</h1>
-        <div class="meta">Select an enabled tenant, then enter the password.</div>
+        <div class="meta">Select your tenant, then sign in with your email and password.</div>
       </div>
     </div>
 
@@ -607,8 +669,13 @@
       </label>
 
       <label>
+        <span>Email</span>
+        <input type="text" name="email" value="<%= esc(email) %>" autocomplete="username" required <%= enabledTenants.isEmpty() ? "disabled" : "" %> />
+      </label>
+
+      <label>
         <span>Password</span>
-        <input type="password" name="password" required <%= enabledTenants.isEmpty() ? "disabled" : "" %> />
+        <input type="password" name="password" autocomplete="current-password" required <%= enabledTenants.isEmpty() ? "disabled" : "" %> />
       </label>
 
       <div class="actions">
@@ -618,7 +685,7 @@
 
       <div class="help">
         Security: attempts are rate-limited (temporary IP bans). Sessions are bound to IP + cookie + session id.
-        After successful tenant login, you will be sent to <code>user_login.jsp</code> (with <code>next</code> preserved).
+        Tenant and user authentication complete in this single form. The <code>next</code> destination is preserved.
       </div>
     </form>
   </section>

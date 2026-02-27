@@ -1263,6 +1263,51 @@
     return true;
   }
 
+  function tokenHasTextMatch(tokenLiteral, normalizedText) {
+    var token = String(tokenLiteral || "").trim();
+    if (!token) return false;
+    var text = String(normalizedText == null ? "" : normalizedText);
+    if (!text) return false;
+    var re = tokenRegex(token);
+    if (!re) return false;
+    re.lastIndex = 0;
+    return re.test(text);
+  }
+
+  function tokenHasAnyMatch(tokenLiteral, normalizedText) {
+    if (tokenHasTextMatch(tokenLiteral, normalizedText)) return true;
+    return tokenHitsForLiteral(tokenLiteral).length > 0;
+  }
+
+  function selectNextTokenWithMatches(startOrdinal) {
+    if (!tokenSelect) return false;
+    var idxs = tokenOptionIndices();
+    if (!idxs.length) return false;
+
+    var start = Number(startOrdinal);
+    if (!isFinite(start) || start < 0) start = currentTokenOrdinal(idxs);
+    if (start < 0) start = 0;
+    var normalizedText = normalizeTokenDelimitersJs(workspace ? workspace.value : "");
+    var fallbackOrd = (start + 1) % idxs.length;
+    var chosenOrd = -1;
+
+    for (var step = 1; step <= idxs.length; step++) {
+      var ord = (start + step) % idxs.length;
+      var opt = tokenSelect.options[idxs[ord]];
+      var token = String((opt && opt.value) || "");
+      if (tokenHasAnyMatch(token, normalizedText)) {
+        chosenOrd = ord;
+        break;
+      }
+    }
+    if (chosenOrd < 0) chosenOrd = fallbackOrd;
+
+    tokenSelect.selectedIndex = idxs[chosenOrd];
+    syncDefaultReplaceValue();
+    recalcMatches();
+    return true;
+  }
+
   function navigationMatchCount() {
     if (tokenMatches.length > 0) return tokenMatches.length;
     return selectedTokenImageHits().length;
@@ -1703,6 +1748,7 @@
       recalcMatches();
       if (tokenMatches.length === 0) return;
     }
+    var tokenOrd = currentTokenOrdinal();
     if (tokenMatchIndex < 0) tokenMatchIndex = 0;
     if (tokenMatchIndex >= tokenMatches.length) tokenMatchIndex = tokenMatches.length - 1;
 
@@ -1710,7 +1756,7 @@
     var hit = tokenMatches[tokenMatchIndex];
     if (!hit) return;
     replaceRange(hit.start, hit.end, selectedReplacementValue());
-    recalcMatches();
+    selectNextTokenWithMatches(tokenOrd);
     scheduleRenderedPreviewRefresh();
   }
 
@@ -1719,6 +1765,7 @@
     var token = tokenSelect.value;
     var re = tokenRegex(token);
     if (!re) return;
+    var tokenOrd = currentTokenOrdinal();
 
     if (tokenMatches.length === 0) {
       recalcMatches();
@@ -1729,7 +1776,7 @@
     for (var i = hits.length - 1; i >= 0; i--) {
       replaceRange(hits[i].start, hits[i].end, selectedReplacementValue());
     }
-    recalcMatches();
+    selectNextTokenWithMatches(tokenOrd);
     scheduleRenderedPreviewRefresh();
   }
 

@@ -384,7 +384,7 @@ public final class security {
 
         if (userUuid.isEmpty() || userEmail.isEmpty() || roleUuid.isEmpty()) {
             cleanupUser(sess, req, res, tenantUuid, userUuid, sid);
-            res.sendRedirect(ctxPath + "/user_login.jsp?next=" + enc(next));
+            res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
             return false;
         }
 
@@ -401,7 +401,7 @@ public final class security {
 
         if (!ok) {
             cleanupUser(sess, req, res, tenantUuid, userUuid, sid);
-            res.sendRedirect(ctxPath + "/user_login.jsp?next=" + enc(next));
+            res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
             return false;
         }
 
@@ -410,18 +410,18 @@ public final class security {
             users_roles.UserRec u = ur.getUserByUuid(tenantUuid, userUuid);
             if (u == null || !u.enabled) {
                 cleanupUser(sess, req, res, tenantUuid, userUuid, sid);
-                res.sendRedirect(ctxPath + "/user_login.jsp?next=" + enc(next));
+                res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
                 return false;
             }
             users_roles.RoleRec r = ur.getRoleByUuid(tenantUuid, roleUuid);
             if (r == null || !r.enabled) {
                 cleanupUser(sess, req, res, tenantUuid, userUuid, sid);
-                res.sendRedirect(ctxPath + "/user_login.jsp?next=" + enc(next));
+                res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
                 return false;
             }
         } catch (Exception ignored) {
             cleanupUser(sess, req, res, tenantUuid, userUuid, sid);
-            res.sendRedirect(ctxPath + "/user_login.jsp?next=" + enc(next));
+            res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
             return false;
         }
 
