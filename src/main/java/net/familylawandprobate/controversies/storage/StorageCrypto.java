@@ -40,7 +40,15 @@ public final class StorageCrypto {
     }
 
     public static String checksumSha256Hex(byte[] bytes) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        return checksumHex("SHA-256", bytes);
+    }
+
+    public static String checksumMd5Hex(byte[] bytes) throws Exception {
+        return checksumHex("MD5", bytes);
+    }
+
+    private static String checksumHex(String algorithm, byte[] bytes) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance(algorithm);
         byte[] out = digest.digest(bytes == null ? new byte[0] : bytes);
         StringBuilder sb = new StringBuilder(out.length * 2);
         for (int i = 0; i < out.length; i++) sb.append(String.format("%02x", out[i]));
