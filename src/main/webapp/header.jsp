@@ -114,6 +114,8 @@
         g.items.add(new MenuItem("Tenant Fields", "/tenant_fields.jsp"));
         g.items.add(new MenuItem("Form Assembly", "/forms.jsp"));
         g.items.add(new MenuItem("Assembled Forms", "/assembled_forms.jsp"));
+        g.items.add(new MenuItem("Plugin Manager", "/plugin_manager.jsp"));
+        g.items.add(new MenuItem("Logs", "/log_viewer.jsp"));
         return java.util.List.of(g);
     }
 

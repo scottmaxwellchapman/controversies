@@ -2,10 +2,12 @@
 
 <%@ page import="java.io.*" %>
 <%@ page import="java.nio.file.*" %>
+<%@ page import="java.util.LinkedHashMap" %>
 
 <%@ page import="jakarta.servlet.http.Cookie" %>
 <%@ page import="jakarta.servlet.http.HttpSession" %>
 
+<%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 
 <%!
@@ -88,9 +90,23 @@
     String tenantUuid  = safe((String) session.getAttribute(S_TENANT_UUID)).trim();
     String tenantLabel = safe((String) session.getAttribute(S_TENANT_LABEL)).trim(); // not required here
     String sessionId   = session.getId();
+    String clientIp = safe(request.getRemoteAddr());
 
     // read user identity BEFORE clearing session
     String userUuid = safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim();
+    String userEmail = safe((String) session.getAttribute(users_roles.S_USER_EMAIL)).trim();
+
+    activity_log authLog = activity_log.defaultStore();
+    LinkedHashMap<String, String> logDetails = new LinkedHashMap<String, String>();
+    logDetails.put("ip", clientIp);
+    logDetails.put("tenant_label", tenantLabel);
+    logDetails.put("user_email", userEmail);
+    logDetails.put("session_id", sessionId);
+    if (!tenantUuid.isEmpty() || !userUuid.isEmpty()) {
+        authLog.logInfo("auth.logout", tenantUuid, userUuid, "", "", logDetails);
+    } else {
+        authLog.logSystem("info", "auth.logout.anon", logDetails);
+    }
 
     // Remove THIS SESSION's tenant binding file (recommended)
     if (!tenantUuid.isEmpty()) {

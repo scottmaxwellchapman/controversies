@@ -10,13 +10,13 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 public final class activity_log {
     public static final class LogEntry {
         public final String time;
+        public final String scope;
         public final String level;
         public final String action;
         public final String tenantUuid;
@@ -25,8 +25,9 @@ public final class activity_log {
         public final String documentUuid;
         public final String details;
 
-        public LogEntry(String time, String level, String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, String details) {
+        public LogEntry(String time, String scope, String level, String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, String details) {
             this.time = safe(time);
+            this.scope = safe(scope);
             this.level = safe(level);
             this.action = safe(action);
             this.tenantUuid = safe(tenantUuid);
@@ -38,13 +39,39 @@ public final class activity_log {
     }
 
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC);
-    private final Object lock = new Object();
+    private static final Object LOCK = new Object();
 
     public static activity_log defaultStore() { return new activity_log(); }
 
     public void logVerbose(String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
+        log("verbose", action, tenantUuid, userUuid, caseUuid, documentUuid, details);
+    }
+
+    public void logInfo(String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
+        log("info", action, tenantUuid, userUuid, caseUuid, documentUuid, details);
+    }
+
+    public void logWarn(String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
+        log("warn", action, tenantUuid, userUuid, caseUuid, documentUuid, details);
+    }
+
+    public void logError(String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
+        log("error", action, tenantUuid, userUuid, caseUuid, documentUuid, details);
+    }
+
+    public void logSystem(String level, String action, Map<String, String> details) {
+        log(level, action, "", "system", "", "", details);
+    }
+
+    public void logSystem(String level, String action, String userUuid, Map<String, String> details) {
+        log(level, action, "", userUuid, "", "", details);
+    }
+
+    public void log(String level, String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
         String tenant = safe(tenantUuid).trim();
-        if (tenant.isBlank()) return;
+        boolean systemScope = tenant.isBlank();
+        String scope = systemScope ? "system" : "tenant";
+        String normalizedLevel = normalizeLevel(level);
         String now = Instant.now().toString();
         StringBuilder detailXml = new StringBuilder(256);
         if (details != null) {
@@ -58,17 +85,17 @@ public final class activity_log {
             }
         }
 
-        String entry = "  <event time=\"" + xmlAttr(now) + "\" level=\"verbose\" action=\"" + xmlAttr(action)
+        String entry = "  <event time=\"" + xmlAttr(now) + "\" scope=\"" + xmlAttr(scope) + "\" level=\"" + xmlAttr(normalizedLevel) + "\" action=\"" + xmlAttr(action)
                 + "\" tenant_uuid=\"" + xmlAttr(tenant) + "\" user_uuid=\"" + xmlAttr(userUuid)
                 + "\" case_uuid=\"" + xmlAttr(caseUuid) + "\" document_uuid=\"" + xmlAttr(documentUuid) + "\">\n"
                 + detailXml + "  </event>\n";
 
-        synchronized (lock) {
+        synchronized (LOCK) {
             try {
-                Path p = logPath(tenant);
+                Path p = systemScope ? systemLogPath() : tenantLogPath(tenant);
                 Files.createDirectories(p.getParent());
                 if (!Files.exists(p)) {
-                    String seed = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<activity_log tenant_uuid=\"" + xmlAttr(tenant) + "\">\n</activity_log>\n";
+                    String seed = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<activity_log scope=\"" + xmlAttr(scope) + "\" tenant_uuid=\"" + xmlAttr(tenant) + "\">\n</activity_log>\n";
                     Files.writeString(p, seed, StandardCharsets.UTF_8);
                 }
                 String existing = Files.readString(p, StandardCharsets.UTF_8);
@@ -83,13 +110,20 @@ public final class activity_log {
     public List<LogEntry> recent(String tenantUuid, int limit) {
         String tenant = safe(tenantUuid).trim();
         if (tenant.isBlank()) return List.of();
+        return readRecent(tenantLogPath(tenant), "tenant", limit);
+    }
+
+    public List<LogEntry> recentSystem(int limit) {
+        return readRecent(systemLogPath(), "system", limit);
+    }
+
+    private List<LogEntry> readRecent(Path logPath, String defaultScope, int limit) {
         int max = Math.max(1, Math.min(500, limit));
         List<LogEntry> out = new ArrayList<LogEntry>();
-        synchronized (lock) {
+        synchronized (LOCK) {
             try {
-                Path p = logPath(tenant);
-                if (!Files.exists(p)) return List.of();
-                String xml = Files.readString(p, StandardCharsets.UTF_8);
+                if (!Files.exists(logPath)) return List.of();
+                String xml = Files.readString(logPath, StandardCharsets.UTF_8);
                 java.util.regex.Matcher m = java.util.regex.Pattern
                         .compile("<event\\s+([^>]+)>([\\s\\S]*?)</event>")
                         .matcher(xml);
@@ -98,6 +132,7 @@ public final class activity_log {
                     String body = safe(m.group(2)).trim();
                     out.add(new LogEntry(
                             attr(attrs, "time"),
+                            attrOrDefault(attrs, "scope", defaultScope),
                             attr(attrs, "level"),
                             attr(attrs, "action"),
                             attr(attrs, "tenant_uuid"),
@@ -121,9 +156,26 @@ public final class activity_log {
         return m.find() ? m.group(1) : "";
     }
 
-    private static Path logPath(String tenantUuid) {
+    private static String attrOrDefault(String attrs, String key, String fallback) {
+        String v = attr(attrs, key);
+        if (!v.isBlank()) return v;
+        return safe(fallback);
+    }
+
+    private static Path tenantLogPath(String tenantUuid) {
         String day = DAY.format(Instant.now());
         return Paths.get("data", "tenants", safeFile(tenantUuid), "logs", "activity_" + day + ".xml").toAbsolutePath();
+    }
+
+    private static Path systemLogPath() {
+        String day = DAY.format(Instant.now());
+        return Paths.get("data", "sec", "logs", "system_activity_" + day + ".xml").toAbsolutePath();
+    }
+
+    private static String normalizeLevel(String level) {
+        String l = safe(level).trim().toLowerCase();
+        if ("verbose".equals(l) || "info".equals(l) || "warn".equals(l) || "error".equals(l)) return l;
+        return "info";
     }
 
     private static String safe(String s) { return s == null ? "" : s; }

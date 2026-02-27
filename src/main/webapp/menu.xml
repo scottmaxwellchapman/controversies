@@ -11,5 +11,6 @@
   <item label="Case Fields" href="/case_fields.jsp" />
   <item label="Token Guide" href="/token_guide.jsp" />
   <item label="Markup Notation" href="/markup_notation.jsp" />
+  <item label="Plugin Manager" href="/plugin_manager.jsp" />
   <item label="Logs" href="/log_viewer.jsp" />
 </menu>

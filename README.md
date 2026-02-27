@@ -89,7 +89,8 @@ mvn -version
 3. **Cases**: create matters and case-specific values
 4. **Tenant Fields**: define shared/global tenant values
 5. **Form Assembly**: assemble templates with token replacement
-6. **Assembled Forms / Logs**: inspect output and diagnostics
+6. **Plugin Manager**: inspect plugin discovery/load health and reload plugins
+7. **Assembled Forms / Logs**: inspect output and diagnostics
 
 Main navigation is in `menu.xml` and links these pages from the header.
 
@@ -168,6 +169,8 @@ The application supports runtime modularity through a plugin system designed for
 - Current extension points:
   - Startup lifecycle hooks (`onLoad`, servlet-context hook, shutdown)
   - Header navigation contributions (`menuContributions`)
+- Admin UI:
+  - `/plugin_manager.jsp` exposes plugin runtime status, discovered jars/descriptors, config visibility, and manual reload.
 
 If no plugins are installed, behavior remains identical to the base application.
 
@@ -229,8 +232,10 @@ data/
     plugins.properties
     state/<plugin-id>/
   sec/
+    logs/system_activity_YYYY-MM-DD.xml
     random_pepper.bin
     ssl/keystore.p12
+  tenants/<tenant-uuid>/logs/activity_YYYY-MM-DD.xml
   tenants/<tenant-uuid>/...
 ```
 

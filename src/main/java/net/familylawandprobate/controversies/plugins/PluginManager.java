@@ -1,5 +1,6 @@
 package net.familylawandprobate.controversies.plugins;
 
+import net.familylawandprobate.controversies.activity_log;
 import jakarta.servlet.ServletContext;
 
 import java.io.InputStream;
@@ -12,9 +13,11 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
 import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
@@ -57,6 +60,7 @@ public final class PluginManager {
     private final List<URLClassLoader> pluginClassLoaders = new ArrayList<>();
 
     private List<MenuContribution> menuContributions = List.of();
+    private List<Path> discoveredJarPaths = List.of();
     private Set<String> enabledIds = Set.of();
     private Set<String> disabledIds = Set.of();
     private ServletContext servletContext;
@@ -78,8 +82,14 @@ public final class PluginManager {
         activePlugins.clear();
         descriptors.clear();
         menuContributions = List.of();
+        discoveredJarPaths = List.of();
         enabledIds = Set.of();
         disabledIds = Set.of();
+
+        LinkedHashMap<String, String> startDetails = new LinkedHashMap<>();
+        startDetails.put("plugins_dir", pluginsDir.toString());
+        startDetails.put("config_path", configPath.toString());
+        logActivity("info", "plugin.manager.starting", startDetails);
 
         try {
             Files.createDirectories(dataDir);
@@ -87,6 +97,10 @@ public final class PluginManager {
             Files.createDirectories(pluginStateDir);
         } catch (Exception e) {
             LOG.log(Level.SEVERE, "Plugin manager directories are unavailable: " + e.getMessage(), e);
+            LinkedHashMap<String, String> details = new LinkedHashMap<>();
+            details.put("error", safeError(e));
+            details.put("plugins_dir", pluginsDir.toString());
+            logActivity("error", "plugin.manager.start.failed", details);
             started = false;
             return;
         }
@@ -119,6 +133,14 @@ public final class PluginManager {
             publishContextAttributes(servletContext);
         }
 
+        LinkedHashMap<String, String> details = new LinkedHashMap<>();
+        details.put("active_plugins", String.valueOf(activePlugins.size()));
+        details.put("discovered_descriptors", String.valueOf(descriptors.size()));
+        details.put("jar_count", String.valueOf(discoveredJarPaths.size()));
+        if (!enabledIds.isEmpty()) details.put("enabled_ids", String.join(",", enabledIds));
+        if (!disabledIds.isEmpty()) details.put("disabled_ids", String.join(",", disabledIds));
+        logActivity("info", "plugin.manager.started", details);
+
         LOG.info(() -> "Plugin manager started. active=" + activePlugins.size() + ", discovered=" + descriptors.size());
     }
 
@@ -139,11 +161,17 @@ public final class PluginManager {
                 h.plugin.onShutdown();
             } catch (Exception e) {
                 LOG.log(Level.WARNING, "Plugin shutdown failed for " + h.id + ": " + e.getMessage(), e);
+                LinkedHashMap<String, String> details = new LinkedHashMap<>();
+                details.put("plugin_id", h.id);
+                details.put("error", safeError(e));
+                logActivity("warn", "plugin.shutdown.failed", details);
             }
         }
 
+        int activeCount = activePlugins.size();
         activePlugins.clear();
         menuContributions = List.of();
+        discoveredJarPaths = List.of();
 
         for (int i = pluginClassLoaders.size() - 1; i >= 0; i--) {
             URLClassLoader cl = pluginClassLoaders.get(i);
@@ -159,6 +187,21 @@ public final class PluginManager {
         disabledIds = Set.of();
         servletContext = null;
         started = false;
+
+        LinkedHashMap<String, String> details = new LinkedHashMap<>();
+        details.put("active_plugins_before_stop", String.valueOf(activeCount));
+        logActivity("info", "plugin.manager.stopped", details);
+    }
+
+    public synchronized void reload() {
+        ServletContext ctx = this.servletContext;
+        stop();
+        if (ctx != null) this.servletContext = ctx;
+        start();
+        LinkedHashMap<String, String> details = new LinkedHashMap<>();
+        details.put("active_plugins", String.valueOf(activePlugins.size()));
+        details.put("discovered_descriptors", String.valueOf(descriptors.size()));
+        logActivity("info", "plugin.manager.reloaded", details);
     }
 
     public synchronized List<MenuContribution> menuContributions() {
@@ -169,6 +212,38 @@ public final class PluginManager {
     public synchronized List<PluginDescriptor> descriptors() {
         if (!started) start();
         return List.copyOf(descriptors);
+    }
+
+    public synchronized boolean isStarted() {
+        return started;
+    }
+
+    public synchronized int activePluginCount() {
+        return activePlugins.size();
+    }
+
+    public synchronized Path pluginsDir() {
+        return pluginsDir;
+    }
+
+    public synchronized Path pluginStateDir() {
+        return pluginStateDir;
+    }
+
+    public synchronized Path configPath() {
+        return configPath;
+    }
+
+    public synchronized List<Path> pluginJarPaths() {
+        return List.copyOf(discoveredJarPaths);
+    }
+
+    public synchronized Set<String> enabledIdsConfigured() {
+        return Set.copyOf(enabledIds);
+    }
+
+    public synchronized Set<String> disabledIdsConfigured() {
+        return Set.copyOf(disabledIds);
     }
 
     private void publishContextAttributes(ServletContext servletContext) {
@@ -188,6 +263,7 @@ public final class PluginManager {
                             && p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
                     .sorted()
                     .forEach(jars::add);
+            discoveredJarPaths = List.copyOf(jars);
         } catch (Exception e) {
             descriptors.add(new PluginDescriptor(
                     "plugins.dir",
@@ -198,6 +274,10 @@ public final class PluginManager {
                     safeError(e)
             ));
             LOG.log(Level.WARNING, "Plugin directory scan failed: " + e.getMessage(), e);
+            LinkedHashMap<String, String> details = new LinkedHashMap<>();
+            details.put("plugins_dir", pluginsDir.toString());
+            details.put("error", safeError(e));
+            logActivity("warn", "plugin.discovery.directory.failed", details);
             return;
         }
 
@@ -216,6 +296,10 @@ public final class PluginManager {
                         safeError(e)
                 ));
                 LOG.log(Level.WARNING, "Plugin jar load failed: " + jar + " - " + e.getMessage(), e);
+                LinkedHashMap<String, String> details = new LinkedHashMap<>();
+                details.put("jar", jar.toAbsolutePath().toString());
+                details.put("error", safeError(e));
+                logActivity("warn", "plugin.discovery.jar.failed", details);
             }
         }
     }
@@ -242,6 +326,10 @@ public final class PluginManager {
                         safeError(e)
                 ));
                 LOG.log(Level.WARNING, "Plugin service loader error from " + source + ": " + e.getMessage(), e);
+                LinkedHashMap<String, String> details = new LinkedHashMap<>();
+                details.put("source", source);
+                details.put("error", safeError(e));
+                logActivity("warn", "plugin.discovery.service_loader.failed", details);
                 continue;
             }
 
@@ -267,6 +355,11 @@ public final class PluginManager {
                         "Plugin metadata failed: " + safeError(t)
                 ));
                 LOG.log(Level.WARNING, "Plugin metadata failed for " + className + ": " + t.getMessage(), t);
+                LinkedHashMap<String, String> details = new LinkedHashMap<>();
+                details.put("source", source);
+                details.put("plugin_class", className);
+                details.put("error", safeError(t));
+                logActivity("warn", "plugin.metadata.failed", details);
                 continue;
             }
             if (displayName.isBlank()) displayName = id;
@@ -280,6 +373,10 @@ public final class PluginManager {
                         false,
                         "Plugin id() returned blank."
                 ));
+                LinkedHashMap<String, String> details = new LinkedHashMap<>();
+                details.put("source", source);
+                details.put("display_name", displayName);
+                logActivity("warn", "plugin.id.blank", details);
                 continue;
             }
 
@@ -293,6 +390,10 @@ public final class PluginManager {
                         false,
                         "Disabled by plugins.properties."
                 ));
+                LinkedHashMap<String, String> details = new LinkedHashMap<>();
+                details.put("plugin_id", id);
+                details.put("source", source);
+                logActivity("info", "plugin.disabled.by_config", details);
                 continue;
             }
 
@@ -305,6 +406,10 @@ public final class PluginManager {
                         false,
                         "Duplicate plugin id."
                 ));
+                LinkedHashMap<String, String> details = new LinkedHashMap<>();
+                details.put("plugin_id", id);
+                details.put("source", source);
+                logActivity("warn", "plugin.id.duplicate", details);
                 continue;
             }
 
@@ -337,9 +442,21 @@ public final class PluginManager {
             activePlugins.add(h);
             descriptors.add(new PluginDescriptor(h.id, h.displayName, h.version, h.source, true, ""));
             collectMenuContributions(h, menu);
+            LinkedHashMap<String, String> details = new LinkedHashMap<>();
+            details.put("plugin_id", h.id);
+            details.put("display_name", h.displayName);
+            details.put("version", h.version);
+            details.put("source", h.source);
+            logActivity("info", "plugin.loaded", details);
         } catch (Exception e) {
             descriptors.add(new PluginDescriptor(h.id, h.displayName, h.version, h.source, false, safeError(e)));
             LOG.log(Level.WARNING, "Plugin init failed for " + h.id + ": " + e.getMessage(), e);
+            LinkedHashMap<String, String> details = new LinkedHashMap<>();
+            details.put("plugin_id", h.id);
+            details.put("display_name", h.displayName);
+            details.put("source", h.source);
+            details.put("error", safeError(e));
+            logActivity("warn", "plugin.load.failed", details);
         }
     }
 
@@ -355,6 +472,10 @@ public final class PluginManager {
             }
         } catch (Exception e) {
             LOG.log(Level.WARNING, "Plugin menu contributions failed for " + h.id + ": " + e.getMessage(), e);
+            LinkedHashMap<String, String> details = new LinkedHashMap<>();
+            details.put("plugin_id", h.id);
+            details.put("error", safeError(e));
+            logActivity("warn", "plugin.menu.failed", details);
         }
     }
 
@@ -366,6 +487,10 @@ public final class PluginManager {
                 h.servletContextBound = true;
             } catch (Exception e) {
                 LOG.log(Level.WARNING, "Plugin servlet-context hook failed for " + h.id + ": " + e.getMessage(), e);
+                LinkedHashMap<String, String> details = new LinkedHashMap<>();
+                details.put("plugin_id", h.id);
+                details.put("error", safeError(e));
+                logActivity("warn", "plugin.servlet_context.failed", details);
             }
         }
     }
@@ -385,6 +510,10 @@ public final class PluginManager {
                         safeError(e)
                 ));
                 LOG.log(Level.WARNING, "Plugin config read failed: " + e.getMessage(), e);
+                LinkedHashMap<String, String> details = new LinkedHashMap<>();
+                details.put("config_path", configPath.toString());
+                details.put("error", safeError(e));
+                logActivity("warn", "plugin.config.read.failed", details);
             }
         }
         enabledIds = parseIdSet(p.getProperty(CFG_ENABLED_IDS, ""));
@@ -424,6 +553,13 @@ public final class PluginManager {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static void logActivity(String level, String action, Map<String, String> details) {
+        try {
+            activity_log.defaultStore().logSystem(level, action, details);
+        } catch (Exception ignored) {
+        }
     }
 
     private static final class PluginHandle {

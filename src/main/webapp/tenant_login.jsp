@@ -20,6 +20,7 @@
 <%@ page import="net.familylawandprobate.controversies.tenants" %>
 <%@ page import="net.familylawandprobate.controversies.ip_lists" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
+<%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ include file="security.jspf" %>
 
 <%
@@ -404,6 +405,7 @@
     try { store.ensure(); } catch (Exception ignored) {}
     try { lists.ensure(); } catch (Exception ignored) {}
     users_roles ur = users_roles.defaultStore();
+    activity_log authLog = activity_log.defaultStore();
 
     // Build dropdown list: enabled tenants only
     List<tenants.Tenant> enabledTenants = new ArrayList<>();
@@ -465,11 +467,21 @@
             }
 
             if (userOk) {
+                LinkedHashMap<String,String> details = new LinkedHashMap<String,String>();
+                details.put("ip", clientIp);
+                details.put("tenant_uuid", tu);
+                details.put("next", next);
+                authLog.logInfo("auth.session.resumed", tu, sessUserUuid, "", "", details);
                 response.sendRedirect(redirectTo);
                 return;
             }
 
             // Keep tenant layer, clear stale user layer.
+            LinkedHashMap<String,String> details = new LinkedHashMap<String,String>();
+            details.put("ip", clientIp);
+            details.put("tenant_uuid", tu);
+            details.put("reason", "stale_user_binding_or_disabled_user_role");
+            authLog.logWarn("auth.session.user_cleared", tu, sessUserUuid, "", "", details);
             try { ur.clearSessionAuth(session); } catch (Exception ignored) {}
             if (!sessUserUuid.isBlank()) {
                 try { ur.deleteUserBinding(tu, sessUserUuid, session.getId()); } catch (Exception ignored) {}
@@ -478,6 +490,11 @@
             if (selectedLabel.isBlank()) selectedLabel = safe(sessLabel).trim();
         } else {
             String sessUserUuid = safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim();
+            LinkedHashMap<String,String> details = new LinkedHashMap<String,String>();
+            details.put("ip", clientIp);
+            details.put("tenant_uuid", tu);
+            details.put("reason", "tenant_binding_mismatch");
+            authLog.logWarn("auth.session.tenant_cleared", tu, sessUserUuid, "", "", details);
             try { ur.clearSessionAuth(session); } catch (Exception ignored) {}
             if (!sessUserUuid.isBlank()) {
                 try { ur.deleteUserBinding(tu, sessUserUuid, session.getId()); } catch (Exception ignored) {}
@@ -500,6 +517,10 @@
         // If no enabled tenants, stop early.
         if (enabledTenants.isEmpty()) {
             error = "No enabled tenants are available.";
+            LinkedHashMap<String,String> details = new LinkedHashMap<String,String>();
+            details.put("ip", clientIp);
+            details.put("email", email);
+            authLog.logSystem("warn", "auth.login.no_enabled_tenants", details);
         } else {
             ip_lists.Decision d = ip_lists.Decision.ALLOW;
             try { d = lists.check(clientIp); } catch (Exception ignored) {}
@@ -511,6 +532,12 @@
                     if (ex != null && ex.isPresent()) until = ex.get();
                 } catch (Exception ignored) {}
                 error = "Too many login attempts. Please try again in " + formatRemaining(until) + ".";
+                LinkedHashMap<String,String> details = new LinkedHashMap<String,String>();
+                details.put("ip", clientIp);
+                details.put("email", email);
+                details.put("tenant_label", selectedLabel);
+                if (until != null) details.put("ban_until", until.toString());
+                authLog.logSystem("warn", "auth.login.blocked_temp_ban", details);
             } else {
                 String pwStr = safe(request.getParameter("password"));
 
@@ -534,6 +561,12 @@
                     if (found == null) {
                         int c = noteFailure(application, clientIp);
                         error = "Invalid tenant, email, or password.";
+                        LinkedHashMap<String,String> details = new LinkedHashMap<String,String>();
+                        details.put("ip", clientIp);
+                        details.put("email", email);
+                        details.put("tenant_label", selectedLabel);
+                        details.put("failure_count", String.valueOf(c));
+                        authLog.logSystem("warn", "auth.login.failed_unknown_tenant", details);
                         if (!isLocalhostIp(clientIp)) {
                             try {
                                 if (c == 5) lists.banTemporary(clientIp, 10 * 60, "tenant_login: 5 failures");
@@ -553,6 +586,12 @@
                         if (ar == null || ar.user == null || ar.role == null) {
                             int c = noteFailure(application, clientIp);
                             error = "Invalid tenant, email, or password.";
+                            LinkedHashMap<String,String> details = new LinkedHashMap<String,String>();
+                            details.put("ip", clientIp);
+                            details.put("email", email);
+                            details.put("tenant_label", found.label);
+                            details.put("failure_count", String.valueOf(c));
+                            authLog.logWarn("auth.login.failed_invalid_credentials", found.uuid, "", "", "", details);
                             if (!isLocalhostIp(clientIp)) {
                                 try {
                                     if (c == 5) lists.banTemporary(clientIp, 10 * 60, "tenant_login: 5 failures");
@@ -601,6 +640,14 @@
                                         newUserCookieBind
                                 );
                             } catch (Exception ignored) {}
+
+                            LinkedHashMap<String,String> details = new LinkedHashMap<String,String>();
+                            details.put("ip", clientIp);
+                            details.put("next", next);
+                            details.put("tenant_label", found.label);
+                            details.put("email", ar.user.emailAddress);
+                            details.put("role_uuid", ar.role.uuid);
+                            authLog.logInfo("auth.login.success", found.uuid, ar.user.uuid, "", "", details);
 
                             response.sendRedirect(redirectTo);
                             return;
