@@ -33,6 +33,10 @@ public final class tenant_settings {
             "storage_endpoint",
             "storage_access_key",
             "storage_secret",
+            "storage_encryption_mode",
+            "storage_encryption_key",
+            "storage_s3_sse_mode",
+            "storage_s3_sse_kms_key_id",
             "clio_base_url",
             "clio_client_id",
             "clio_client_secret",
@@ -59,6 +63,7 @@ public final class tenant_settings {
     private static final String[] SECRET_KEYS = new String[] {
             "storage_access_key",
             "storage_secret",
+            "storage_encryption_key",
             "clio_client_secret",
             "clio_access_token",
             "clio_refresh_token"
@@ -205,10 +210,14 @@ public final class tenant_settings {
 
     private LinkedHashMap<String, String> defaults() {
         LinkedHashMap<String, String> d = new LinkedHashMap<String, String>();
-        d.put("storage_backend", "localfs");
+        d.put("storage_backend", "local");
         d.put("storage_endpoint", "");
         d.put("storage_access_key", "");
         d.put("storage_secret", "");
+        d.put("storage_encryption_mode", "disabled");
+        d.put("storage_encryption_key", "");
+        d.put("storage_s3_sse_mode", "none");
+        d.put("storage_s3_sse_kms_key_id", "");
         d.put("clio_base_url", "");
         d.put("clio_client_id", "");
         d.put("clio_client_secret", "");
@@ -267,6 +276,26 @@ public final class tenant_settings {
             return mode;
         }
 
+        if ("storage_backend".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if ("localfs".equals(mode)) return "local";
+            if ("filesystem_remote".equals(mode)) return "sftp";
+            if (!"local".equals(mode) && !"ftp".equals(mode) && !"ftps".equals(mode) && !"sftp".equals(mode) && !"s3_compatible".equals(mode)) return "local";
+            return mode;
+        }
+
+        if ("storage_encryption_mode".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if (!"tenant_managed".equals(mode) && !"disabled".equals(mode)) return "disabled";
+            return mode;
+        }
+
+        if ("storage_s3_sse_mode".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if (!"aes256".equals(mode) && !"aws_kms".equals(mode) && !"none".equals(mode)) return "none";
+            return mode;
+        }
+
         if ("storage_connection_status".equals(key) || "clio_connection_status".equals(key) || "clio_auth_health_status".equals(key)) {
             String s = v.toLowerCase(Locale.ROOT);
             if (!"ok".equals(s) && !"failed".equals(s) && !"unknown".equals(s)) return "unknown";
@@ -279,11 +308,23 @@ public final class tenant_settings {
 
     private void validateEnabledIntegrationSecrets(String tenantUuid, Map<String, String> cfg, List<String> failures) {
         String storageBackend = safe(cfg.get("storage_backend")).trim().toLowerCase(Locale.ROOT);
-        if ("filesystem_remote".equals(storageBackend)) {
+        if (!"local".equals(storageBackend)) {
             if (safe(cfg.get("storage_endpoint")).isBlank()
                     || safe(cfg.get("storage_access_key")).isBlank()
                     || safe(cfg.get("storage_secret")).isBlank()) {
                 failures.add("tenant=" + safeFileToken(tenantUuid) + " storage backend enabled with invalid credentials");
+            }
+        }
+
+        String appEncMode = safe(cfg.get("storage_encryption_mode")).trim().toLowerCase(Locale.ROOT);
+        if ("tenant_managed".equals(appEncMode) && safe(cfg.get("storage_encryption_key")).isBlank()) {
+            failures.add("tenant=" + safeFileToken(tenantUuid) + " tenant-managed encryption enabled without key");
+        }
+
+        if ("s3_compatible".equals(storageBackend)) {
+            String sseMode = safe(cfg.get("storage_s3_sse_mode")).trim().toLowerCase(Locale.ROOT);
+            if ("aws_kms".equals(sseMode) && safe(cfg.get("storage_s3_sse_kms_key_id")).isBlank()) {
+                failures.add("tenant=" + safeFileToken(tenantUuid) + " s3 sse aws_kms enabled without key id");
             }
         }
 

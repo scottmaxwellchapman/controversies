@@ -66,7 +66,9 @@ public final class FilesystemRemoteStorageBackend implements DocumentStorageBack
         String v = backendType == null ? "" : backendType.trim().toLowerCase(Locale.ROOT);
         if (v.isBlank()) return "local";
         return switch (v) {
-            case "local", "ftp", "ftps", "sftp", "s3_compatible" -> v;
+            case "local", "localfs" -> "local";
+            case "filesystem_remote" -> "sftp";
+            case "ftp", "ftps", "sftp", "s3_compatible" -> v;
             default -> throw new IllegalArgumentException("unsupported backend: " + backendType);
         };
     }

@@ -102,4 +102,54 @@ public class assembled_forms_storage_test {
         assertTrue(store.retrySyncNow(tenantUuid, matterUuid, completed.uuid));
     }
 
+
+
+    @Test
+    void app_level_encryption_encrypts_local_and_remote_payloads() throws Exception {
+        String tenantUuid = "tenant-enc-" + UUID.randomUUID();
+        String matterUuid = "matter-enc-" + UUID.randomUUID();
+
+        Path pepper = Paths.get("data", "sec", "random_pepper.bin").toAbsolutePath();
+        Files.createDirectories(pepper.getParent());
+        if (!Files.exists(pepper)) Files.writeString(pepper, "test-pepper-material");
+
+        tenant_settings settings = tenant_settings.defaultStore();
+        settings.write(tenantUuid, Map.of(
+                "storage_backend", "s3_compatible",
+                "storage_endpoint", "https://s3.example.test",
+                "storage_access_key", "key-1",
+                "storage_secret", "secret-1",
+                "storage_encryption_mode", "tenant_managed",
+                "storage_encryption_key", "my-app-key",
+                "storage_s3_sse_mode", "aes256"
+        ));
+
+        assembled_forms store = assembled_forms.defaultStore();
+        assembled_forms.AssemblyRec completed = store.markCompleted(
+                tenantUuid,
+                matterUuid,
+                "",
+                "tmpl-1",
+                "Template",
+                "txt",
+                "user-1",
+                "user@example.com",
+                Map.of(),
+                "enc.txt",
+                "txt",
+                "hello encrypted world".getBytes()
+        );
+
+        assertArrayEquals("hello encrypted world".getBytes(), store.readOutputBytes(tenantUuid, matterUuid, completed.uuid));
+
+        Path rawPath = Paths.get("data", "tenants", tenantUuid, "matters", matterUuid, "assembled", "files", completed.uuid + ".txt").toAbsolutePath();
+        byte[] raw = Files.readAllBytes(rawPath);
+        assertFalse(new String(raw).contains("hello encrypted world"));
+
+        assertTrue(store.retrySyncNow(tenantUuid, matterUuid, completed.uuid));
+        Path remotePath = Paths.get("data", "tenants", tenantUuid, "assembled_remote", "s3_compatible", "matters", matterUuid, "assemblies", completed.uuid + ".txt").toAbsolutePath();
+        byte[] remoteRaw = Files.readAllBytes(remotePath);
+        assertFalse(new String(remoteRaw).contains("hello encrypted world"));
+    }
+
 }
