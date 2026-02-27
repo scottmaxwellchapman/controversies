@@ -46,7 +46,7 @@ public final class EncryptedDocumentStorageBackend implements DocumentStorageBac
     }
 
     @Override
-    public boolean exists(String key) {
+    public boolean exists(String key) throws Exception {
         return delegate.exists(key);
     }
 

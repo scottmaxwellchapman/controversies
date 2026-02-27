@@ -1250,7 +1250,7 @@ public final class document_assembler {
             if (!xmlItems.isEmpty()) return xmlItems;
         }
 
-        String[] parts = raw.split("\r?\n|\|");
+        String[] parts = raw.split("\\r?\\n|\\|");
         if (parts.length <= 1) parts = raw.split(",");
         for (String p : parts) {
             String v = safe(p).trim();
