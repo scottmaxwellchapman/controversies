@@ -265,7 +265,7 @@ public final class filter implements Filter {
         res.setHeader("X-Content-Type-Options", "nosniff");
         res.setHeader("Referrer-Policy", "no-referrer");
         res.setHeader("X-Frame-Options", "SAMEORIGIN");
-        res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+        res.setHeader("Permissions-Policy", "geolocation=(self), microphone=(), camera=()");
 
         // CSP: conservative to avoid breaking JSP UI
         res.setHeader("Content-Security-Policy",

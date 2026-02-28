@@ -4,7 +4,9 @@ import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.BasicStroke;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -98,6 +100,38 @@ public final class document_image_preview {
                     "",
                     ""
             );
+        }
+    }
+
+    public static final class FocusPreview {
+        public final String token;
+        public final int pageIndex;
+        public final int hitIndex;
+        public final int hitCount;
+        public final int width;
+        public final int height;
+        public final String base64Png;
+        public final String mode;
+        public final String message;
+
+        public FocusPreview(String token,
+                            int pageIndex,
+                            int hitIndex,
+                            int hitCount,
+                            int width,
+                            int height,
+                            String base64Png,
+                            String mode,
+                            String message) {
+            this.token = safe(token);
+            this.pageIndex = Math.max(0, pageIndex);
+            this.hitIndex = hitIndex;
+            this.hitCount = Math.max(0, hitCount);
+            this.width = Math.max(0, width);
+            this.height = Math.max(0, height);
+            this.base64Png = safe(base64Png);
+            this.mode = safe(mode);
+            this.message = safe(message);
         }
     }
 
@@ -222,6 +256,104 @@ public final class document_image_preview {
                     "Image preview unavailable: " + safe(ex.getMessage()),
                     ""
             );
+        }
+    }
+
+    public FocusPreview renderFocusPreview(PreviewResult preview,
+                                           String tokenLiteral,
+                                           int requestedIndex,
+                                           boolean fullPage) {
+        String mode = fullPage ? "full" : "context";
+        String token = safe(tokenLiteral).trim();
+        if (preview == null || preview.pages == null || preview.pages.isEmpty()) {
+            return new FocusPreview(token, 0, -1, 0, 0, 0, "", mode, "Rendered preview is unavailable.");
+        }
+
+        PageImage firstPage = preview.pages.get(0);
+        int fallbackPageIndex = firstPage == null ? 0 : Math.max(0, firstPage.pageIndex);
+        ArrayList<HitRect> hits = findHitsForToken(preview.hitRects, token);
+        int hitCount = hits.size();
+        int idx = -1;
+        HitRect hit = null;
+        if (hitCount > 0) {
+            idx = requestedIndex;
+            if (idx < 0) idx = 0;
+            idx = idx % hitCount;
+            hit = hits.get(idx);
+        }
+
+        int pageIndex = hit == null ? fallbackPageIndex : Math.max(0, hit.pageIndex);
+        PageImage page = pageByIndex(preview.pages, pageIndex);
+        if (page == null) page = firstPage;
+        if (page == null) {
+            return new FocusPreview(token, pageIndex, idx, hitCount, 0, 0, "", mode, "Rendered preview is unavailable.");
+        }
+
+        BufferedImage pageImage = decodePngBase64(page.base64Png);
+        if (pageImage == null) {
+            return new FocusPreview(token, pageIndex, idx, hitCount, 0, 0, "", mode, "Unable to decode rendered preview image.");
+        }
+
+        int iw = Math.max(1, pageImage.getWidth());
+        int ih = Math.max(1, pageImage.getHeight());
+
+        int cropY = 0;
+        int cropH = ih;
+        if (!fullPage && hit != null) {
+            int hy = Math.max(0, hit.y);
+            int hh = Math.max(1, hit.height);
+            int contextPadY = Math.max(72, (int) Math.round((ih / 11.0d) * 1.5d));
+            int y1 = Math.max(0, (int) Math.floor(hy - contextPadY));
+            int y2 = Math.min(ih, (int) Math.ceil(hy + hh + contextPadY));
+            if (y2 <= y1) {
+                y1 = 0;
+                y2 = ih;
+            }
+            cropY = y1;
+            cropH = Math.max(1, y2 - y1);
+        }
+
+        BufferedImage out = new BufferedImage(iw, cropH, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = out.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.drawImage(pageImage, 0, 0, iw, cropH, 0, cropY, iw, cropY + cropH, null);
+
+        if (hit != null) {
+            int hx = Math.max(0, hit.x);
+            int hy = Math.max(0, hit.y - cropY);
+            int hw = Math.max(1, hit.width);
+            int hh = Math.max(1, hit.height);
+            boolean multi = hitCount > 1;
+            if (multi) {
+                g.setColor(new Color(244, 114, 182, 84));
+                g.fillRect(hx, hy, hw, hh);
+                g.setColor(new Color(190, 24, 93, 242));
+            } else {
+                g.setColor(new Color(255, 222, 89, 89));
+                g.fillRect(hx, hy, hw, hh);
+                g.setColor(new Color(199, 133, 0, 255));
+            }
+            g.setStroke(new BasicStroke(2f));
+            g.drawRect(hx, hy, hw, hh);
+        }
+        g.dispose();
+
+        String msg;
+        if (hit == null) {
+            msg = "No rendered highlight was found for the selected token. Showing page " + (Math.max(0, page.pageIndex) + 1) + ".";
+        } else {
+            msg = "Match " + (idx + 1) + " of " + hitCount
+                + " • page " + (Math.max(0, page.pageIndex) + 1)
+                + (hitCount > 1 ? " • multi-instance token" : "")
+                + (fullPage ? " • full page preview" : " • context: 1.5in above and below highlight");
+        }
+
+        try {
+            String b64 = encodePngBase64(out);
+            return new FocusPreview(token, Math.max(0, page.pageIndex), idx, hitCount, iw, cropH, b64, mode, msg);
+        } catch (Exception ex) {
+            return new FocusPreview(token, Math.max(0, page.pageIndex), idx, hitCount, iw, cropH, "", mode, "Unable to encode rendered preview image.");
         }
     }
 
@@ -482,10 +614,75 @@ public final class document_image_preview {
         }
     }
 
+    private static PageImage pageByIndex(List<PageImage> pages, int pageIndex) {
+        if (pages == null || pages.isEmpty()) return null;
+        for (PageImage p : pages) {
+            if (p == null) continue;
+            if (Math.max(0, p.pageIndex) == Math.max(0, pageIndex)) return p;
+        }
+        return pages.get(0);
+    }
+
+    private static ArrayList<HitRect> findHitsForToken(Map<String, ArrayList<HitRect>> hitMap, String tokenLiteral) {
+        ArrayList<HitRect> empty = new ArrayList<HitRect>();
+        if (hitMap == null || hitMap.isEmpty()) return empty;
+        String token = safe(tokenLiteral).trim();
+        if (token.isBlank()) return empty;
+
+        ArrayList<HitRect> exact = hitMap.get(token);
+        if (exact != null) return exact;
+
+        String normalized = normalizeTokenLookupKey(token);
+        if (normalized.isBlank()) return empty;
+
+        for (Map.Entry<String, ArrayList<HitRect>> e : hitMap.entrySet()) {
+            if (e == null) continue;
+            String k = safe(e.getKey()).trim();
+            if (k.isBlank()) continue;
+            if (normalized.equals(normalizeTokenLookupKey(k))) {
+                ArrayList<HitRect> v = e.getValue();
+                return v == null ? empty : v;
+            }
+        }
+        return empty;
+    }
+
+    private static String normalizeTokenLookupKey(String tokenLiteral) {
+        String t = safe(tokenLiteral).trim();
+        if (t.isBlank()) return "";
+
+        if (t.startsWith("{{") && t.endsWith("}}") && t.length() > 4) {
+            String body = safe(t.substring(2, t.length() - 2)).trim().toLowerCase(Locale.ROOT);
+            if (body.matches("[a-z0-9_.-]+")) return "curly:" + body;
+        }
+        if (t.startsWith("[") && t.endsWith("]") && t.length() > 2) {
+            String body = safe(t.substring(1, t.length() - 1)).trim().toLowerCase(Locale.ROOT);
+            if (!body.isBlank()) return "bracket:" + body;
+        }
+        if (t.startsWith("{") && t.endsWith("}") && t.length() > 2 && t.indexOf('/') >= 0) {
+            String body = safe(t.substring(1, t.length() - 1)).trim().toLowerCase(Locale.ROOT);
+            if (!body.isBlank()) return "switch:" + body;
+        }
+        if (t.matches("[A-Za-z0-9_.-]+")) return "curly:" + t.toLowerCase(Locale.ROOT);
+        return "raw:" + t.toLowerCase(Locale.ROOT);
+    }
+
     private static String encodePngBase64(BufferedImage image) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream(Math.max(4096, image.getWidth() * image.getHeight() / 2));
         ImageIO.write(image, "png", out);
         return Base64.getEncoder().encodeToString(out.toByteArray());
+    }
+
+    private static BufferedImage decodePngBase64(String base64Png) {
+        String b64 = safe(base64Png).trim();
+        if (b64.isBlank()) return null;
+        try {
+            byte[] raw = Base64.getDecoder().decode(b64);
+            if (raw == null || raw.length == 0) return null;
+            return ImageIO.read(new ByteArrayInputStream(raw));
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private static Double parseDouble(String s) {

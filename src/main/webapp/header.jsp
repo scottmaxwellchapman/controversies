@@ -418,6 +418,7 @@
     const ACTIVE_THEME_KEY = "ui.theme.active." + scope;
     const GEO_CACHE_KEY = "ui.theme.geo.coords." + scope;
     const GEO_BLOCKED_KEY = "ui.theme.geo.blocked." + scope;
+    const GEO_BLOCKED_TTL_MS = 6 * 60 * 60 * 1000;
     const TEXT_SIZE_KEY = "ui.text.size." + scope;
     const SIZE_STEPS = ["sm", "md", "lg", "xl"];
     const MODE_STEPS = ["auto", "dark", "light"];
@@ -461,6 +462,21 @@
             changeTextSize(1);
         });
     }
+
+    document.addEventListener("visibilitychange", function () {
+        if (activeMode !== "auto") return;
+        if (document.hidden) return;
+        resolveAutoTheme(false).then((theme) => {
+            applyTheme(theme);
+        });
+    });
+
+    window.addEventListener("focus", function () {
+        if (activeMode !== "auto") return;
+        resolveAutoTheme(false).then((theme) => {
+            applyTheme(theme);
+        });
+    });
 
     function normalizeMode(raw) {
         const v = String(raw || "").trim().toLowerCase();
@@ -551,7 +567,7 @@
             resolveAutoTheme(false).then((theme) => {
                 applyTheme(theme);
             });
-        }, 5 * 60 * 1000);
+        }, 60 * 1000);
 
         resolveAutoTheme(!!forceGeoRefresh).then((theme) => {
             applyTheme(theme);
@@ -581,7 +597,7 @@
 
         if (!useLocationDefault) return Promise.resolve(fallbackTheme);
         if (pendingGeo) return Promise.resolve(fallbackTheme);
-        if (readStorage(GEO_BLOCKED_KEY) === "1") return Promise.resolve(fallbackTheme);
+        if (isGeoBlockedRecently(forceGeoRefresh)) return Promise.resolve(fallbackTheme);
         if (!navigator.geolocation) return Promise.resolve(fallbackTheme);
         if (fullAutoResolvedOnce && !forceGeoRefresh) return Promise.resolve(fallbackTheme);
 
@@ -639,12 +655,33 @@
         }));
     }
 
+    function isGeoBlockedRecently(forceGeoRefresh) {
+        if (forceGeoRefresh) return false;
+        const raw = String(readStorage(GEO_BLOCKED_KEY) || "").trim();
+        if (!raw) return false;
+        const ts = Number(raw);
+        if (!isFinite(ts) || ts <= 0) {
+            safeWriteStorage(GEO_BLOCKED_KEY, "");
+            return false;
+        }
+        if ((Date.now() - ts) > GEO_BLOCKED_TTL_MS) {
+            safeWriteStorage(GEO_BLOCKED_KEY, "");
+            return false;
+        }
+        return true;
+    }
+
+    function markGeoBlocked(isBlocked) {
+        if (isBlocked) safeWriteStorage(GEO_BLOCKED_KEY, String(Date.now()));
+        else safeWriteStorage(GEO_BLOCKED_KEY, "");
+    }
+
     async function requestBrowserCoords() {
         try {
             if (navigator.permissions && navigator.permissions.query) {
                 const perm = await navigator.permissions.query({ name: "geolocation" });
                 if (perm && perm.state === "denied") {
-                    safeWriteStorage(GEO_BLOCKED_KEY, "1");
+                    markGeoBlocked(true);
                     return null;
                 }
             }
@@ -654,7 +691,7 @@
             try {
                 navigator.geolocation.getCurrentPosition(
                     (pos) => {
-                        safeWriteStorage(GEO_BLOCKED_KEY, "0");
+                        markGeoBlocked(false);
                         if (!pos || !pos.coords) {
                             resolve(null);
                             return;
@@ -663,7 +700,7 @@
                     },
                     (err) => {
                         if (err && (err.code === 1 || String(err.message || "").toLowerCase().indexOf("denied") >= 0)) {
-                            safeWriteStorage(GEO_BLOCKED_KEY, "1");
+                            markGeoBlocked(true);
                         }
                         resolve(null);
                     },

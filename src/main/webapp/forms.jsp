@@ -118,6 +118,14 @@
     return body;
   }
 
+  private static int intOr(String raw, int fallback) {
+    try {
+      return Integer.parseInt(safe(raw).trim());
+    } catch (Exception ignored) {
+      return fallback;
+    }
+  }
+
   private static void applyLiteralOverride(Map<String,String> mergeValues, String tokenLiteral, String tokenValue) {
     if (mergeValues == null) return;
     String literal = safe(tokenLiteral).trim();
@@ -338,9 +346,13 @@
       literalOverrides.put(tokenLiteral, tokenValue);
     }
   }
+  LinkedHashMap<String,String> previewReplacementValues = new LinkedHashMap<String,String>();
   for (Map.Entry<String,String> e : literalOverrides.entrySet()) {
     if (e == null) continue;
-    applyLiteralOverride(mergeValues, safe(e.getKey()), safe(e.getValue()));
+    String literalKey = safe(e.getKey());
+    String literalVal = safe(e.getValue());
+    applyLiteralOverride(mergeValues, literalKey, literalVal);
+    applyLiteralOverride(previewReplacementValues, literalKey, literalVal);
   }
 
   byte[] templateBytes = new byte[0];
@@ -370,7 +382,7 @@
   ArrayList<String> initialNeedles = new ArrayList<String>(workspaceTokenDefaults.keySet());
   document_image_preview.PreviewResult imagePreviewResult = document_image_preview.PreviewResult.empty();
   if (renderPreview && selectedTemplate != null && templateBytes.length > 0) {
-    imagePreviewResult = imagePreviewer.render(templateBytes, templateExt, literalOverrides, initialNeedles, 6);
+    imagePreviewResult = imagePreviewer.render(templateBytes, templateExt, previewReplacementValues, initialNeedles, 6);
   }
   ArrayList<document_image_preview.PageImage> imagePreviewPages = imagePreviewResult.pages;
   LinkedHashMap<String, ArrayList<document_image_preview.HitRect>> imagePreviewHits = imagePreviewResult.hitRects;
@@ -432,6 +444,9 @@
 
   if ("render_preview_json".equalsIgnoreCase(action)) {
     String tokenToHighlight = safe(request.getParameter("highlight_token")).trim();
+    int highlightIndex = intOr(request.getParameter("highlight_index"), 0);
+    String previewModeParam = safe(request.getParameter("preview_mode")).trim().toLowerCase(Locale.ROOT);
+    boolean previewFullPage = "full".equals(previewModeParam);
     ArrayList<String> highlightNeedles = new ArrayList<String>();
     if (!tokenToHighlight.isBlank()) {
       highlightNeedles.add(tokenToHighlight);
@@ -441,8 +456,10 @@
 
     document_image_preview.PreviewResult dynamicPreview = document_image_preview.PreviewResult.empty();
     if (selectedTemplate != null && templateBytes.length > 0) {
-      dynamicPreview = imagePreviewer.render(templateBytes, templateExt, literalOverrides, highlightNeedles, 6);
+      dynamicPreview = imagePreviewer.render(templateBytes, templateExt, previewReplacementValues, highlightNeedles, 6);
     }
+    document_image_preview.FocusPreview focusPreview =
+        imagePreviewer.renderFocusPreview(dynamicPreview, tokenToHighlight, highlightIndex, previewFullPage);
 
     if (selectedCase != null && selectedTemplate != null) {
       try {
@@ -518,7 +535,24 @@
         jsonOut.append(']');
         firstKey = false;
       }
+      if (!tokenToHighlight.isBlank() && !hits.containsKey(tokenToHighlight)) {
+        if (!firstKey) jsonOut.append(',');
+        jsonOut.append(jsonStr(tokenToHighlight)).append(':').append("[]");
+      }
+    } else if (!tokenToHighlight.isBlank()) {
+      jsonOut.append(jsonStr(tokenToHighlight)).append(':').append("[]");
     }
+    jsonOut.append("},");
+    jsonOut.append("\"contextPreview\":{");
+    jsonOut.append("\"token\":").append(jsonStr(safe(focusPreview.token))).append(',');
+    jsonOut.append("\"pageIndex\":").append(focusPreview.pageIndex).append(',');
+    jsonOut.append("\"hitIndex\":").append(focusPreview.hitIndex).append(',');
+    jsonOut.append("\"hitCount\":").append(focusPreview.hitCount).append(',');
+    jsonOut.append("\"width\":").append(focusPreview.width).append(',');
+    jsonOut.append("\"height\":").append(focusPreview.height).append(',');
+    jsonOut.append("\"mode\":").append(jsonStr(safe(focusPreview.mode))).append(',');
+    jsonOut.append("\"message\":").append(jsonStr(safe(focusPreview.message))).append(',');
+    jsonOut.append("\"base64Png\":").append(jsonStr(safe(focusPreview.base64Png)));
     jsonOut.append("}");
     jsonOut.append("}");
 
@@ -583,16 +617,28 @@
 <jsp:include page="header.jsp" />
 
 <style>
+  html, body {
+    overflow-y: auto;
+  }
+
   body > main.container.main {
     width: min(1820px, calc(100vw - 0.9rem));
     max-width: none;
     padding-top: 0.7rem;
     padding-bottom: 0.7rem;
+    overflow: visible;
   }
 
   #formsFastRoot {
     display: grid;
-    gap: 10px;
+    gap: 12px;
+    --forms-pane-max-h: calc(100vh - var(--header-h) - var(--footer-h) - 210px);
+  }
+
+  @supports (height: 100dvh) {
+    #formsFastRoot {
+      --forms-pane-max-h: calc(100dvh - var(--header-h) - var(--footer-h) - 210px);
+    }
   }
 
   #formsFastRoot .card {
@@ -600,22 +646,45 @@
   }
 
   .forms-workbench-wrap {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 10px;
-    align-items: start;
     margin-top: 4px;
   }
 
-  .forms-pane-card {
-    height: calc(100vh - var(--header-h) - var(--footer-h) - 230px);
-    min-height: 500px;
+  .forms-workbench-split {
+    display: grid;
+    grid-template-columns: minmax(320px, 30fr) minmax(0, 70fr);
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .forms-side-card,
+  .forms-preview-card {
+    min-height: 520px;
+    max-height: var(--forms-pane-max-h);
     display: flex;
     flex-direction: column;
     gap: 8px;
     padding-top: 10px !important;
+    border-radius: 14px;
   }
 
+  .forms-side-card {
+    background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+    border-color: var(--border);
+  }
+
+  .forms-preview-card {
+    background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+    border-color: var(--border);
+  }
+
+  .forms-side-head,
+  .forms-preview-head {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+
+  .forms-side-scroll,
+  .forms-preview-scroll,
   .forms-pane-scroll {
     flex: 1 1 auto;
     min-height: 0;
@@ -624,33 +693,172 @@
     scrollbar-gutter: stable;
   }
 
+  .forms-side-scroll,
+  .forms-preview-scroll {
+    display: grid;
+    gap: 10px;
+    align-content: start;
+    padding-right: 2px;
+  }
+
+  .forms-quick-actions {
+    display: grid;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .forms-quick-actions.has-download {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .forms-quick-actions.no-download {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .forms-quick-actions form {
+    margin: 0;
+    display: flex;
+    min-width: 0;
+  }
+
+  .forms-quick-actions form .btn {
+    flex: 1 1 auto;
+  }
+
+  .forms-quick-actions .btn {
+    width: 100%;
+    justify-content: center;
+    white-space: nowrap;
+  }
+
+  .forms-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    padding: 6px;
+  }
+
+  .forms-tab-btn {
+    appearance: none;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    border-radius: 10px;
+    padding: 7px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .forms-tab-btn:hover {
+    background: var(--ghost-hover);
+    color: var(--text);
+  }
+
+  .forms-tab-btn.is-active {
+    border-color: var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .forms-tab-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--focus);
+  }
+
+  .forms-tab-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    padding: 0 5px;
+    font-size: 11px;
+    line-height: 1;
+    background: var(--warn-fill);
+    color: #7a4a00;
+    border: 1px solid rgba(217, 119, 6, 0.32);
+  }
+
+  .forms-tab-panels {
+    display: grid;
+    gap: 10px;
+  }
+
+  .forms-tab-panel {
+    display: none;
+  }
+
+  .forms-tab-panel.is-active {
+    display: block;
+  }
+
   .forms-toolbar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 11px;
+    box-shadow: var(--shadow-1);
     position: sticky;
     top: 0;
-    z-index: 20;
-    background: #fff;
-    border: 1px solid #d8dee7;
-    border-radius: 10px;
-    padding: 10px;
+    z-index: 4;
   }
 
-  .forms-toolbar-grid {
+  .forms-toolbar-stack {
     display: grid;
-    grid-template-columns: minmax(180px, 2fr) minmax(180px, 2fr) repeat(6, auto);
+    grid-template-columns: 1fr;
     gap: 8px;
-    align-items: end;
   }
 
-  .forms-compact-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  .forms-toolbar-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
-    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .forms-toolbar-actions .btn {
+    width: 100%;
+    justify-content: center;
+    white-space: nowrap;
+  }
+
+  .forms-side-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .tokens-found {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    padding: 8px 10px;
+    max-height: 140px;
+    overflow: auto;
+    line-height: 1.45;
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .tokens-found code {
+    background: var(--chip-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1px 5px;
   }
 
   .hotkey-hints {
-    margin-top: 8px;
+    margin-top: 2px;
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
@@ -661,42 +869,58 @@
   .hotkey-hints code {
     display: inline-block;
     padding: 2px 7px;
-    border: 1px solid #d8dee7;
+    border: 1px solid var(--border);
     border-radius: 999px;
-    background: #eef3fa;
-    color: #334155;
+    background: var(--chip-bg);
+    color: var(--text);
     font-size: 11px;
   }
 
+  #missingValuesAlert {
+    border-radius: 12px;
+  }
+
+  #missingValuesText {
+    max-height: 130px;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   #contextPreviewViewport {
+    flex: 1 1 auto;
     height: 100%;
     min-height: 460px;
     overflow: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-gutter: stable;
-    border: 1px solid #d8dee7;
+    border: 1px solid var(--border);
     border-radius: 10px;
-    background: #eef3fa;
+    background: linear-gradient(180deg, var(--surface-2) 0%, var(--bg) 100%);
     padding: 12px;
   }
 
-  #contextPreviewCanvas {
+  #contextPreviewImage {
     display: block;
     width: 100%;
     height: auto;
-    background: #fff;
-    border: 1px solid #d7dde7;
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 1px 0 rgba(16,24,40,0.03), 0 8px 20px rgba(16,24,40,0.08);
+    box-shadow: var(--shadow-1);
+  }
+
+  html[data-theme="dark"] #contextPreviewImage {
+    background: var(--surface);
   }
 
   @media (max-width: 1400px) {
-    .forms-pane-card {
-      height: auto;
-      min-height: 420px;
+    .forms-workbench-split {
+      grid-template-columns: minmax(300px, 34fr) minmax(0, 66fr);
     }
-    .forms-toolbar {
-      position: static;
+    .forms-side-card,
+    .forms-preview-card {
+      max-height: none;
+      min-height: 420px;
     }
   }
 
@@ -706,8 +930,23 @@
       padding-top: 0.5rem;
       padding-bottom: 0.5rem;
     }
-    .forms-toolbar-grid {
+    .forms-workbench-split {
+      grid-template-columns: 1fr;
+    }
+    .forms-toolbar-actions {
       grid-template-columns: 1fr 1fr;
+    }
+    .forms-quick-actions {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 1240px) {
+    .forms-toolbar-actions {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .forms-quick-actions.has-download {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
 </style>
@@ -823,15 +1062,16 @@
 <% } %>
 
 <div class="forms-workbench-wrap">
-<section class="card forms-pane-card">
-  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
-    <div>
-      <h2 style="margin:0;">Interactive Preview Workspace</h2>
-      <div class="meta">Token-first workflow with keyboard shortcuts and live rendered preview sync.</div>
-    </div>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+<div class="forms-workbench-split">
+<aside class="card forms-side-card">
+  <div class="forms-side-head">
+    <h2 style="margin:0;">Assembly Controls</h2>
+    <div class="meta">Token-first controls, replacements, and missing-value prompts.</div>
+  </div>
+  <div class="forms-side-scroll">
+    <div class="forms-quick-actions <%= selectedTemplate != null ? "has-download" : "no-download" %>">
       <% if (selectedTemplate != null) { %>
-        <form method="post" action="<%= ctx %>/forms.jsp" id="downloadForm" style="margin:0;">
+        <form method="post" action="<%= ctx %>/forms.jsp" id="downloadForm">
           <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
           <input type="hidden" name="focus" value="<%= focusMode ? "1" : "" %>" />
           <input type="hidden" name="render_preview" value="<%= renderPreview ? "1" : "0" %>" />
@@ -843,85 +1083,111 @@
           <button class="btn" type="submit" id="btnDownloadAssembled" title="Alt+D">Download (Alt+D)</button>
         </form>
       <% } %>
-      <button type="button" class="btn btn-ghost" id="btnResetWorkspace" title="Alt+0" onclick="resetWorkspace(); return false;">Reset (Alt+0)</button>
-      <button type="button" class="btn btn-ghost" id="btnPreviewMode" onclick="togglePreviewMode(); return false;">Full Page: Off</button>
+      <button type="button" class="btn btn-ghost" id="btnResetWorkspace" title="Alt+0">Reset (Alt+0)</button>
+      <button type="button" class="btn btn-ghost" id="btnPreviewMode">Preview: Context</button>
+    </div>
+
+    <div class="forms-tabs" role="tablist" aria-label="Assembly controls tabs">
+      <button type="button" class="forms-tab-btn is-active" id="formsTabReplace" data-forms-tab-target="replace" role="tab" aria-selected="true" aria-controls="formsPanelReplace">Replace</button>
+      <button type="button" class="forms-tab-btn" id="formsTabMissing" data-forms-tab-target="missing" role="tab" aria-selected="false" aria-controls="formsPanelMissing">Missing <span class="forms-tab-pill" id="formsMissingCountPill" style="display:none;">0</span></button>
+      <button type="button" class="forms-tab-btn" id="formsTabTokens" data-forms-tab-target="tokens" role="tab" aria-selected="false" aria-controls="formsPanelTokens">Tokens</button>
+    </div>
+
+    <div class="forms-tab-panels">
+      <section class="forms-tab-panel is-active" id="formsPanelReplace" data-forms-tab-panel="replace" role="tabpanel" aria-labelledby="formsTabReplace">
+        <div class="forms-toolbar">
+          <div class="forms-toolbar-stack">
+            <label>
+              <span>Token</span>
+              <select id="tokenSelect">
+                <% if (workspaceTokenDefaults.isEmpty()) { %>
+                  <option value="">No tokens found</option>
+                <% } else {
+                     for (Map.Entry<String,String> tokenEntry : workspaceTokenDefaults.entrySet()) {
+                       if (tokenEntry == null) continue;
+                       String token = safe(tokenEntry.getKey());
+                       String defVal = safe(tokenEntry.getValue());
+                %>
+                  <option value="<%= esc(token) %>" data-default-value="<%= esc(defVal) %>"><%= esc(token) %></option>
+                <%   }
+                   } %>
+              </select>
+            </label>
+
+            <label>
+              <span>Replacement Value</span>
+              <input type="text" id="replaceValue" value="" />
+            </label>
+          </div>
+          <div class="forms-toolbar-actions">
+            <button type="button" class="btn btn-ghost" id="btnFirstToken" title="Alt+1">First</button>
+            <button type="button" class="btn btn-ghost" id="btnPrevToken" title="Alt+2">Previous</button>
+            <button type="button" class="btn btn-ghost" id="btnNextToken" title="Alt+3">Next</button>
+            <button type="button" class="btn btn-ghost" id="btnLastToken" title="Alt+4">Last</button>
+            <button type="button" class="btn btn-ghost" id="btnReplaceOnce" title="Alt+R">Replace Once</button>
+            <button type="button" class="btn btn-ghost" id="btnReplaceAll" title="Alt+Shift+R">Replace All</button>
+          </div>
+          <div class="hotkey-hints" aria-label="Keyboard shortcuts">
+            <code>Alt+1</code> First
+            <code>Alt+2</code> Previous
+            <code>Alt+3</code> Next
+            <code>Alt+4</code> Last
+            <code>Alt+R</code> Replace Once
+            <code>Alt+Shift+R</code> Replace All
+            <code>Alt+0</code> Reset
+            <code>Alt+D</code> Download
+          </div>
+        </div>
+      </section>
+
+      <section class="forms-tab-panel" id="formsPanelMissing" data-forms-tab-panel="missing" role="tabpanel" aria-labelledby="formsTabMissing">
+        <div
+          id="missingValuesAlert"
+          class="<%= missingTokens.isEmpty() ? "meta" : "alert alert-warn" %>"
+          style="margin:0;<%= missingTokens.isEmpty() ? "display:none;" : "" %>">
+          <div id="missingValuesText">
+            <% if (!missingTokens.isEmpty()) { %>
+              Missing values for:
+              <% int mi = 0; for (String t : missingTokens) { if (mi > 0) { %>, <% } %><code><%= esc(tokenPreview(t)) %></code><% mi++; } %>
+            <% } %>
+          </div>
+          <div
+            id="missingValuesActions"
+            style="margin-top:8px; gap:8px; flex-wrap:wrap;<%= missingTokens.isEmpty() ? "display:none;" : "display:flex;" %>">
+            <button type="button" class="btn btn-ghost" id="btnPromptMissingSave">Prompt Missing + Save</button>
+            <button type="button" class="btn btn-ghost" id="btnPromptMissingAssemble">Prompt Missing + Save + Assemble</button>
+            <a class="btn btn-ghost" id="btnOpenCaseLists" href="<%= ctx %>/case_lists.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= assemblyQs %><%= focusQs %><%= renderPreviewQs %>">Open List/Grid Editor</a>
+          </div>
+        </div>
+        <div id="missingValuesEmpty" class="meta" style="<%= missingTokens.isEmpty() ? "" : "display:none;" %>">No unresolved scalar values. List/grid datasets are prompted only when focused.</div>
+      </section>
+
+      <section class="forms-tab-panel" id="formsPanelTokens" data-forms-tab-panel="tokens" role="tabpanel" aria-labelledby="formsTabTokens">
+        <div class="forms-side-meta" style="margin-top:0;">
+          <div class="meta">
+            Tokens found: <%= workspaceTokenDefaults.size() %>
+          </div>
+          <div class="meta tokens-found">
+            <% if (!usedTokens.isEmpty()) { %>
+              <% int ui = 0; for (String t : usedTokens) { if (ui > 0) { %>, <% } %><code><%= esc(tokenPreview(t)) %></code> (<%= tokenCounts.getOrDefault(t, 0) %>)<% ui++; } %>
+            <% } else { %>
+              No recognized replacement tokens in current template source.
+            <% } %>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
+</aside>
 
-  <div
-    id="missingValuesAlert"
-    class="<%= missingTokens.isEmpty() ? "meta" : "alert alert-warn" %>"
-    style="margin:6px 0 0 0;<%= missingTokens.isEmpty() ? "display:none;" : "" %>">
-    <div id="missingValuesText">
-      <% if (!missingTokens.isEmpty()) { %>
-        Missing values for:
-        <% int mi = 0; for (String t : missingTokens) { if (mi > 0) { %>, <% } %><code><%= esc(tokenPreview(t)) %></code><% mi++; } %>
-      <% } %>
-    </div>
-    <div
-      id="missingValuesActions"
-      style="margin-top:8px; gap:8px; flex-wrap:wrap;<%= missingTokens.isEmpty() ? "display:none;" : "display:flex;" %>">
-      <button type="button" class="btn btn-ghost" id="btnPromptMissingSave" onclick="promptForMissingValues(false); return false;">Prompt Missing + Save</button>
-      <button type="button" class="btn btn-ghost" id="btnPromptMissingAssemble" onclick="promptForMissingValues(true); return false;">Prompt Missing + Save + Assemble</button>
-      <a class="btn btn-ghost" id="btnOpenCaseLists" href="<%= ctx %>/case_lists.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= assemblyQs %><%= focusQs %><%= renderPreviewQs %>">Open List/Grid Editor</a>
-    </div>
+<section class="card forms-preview-card">
+  <div class="forms-preview-head">
+    <h2 style="margin:0;">Interactive Preview Workspace</h2>
+    <div class="meta">Live document preview and token navigation context.</div>
+    <div class="meta" id="tokenMatchMeta" style="margin-top:6px;">Select a token to navigate matches. Replacements also apply inside table cells and tolerate common delimiter mistakes (smart quotes/full-width brackets).</div>
   </div>
 
-  <div class="forms-compact-meta">
-    <div class="meta" id="tokenMatchMeta">Select a token to navigate matches. Replacements also apply inside table cells and tolerate common delimiter mistakes (smart quotes/full-width brackets).</div>
-    <div class="meta">
-      Tokens found: <%= workspaceTokenDefaults.size() %>
-      <% if (!usedTokens.isEmpty()) { %>
-        •
-        <% int ui = 0; for (String t : usedTokens) { if (ui > 0) { %>, <% } %><code><%= esc(tokenPreview(t)) %></code> (<%= tokenCounts.getOrDefault(t, 0) %>)<% ui++; } %>
-      <% } %>
-    </div>
-  </div>
-
-  <div class="forms-toolbar">
-    <div class="forms-toolbar-grid">
-      <label>
-        <span>Token</span>
-        <select id="tokenSelect">
-          <% if (workspaceTokenDefaults.isEmpty()) { %>
-            <option value="">No tokens found</option>
-          <% } else {
-               for (Map.Entry<String,String> tokenEntry : workspaceTokenDefaults.entrySet()) {
-                 if (tokenEntry == null) continue;
-                 String token = safe(tokenEntry.getKey());
-                 String defVal = safe(tokenEntry.getValue());
-          %>
-            <option value="<%= esc(token) %>" data-default-value="<%= esc(defVal) %>"><%= esc(token) %></option>
-          <%   }
-             } %>
-        </select>
-      </label>
-
-      <label>
-        <span>Replacement Value</span>
-        <input type="text" id="replaceValue" value="" />
-      </label>
-
-      <button type="button" class="btn btn-ghost" id="btnFirstToken" title="Alt+1" onclick="gotoFirstToken(); return false;">First (Alt+1)</button>
-      <button type="button" class="btn btn-ghost" id="btnPrevToken" title="Alt+2" onclick="gotoPrevToken(); return false;">Previous (Alt+2)</button>
-      <button type="button" class="btn btn-ghost" id="btnNextToken" title="Alt+3" onclick="gotoNextToken(); return false;">Next (Alt+3)</button>
-      <button type="button" class="btn btn-ghost" id="btnLastToken" title="Alt+4" onclick="gotoLastToken(); return false;">Last (Alt+4)</button>
-      <button type="button" class="btn btn-ghost" id="btnReplaceOnce" title="Alt+R" onclick="replaceOnce(); return false;">Replace Once (Alt+R)</button>
-      <button type="button" class="btn btn-ghost" id="btnReplaceAll" title="Alt+Shift+R" onclick="replaceAllTokens(); return false;">Replace All (Alt+Shift+R)</button>
-    </div>
-    <div class="hotkey-hints" aria-label="Keyboard shortcuts">
-      <code>Alt+1</code> First
-      <code>Alt+2</code> Previous
-      <code>Alt+3</code> Next
-      <code>Alt+4</code> Last
-      <code>Alt+R</code> Replace Once
-      <code>Alt+Shift+R</code> Replace All
-      <code>Alt+0</code> Reset
-      <code>Alt+D</code> Download
-    </div>
-  </div>
-
-  <div class="forms-pane-scroll">
+  <div class="forms-preview-scroll">
     <% if (!renderPreview) { %>
       <div class="meta" style="margin-bottom:8px;">Rendered image preview is disabled.</div>
       <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= focusQs %>&render_preview=1<%= assemblyQs %>">Enable Image Preview</a>
@@ -939,7 +1205,7 @@
         <% } %>
       </div>
       <div id="contextPreviewViewport">
-        <canvas id="contextPreviewCanvas"></canvas>
+        <img id="contextPreviewImage" alt="Focused token preview image" />
       </div>
       <div class="meta" id="contextPreviewMeta" style="margin-top:8px;">Navigate tokens to focus image context.</div>
       <% if (!renderedAvailable) { %>
@@ -962,8 +1228,9 @@
       </div>
     <% } %>
   </div>
-  <textarea id="workspaceText" rows="2" style="position:absolute; left:-10000px; top:auto; width:1px; height:1px; opacity:0;"><%= esc(sourcePreviewText) %></textarea>
 </section>
+</div>
+<textarea id="workspaceText" rows="2" style="position:absolute; left:-10000px; top:auto; width:1px; height:1px; opacity:0;"><%= esc(sourcePreviewText) %></textarea>
 </div>
 
 <script>
@@ -978,11 +1245,15 @@
   var missingValuesAlert = document.getElementById("missingValuesAlert");
   var missingValuesText = document.getElementById("missingValuesText");
   var missingValuesActions = document.getElementById("missingValuesActions");
+  var missingValuesEmpty = document.getElementById("missingValuesEmpty");
+  var formsMissingCountPill = document.getElementById("formsMissingCountPill");
+  var formsTabButtons = Array.prototype.slice.call(document.querySelectorAll("[data-forms-tab-target]"));
+  var formsTabPanels = Array.prototype.slice.call(document.querySelectorAll("[data-forms-tab-panel]"));
   var renderedPreviewPages = document.getElementById("renderedPreviewPages");
   var renderedPreviewMeta = document.getElementById("renderedPreviewMeta");
   var renderedPreviewWarning = document.getElementById("renderedPreviewWarning");
   var contextPreviewViewport = document.getElementById("contextPreviewViewport");
-  var contextPreviewCanvas = document.getElementById("contextPreviewCanvas");
+  var contextPreviewImage = document.getElementById("contextPreviewImage");
   var contextPreviewMeta = document.getElementById("contextPreviewMeta");
   var btnOpenCaseLists = document.getElementById("btnOpenCaseLists");
   var formsEndpoint = "<%= js(ctx + "/forms.jsp") %>";
@@ -999,6 +1270,7 @@
   var templateSourceText = "<%= js(sourcePreviewText) %>";
   var imagePreviewHits = Object.create(null);
   var imagePreviewAnchorHits = Object.create(null);
+  var serverContextPreview = null;
   var tokenDefaultValues = Object.create(null);
   var tokenOverrideValues = Object.create(null);
   var initialMissingKeys = [
@@ -1011,6 +1283,8 @@
   var draftSaveQueued = false;
   var draftSaveInFlight = false;
   var eachDirectiveKeys = Object.create(null);
+  var formsLeftTab = "replace";
+  var formsLeftTabInitialized = false;
 
   var btnFirstToken = document.getElementById("btnFirstToken");
   var btnPrevToken = document.getElementById("btnPrevToken");
@@ -1018,6 +1292,8 @@
   var btnLastToken = document.getElementById("btnLastToken");
   var btnReplaceOnce = document.getElementById("btnReplaceOnce");
   var btnReplaceAll = document.getElementById("btnReplaceAll");
+  var btnPromptMissingSave = document.getElementById("btnPromptMissingSave");
+  var btnPromptMissingAssemble = document.getElementById("btnPromptMissingAssemble");
   var btnResetWorkspace = document.getElementById("btnResetWorkspace");
   var btnDownloadAssembled = document.getElementById("btnDownloadAssembled");
   var btnPreviewMode = document.getElementById("btnPreviewMode");
@@ -1298,28 +1574,70 @@
   }
 
   function clearContextPreview() {
-    if (!contextPreviewCanvas) return;
-    var g = contextPreviewCanvas.getContext("2d");
-    contextPreviewCanvas.width = 1;
-    contextPreviewCanvas.height = 1;
-    if (g) {
-      g.fillStyle = "#ffffff";
-      g.fillRect(0, 0, 1, 1);
-    }
+    if (!contextPreviewImage) return;
+    contextPreviewImage.removeAttribute("src");
+    contextPreviewImage.style.display = "none";
   }
 
   function tokenHitsForLiteral(tokenLiteral) {
-    var token = String(tokenLiteral || "");
-    if (!token) return [];
-    var currentHits = imagePreviewHits[token];
-    if (Array.isArray(currentHits) && currentHits.length > 0) return currentHits;
-    var anchorHits = imagePreviewAnchorHits[token];
-    return Array.isArray(anchorHits) ? anchorHits : [];
+    var current = findTokenHits(imagePreviewHits, tokenLiteral);
+    if (current.found) return current.hits;
+    var anchor = findTokenHits(imagePreviewAnchorHits, tokenLiteral);
+    return anchor.found ? anchor.hits : [];
   }
 
   function selectedTokenImageHits() {
     if (!tokenSelect) return [];
     return tokenHitsForLiteral(String(tokenSelect.value || ""));
+  }
+
+  function normalizedTokenLookupKey(tokenLiteral) {
+    var t = String(tokenLiteral || "").trim();
+    if (!t) return "";
+
+    var curly = t.match(/^\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}$/);
+    if (curly) return "curly:" + String(curly[1] || "").toLowerCase();
+
+    var bracket = t.match(/^\[\s*([^\[\]\r\n]{1,120})\s*\]$/);
+    if (bracket) return "bracket:" + String(bracket[1] || "").trim().toLowerCase();
+
+    var switchBrace = t.match(/^\{\s*([^{}\r\n]{1,240})\s*\}$/);
+    if (switchBrace && String(switchBrace[1] || "").indexOf("/") >= 0) {
+      return "switch:" + String(switchBrace[1] || "").trim().toLowerCase();
+    }
+
+    if (/^[A-Za-z0-9_.-]+$/.test(t)) return "curly:" + t.toLowerCase();
+    return "raw:" + t.toLowerCase();
+  }
+
+  function findTokenHits(map, tokenLiteral) {
+    var out = { found: false, hits: [] };
+    var token = String(tokenLiteral || "").trim();
+    if (!token || !map) return out;
+
+    if (hasOwn(map, token)) {
+      var direct = map[token];
+      out.found = true;
+      out.hits = Array.isArray(direct) ? direct : [];
+      return out;
+    }
+
+    var targetKey = normalizedTokenLookupKey(token);
+    var keys = Object.keys(map || {});
+    for (var i = 0; i < keys.length; i++) {
+      var k = String(keys[i] || "").trim();
+      if (!k || !hasOwn(map, k)) continue;
+
+      if (!equivalentPromptTokens(k, token)) {
+        if (!targetKey) continue;
+        if (normalizedTokenLookupKey(k) !== targetKey) continue;
+      }
+
+      out.found = true;
+      out.hits = Array.isArray(map[k]) ? map[k] : [];
+      return out;
+    }
+    return out;
   }
 
   function hasOwn(obj, key) {
@@ -1378,9 +1696,10 @@
     return 0;
   }
 
-  function selectTokenByOrdinal(ordinal) {
+  function selectTokenByOrdinal(ordinal, opts) {
     if (!tokenSelect) return false;
-    recordCurrentTokenOverride();
+    var options = opts || {};
+    if (!options.skipRecord) recordCurrentTokenOverride();
     var idxs = tokenOptionIndices();
     if (!idxs.length) return false;
     var n = idxs.length;
@@ -1407,10 +1726,10 @@
   function updatePreviewModeUi() {
     if (!btnPreviewMode) return;
     if (previewMode === "full") {
-      btnPreviewMode.textContent = "Full Page: On";
+      btnPreviewMode.textContent = "Preview: Full";
       btnPreviewMode.title = "Switch to context preview";
     } else {
-      btnPreviewMode.textContent = "Full Page: Off";
+      btnPreviewMode.textContent = "Preview: Context";
       btnPreviewMode.title = "Switch to full page preview";
     }
   }
@@ -1424,140 +1743,60 @@
     if (previewMode === "context" && contextPreviewViewport) contextPreviewViewport.scrollTop = 0;
     updatePreviewModeUi();
     renderImageTokenHighlights(tokenSelect ? tokenSelect.value : "", tokenMatchIndex);
+    if (renderPreviewEnabled) refreshRenderedPreviewNow();
   }
 
-  function drawContextForHit(hit, index, total, usingAnchor) {
-    if (!contextPreviewCanvas || !hit) return;
-    var pageIdx = Math.max(0, Number(hit.page) || 0);
-    var img = pageImageEl(pageIdx);
-    if (!img) {
-      if (contextPreviewMeta) contextPreviewMeta.textContent = "Preview image for page " + (pageIdx + 1) + " is unavailable.";
+  function setContextImage(src, message) {
+    if (!contextPreviewImage) return false;
+    var s = String(src || "");
+    if (!s) {
       clearContextPreview();
-      return;
+      if (contextPreviewMeta) contextPreviewMeta.textContent = String(message || "Rendered preview is unavailable for this token.");
+      return false;
     }
-
-    var paint = function () {
-      var iw = Math.max(1, Number(img.naturalWidth || img.width || img.getAttribute("width")) || 1);
-      var ih = Math.max(1, Number(img.naturalHeight || img.height || img.getAttribute("height")) || 1);
-
-      var hx = Math.max(0, Number(hit.x) || 0);
-      var hy = Math.max(0, Number(hit.y) || 0);
-      var hw = Math.max(1, Number(hit.w) || 1);
-      var hh = Math.max(1, Number(hit.h) || 1);
-
-      var y1;
-      var y2;
+    contextPreviewImage.src = s;
+    contextPreviewImage.style.display = "block";
+    if (contextPreviewMeta) contextPreviewMeta.textContent = String(message || "");
+    if (contextPreviewViewport) {
       if (previewMode === "full") {
-        y1 = 0;
-        y2 = ih;
+        var fullMax = Math.max(0, contextPreviewViewport.scrollHeight - contextPreviewViewport.clientHeight);
+        if (fullPreviewScrollTop > fullMax) fullPreviewScrollTop = fullMax;
+        contextPreviewViewport.scrollTop = fullPreviewScrollTop;
       } else {
-        var contextPadY = Math.max(72, Math.round((ih / 11.0) * 1.5));
-        y1 = Math.max(0, Math.floor(hy - contextPadY));
-        y2 = Math.min(ih, Math.ceil(hy + hh + contextPadY));
-        if (y2 <= y1) {
-          y1 = 0;
-          y2 = ih;
-        }
+        contextPreviewViewport.scrollTop = 0;
       }
-
-      var cropW = iw;
-      var cropH = Math.max(1, y2 - y1);
-
-      contextPreviewCanvas.width = cropW;
-      contextPreviewCanvas.height = cropH;
-      var g = contextPreviewCanvas.getContext("2d");
-      if (!g) return;
-      g.clearRect(0, 0, cropW, cropH);
-      g.drawImage(img, 0, y1, cropW, cropH, 0, 0, cropW, cropH);
-
-      var ry = Math.max(0, hy - y1);
-      var multiInstance = Number(total) > 1;
-      if (multiInstance) {
-        g.fillStyle = "rgba(244, 114, 182, 0.33)";
-        g.strokeStyle = "rgba(190, 24, 93, 0.95)";
-      } else {
-        g.fillStyle = "rgba(255, 222, 89, 0.35)";
-        g.strokeStyle = "rgba(199, 133, 0, 1)";
-      }
-      g.lineWidth = 2;
-      g.fillRect(hx, ry, hw, hh);
-      g.strokeRect(hx, ry, hw, hh);
-
-      if (contextPreviewMeta) {
-        contextPreviewMeta.textContent =
-          "Match " + (index + 1) + " of " + total +
-          " • page " + (pageIdx + 1) +
-          (multiInstance ? " • multi-instance token" : "") +
-          (usingAnchor ? " • anchored token position" : "") +
-          (previewMode === "full"
-            ? " • full page preview"
-            : " • context: 1.5in above and below highlight");
-      }
-      if (contextPreviewViewport) {
-        if (previewMode === "full") {
-          var fullMax = Math.max(0, contextPreviewViewport.scrollHeight - contextPreviewViewport.clientHeight);
-          if (fullPreviewScrollTop > fullMax) fullPreviewScrollTop = fullMax;
-          contextPreviewViewport.scrollTop = fullPreviewScrollTop;
-        } else {
-          contextPreviewViewport.scrollTop = 0;
-        }
-      }
-    };
-
-    if (img.complete && (img.naturalWidth || img.width)) {
-      paint();
-    } else {
-      img.onload = paint;
-      img.onerror = function () {
-        if (contextPreviewMeta) contextPreviewMeta.textContent = "Unable to load preview image.";
-        clearContextPreview();
-      };
     }
+    return true;
   }
 
-  function drawPageFallback(pageIndex, message) {
-    if (!contextPreviewCanvas) return;
-    var msg = String(message == null ? "" : message);
+  function contextTokenMatches(requestedToken, contextToken) {
+    var req = String(requestedToken || "").trim();
+    var ctx = String(contextToken || "").trim();
+    if (!req || !ctx) return false;
+    if (req === ctx) return true;
+    if (equivalentPromptTokens(req, ctx)) return true;
+    return normalizedTokenLookupKey(req) === normalizedTokenLookupKey(ctx);
+  }
+
+  function applyServerContextPreview(tokenLiteral) {
+    var cp = serverContextPreview;
+    if (!cp || typeof cp !== "object") return false;
+    var b64 = String(cp.base64Png || "");
+    if (!b64) return false;
+    var msg = String(cp.message || "");
+    return setContextImage("data:image/png;base64," + b64, msg);
+  }
+
+  function showPageFallback(pageIndex, message) {
     var idx = Math.max(0, Number(pageIndex) || 0);
     var img = pageImageEl(idx);
+    var msg = String(message || ("Showing page " + (idx + 1) + " (no token hit found)."));
     if (!img) {
       clearContextPreview();
-      if (contextPreviewMeta) contextPreviewMeta.textContent = msg || "Rendered preview is unavailable for this token.";
+      if (contextPreviewMeta) contextPreviewMeta.textContent = msg;
       return;
     }
-
-    var paint = function () {
-      var iw = Math.max(1, Number(img.naturalWidth || img.width || img.getAttribute("width")) || 1);
-      var ih = Math.max(1, Number(img.naturalHeight || img.height || img.getAttribute("height")) || 1);
-      contextPreviewCanvas.width = iw;
-      contextPreviewCanvas.height = ih;
-      var g = contextPreviewCanvas.getContext("2d");
-      if (!g) return;
-      g.clearRect(0, 0, iw, ih);
-      g.drawImage(img, 0, 0, iw, ih, 0, 0, iw, ih);
-      if (contextPreviewMeta) {
-        contextPreviewMeta.textContent = msg || ("Showing page " + (idx + 1) + " (no token hit found).");
-      }
-      if (contextPreviewViewport) {
-        if (previewMode === "full") {
-          var fallbackMax = Math.max(0, contextPreviewViewport.scrollHeight - contextPreviewViewport.clientHeight);
-          if (fullPreviewScrollTop > fallbackMax) fullPreviewScrollTop = fallbackMax;
-          contextPreviewViewport.scrollTop = fullPreviewScrollTop;
-        } else {
-          contextPreviewViewport.scrollTop = 0;
-        }
-      }
-    };
-
-    if (img.complete && (img.naturalWidth || img.width)) {
-      paint();
-    } else {
-      img.onload = paint;
-      img.onerror = function () {
-        clearContextPreview();
-        if (contextPreviewMeta) contextPreviewMeta.textContent = "Unable to load preview image.";
-      };
-    }
+    setContextImage(String(img.src || ""), msg);
   }
 
   function renderImageTokenHighlights(tokenLiteral, activeIndex) {
@@ -1569,21 +1808,32 @@
       return;
     }
 
+    if (applyServerContextPreview(key)) return;
+
     var usingAnchor = false;
-    var hits = imagePreviewHits[key];
-    if (!Array.isArray(hits) || hits.length === 0) {
-      hits = imagePreviewAnchorHits[key];
-      usingAnchor = Array.isArray(hits) && hits.length > 0;
+    var current = findTokenHits(imagePreviewHits, key);
+    var hits = current.hits;
+    if (!current.found) {
+      var anchor = findTokenHits(imagePreviewAnchorHits, key);
+      hits = anchor.hits;
+      usingAnchor = anchor.found && hits.length > 0;
     }
     if (!Array.isArray(hits) || hits.length === 0) {
-      drawPageFallback(0, "No rendered highlight was found for the selected token. Showing page 1.");
+      showPageFallback(0, "No rendered highlight was found for the selected token. Showing page 1.");
       return;
     }
 
     var idx = Number(activeIndex);
     if (!isFinite(idx) || idx < 0) idx = 0;
     idx = idx % hits.length;
-    drawContextForHit(hits[idx], idx, hits.length, usingAnchor);
+    var hit = hits[idx] || {};
+    var pageIdx = Math.max(0, Number(hit.page) || 0);
+    var msg = "Match " + (idx + 1) + " of " + hits.length
+      + " • page " + (pageIdx + 1)
+      + (hits.length > 1 ? " • multi-instance token" : "")
+      + (usingAnchor ? " • anchored token position" : "")
+      + (previewMode === "full" ? " • full page preview" : " • context preview");
+    showPageFallback(pageIdx, msg);
   }
 
   function renderAllSurfaces(scrollToActive) {
@@ -1653,30 +1903,30 @@
     return navigationMatchCount() > 0;
   }
 
-  function gotoFirstToken() {
-    selectTokenByOrdinal(0);
+  function gotoFirstToken(skipRecord) {
+    selectTokenByOrdinal(0, { skipRecord: !!skipRecord });
   }
 
-  function gotoLastToken() {
+  function gotoLastToken(skipRecord) {
     var idxs = tokenOptionIndices();
     if (!idxs.length) return;
-    selectTokenByOrdinal(idxs.length - 1);
+    selectTokenByOrdinal(idxs.length - 1, { skipRecord: !!skipRecord });
   }
 
-  function gotoPrevToken() {
-    var idxs = tokenOptionIndices();
-    if (!idxs.length) return;
-    var ord = currentTokenOrdinal(idxs);
-    if (ord < 0) ord = 0;
-    selectTokenByOrdinal(ord - 1);
-  }
-
-  function gotoNextToken() {
+  function gotoPrevToken(skipRecord) {
     var idxs = tokenOptionIndices();
     if (!idxs.length) return;
     var ord = currentTokenOrdinal(idxs);
     if (ord < 0) ord = 0;
-    selectTokenByOrdinal(ord + 1);
+    selectTokenByOrdinal(ord - 1, { skipRecord: !!skipRecord });
+  }
+
+  function gotoNextToken(skipRecord) {
+    var idxs = tokenOptionIndices();
+    if (!idxs.length) return;
+    var ord = currentTokenOrdinal(idxs);
+    if (ord < 0) ord = 0;
+    selectTokenByOrdinal(ord + 1, { skipRecord: !!skipRecord });
   }
 
   function selectedReplacementValue() {
@@ -1960,6 +2210,55 @@
     return out;
   }
 
+  function updateMissingTabCount(count) {
+    if (!formsMissingCountPill) return;
+    var n = Math.max(0, Number(count) || 0);
+    if (n <= 0) {
+      formsMissingCountPill.style.display = "none";
+      formsMissingCountPill.textContent = "0";
+      return;
+    }
+    formsMissingCountPill.style.display = "inline-flex";
+    formsMissingCountPill.textContent = n > 99 ? "99+" : String(n);
+  }
+
+  function setFormsLeftTab(tabName, opts) {
+    var target = String(tabName || "").trim().toLowerCase();
+    if (target !== "replace" && target !== "missing" && target !== "tokens") target = "replace";
+    var options = opts || {};
+    var focus = !!options.focusTabButton;
+
+    for (var i = 0; i < formsTabButtons.length; i++) {
+      var btn = formsTabButtons[i];
+      if (!btn) continue;
+      var key = String(btn.getAttribute("data-forms-tab-target") || "").toLowerCase();
+      var active = key === target;
+      if (active) btn.classList.add("is-active");
+      else btn.classList.remove("is-active");
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+      if (active && focus && btn.focus) {
+        try { btn.focus(); } catch (ignored) {}
+      }
+    }
+
+    for (var j = 0; j < formsTabPanels.length; j++) {
+      var panel = formsTabPanels[j];
+      if (!panel) continue;
+      var panelKey = String(panel.getAttribute("data-forms-tab-panel") || "").toLowerCase();
+      var show = panelKey === target;
+      if (show) panel.classList.add("is-active");
+      else panel.classList.remove("is-active");
+    }
+
+    formsLeftTab = target;
+  }
+
+  function initializeFormsLeftTab() {
+    if (formsLeftTabInitialized) return;
+    formsLeftTabInitialized = true;
+    setFormsLeftTab("replace");
+  }
+
   function refreshMissingValuesBanner() {
     if (!missingValuesAlert || !missingValuesText || !missingValuesActions) return;
     var focusToken = tokenSelect ? tokenSelect.value : "";
@@ -1977,11 +2276,15 @@
     if (!allTokens.length) {
       missingValuesAlert.style.display = "none";
       missingValuesActions.style.display = "none";
+      if (missingValuesEmpty) missingValuesEmpty.style.display = "";
+      updateMissingTabCount(0);
       return;
     }
     missingValuesAlert.style.display = "";
     missingValuesAlert.className = "alert alert-warn";
     missingValuesActions.style.display = "flex";
+    if (missingValuesEmpty) missingValuesEmpty.style.display = "none";
+    updateMissingTabCount(allTokens.length);
     var parts = [];
     for (var j = 0; j < allTokens.length; j++) {
       parts.push("<code>" + htmlEscape(displayTokenLiteral(allTokens[j])) + "</code>");
@@ -2218,6 +2521,7 @@
     }
     var pages = Array.isArray(d.pages) ? d.pages : [];
     var hits = d.hitRects || {};
+    serverContextPreview = d && d.contextPreview ? d.contextPreview : null;
     imagePreviewHits = Object.create(null);
     var hitKeys = Object.keys(hits);
     for (var hk = 0; hk < hitKeys.length; hk++) {
@@ -2226,7 +2530,7 @@
       var val = hits[key];
       var arr = Array.isArray(val) ? val : [];
       imagePreviewHits[key] = arr;
-      if (arr.length > 0) imagePreviewAnchorHits[key] = arr.slice();
+      imagePreviewAnchorHits[key] = arr.slice();
     }
 
     renderedPreviewPages.innerHTML = "";
@@ -2252,7 +2556,7 @@
     if (renderedPreviewMeta) {
       var engine = String(d.engine || "");
       renderedPreviewMeta.textContent = engine
-        ? ("Engine: " + engine + ". Context preview shows 1.5 inches above and below the highlighted match.")
+        ? ("Engine: " + engine + ". Preview image is server-rendered PNG (full page or focused context).")
         : "Rendered preview engine is unavailable.";
     }
 
@@ -2291,8 +2595,10 @@
     addPair("template_uuid", selectedTemplateUuid);
     if (currentAssemblyUuid) addPair("assembly_uuid", currentAssemblyUuid);
     addPair("render_preview", "1");
+    addPair("preview_mode", previewMode === "full" ? "full" : "context");
     if (focusModeEnabled) addPair("focus", "1");
     if (tokenSelect && tokenSelect.value) addPair("highlight_token", String(tokenSelect.value));
+    if (tokenMatchIndex >= 0) addPair("highlight_index", String(tokenMatchIndex));
 
     var keys = Object.keys(tokenOverrideValues);
     for (var i = 0; i < keys.length; i++) {
@@ -2310,6 +2616,9 @@
     })
     .then(function (res) {
       if (!res || !res.ok) throw new Error("preview_refresh_failed");
+      var ct = "";
+      try { ct = String(res.headers.get("content-type") || "").toLowerCase(); } catch (ignored) {}
+      if (ct.indexOf("application/json") < 0) throw new Error("preview_refresh_non_json");
       return res.json();
     })
     .then(function (data) {
@@ -2317,8 +2626,19 @@
       applyRenderedPreviewData(data);
       return data;
     })
-    .catch(function () {
+    .catch(function (err) {
       // Keep token navigation fully functional even when preview refresh fails.
+      if (window.console && console.error) {
+        try { console.error("forms.jsp preview refresh failed", err); } catch (ignored) {}
+      }
+      if (renderedPreviewWarning) {
+        renderedPreviewWarning.innerHTML = "";
+        var warn = document.createElement("div");
+        warn.className = "alert alert-warn";
+        warn.style.marginBottom = "10px";
+        warn.textContent = "Preview refresh failed. The page may be stale; reload forms.jsp if this persists.";
+        renderedPreviewWarning.appendChild(warn);
+      }
       return null;
     });
   }
@@ -2335,14 +2655,15 @@
     }, 220);
   }
 
-  function recordCurrentTokenOverride() {
+  function recordCurrentTokenOverride(forcePersist) {
     if (!tokenSelect) return;
     var token = String(tokenSelect.value || "");
     if (!token) return;
     var current = selectedReplacementValue();
     var opt = tokenSelect.options[tokenSelect.selectedIndex];
     var def = defaultValueForToken(token, opt);
-    if (current === def) {
+    var force = !!forcePersist;
+    if (!force && current === def) {
       if (hasOwn(tokenOverrideValues, token)) delete tokenOverrideValues[token];
     } else {
       tokenOverrideValues[token] = current;
@@ -2353,44 +2674,65 @@
   }
 
   function replaceOnce() {
-    if (!ensureMatchesReady()) return;
-    if (tokenMatches.length === 0) {
-      recalcMatches();
-      if (tokenMatches.length === 0) return;
+    if (!tokenSelect) return;
+    recordCurrentTokenOverride(true);
+    var literalReplaced = false;
+    if (ensureMatchesReady() && tokenMatches.length > 0) {
+      if (tokenMatchIndex < 0) tokenMatchIndex = 0;
+      if (tokenMatchIndex >= tokenMatches.length) tokenMatchIndex = tokenMatches.length - 1;
+      var hit = tokenMatches[tokenMatchIndex];
+      if (hit) {
+        replaceRange(hit.start, hit.end, selectedReplacementValue());
+        literalReplaced = true;
+      }
     }
-    if (tokenMatchIndex < 0) tokenMatchIndex = 0;
-    if (tokenMatchIndex >= tokenMatches.length) tokenMatchIndex = tokenMatches.length - 1;
 
-    recordCurrentTokenOverride();
-    var hit = tokenMatches[tokenMatchIndex];
-    if (!hit) return;
-    replaceRange(hit.start, hit.end, selectedReplacementValue());
+    if (!literalReplaced && tokenMatchMeta) {
+      tokenMatchMeta.textContent = "No literal token match in text. Replacement value saved for assembly.";
+    }
+
     var idxs = tokenOptionIndices();
     if (idxs.length > 1) {
-      gotoNextToken();
+      gotoNextToken(true);
+      if (renderPreviewEnabled) refreshRenderedPreviewNow();
       return;
     }
     recalcMatches();
-    scheduleRenderedPreviewRefresh();
+    if (renderPreviewEnabled) refreshRenderedPreviewNow();
+    else scheduleRenderedPreviewRefresh();
   }
 
   function replaceAllTokens() {
     if (!tokenSelect) return;
+    recordCurrentTokenOverride(true);
+
     var token = tokenSelect.value;
     var re = tokenRegex(token);
-    if (!re) return;
-
-    if (tokenMatches.length === 0) {
-      recalcMatches();
-      if (tokenMatches.length === 0) return;
+    if (re) {
+      if (tokenMatches.length === 0) {
+        recalcMatches();
+      }
+      if (tokenMatches.length > 0) {
+        var hits = tokenMatches.slice();
+        for (var i = hits.length - 1; i >= 0; i--) {
+          replaceRange(hits[i].start, hits[i].end, selectedReplacementValue());
+        }
+      } else if (tokenMatchMeta) {
+        tokenMatchMeta.textContent = "No literal token matches found to replace. Replacement value saved for assembly.";
+      }
+    } else if (tokenMatchMeta) {
+      tokenMatchMeta.textContent = "Selected token is not replaceable in text. Replacement value saved for assembly.";
     }
-    recordCurrentTokenOverride();
-    var hits = tokenMatches.slice();
-    for (var i = hits.length - 1; i >= 0; i--) {
-      replaceRange(hits[i].start, hits[i].end, selectedReplacementValue());
+
+    var idxs = tokenOptionIndices();
+    if (idxs.length > 1) {
+      gotoNextToken(true);
+      if (renderPreviewEnabled) refreshRenderedPreviewNow();
+      return;
     }
     recalcMatches();
-    scheduleRenderedPreviewRefresh();
+    if (renderPreviewEnabled) refreshRenderedPreviewNow();
+    else scheduleRenderedPreviewRefresh();
   }
 
   function resetWorkspace() {
@@ -2469,6 +2811,36 @@
     }
   }
 
+  for (var tbi = 0; tbi < formsTabButtons.length; tbi++) {
+    (function () {
+      var btn = formsTabButtons[tbi];
+      if (!btn) return;
+      btn.addEventListener("click", function () {
+        var target = String(btn.getAttribute("data-forms-tab-target") || "").toLowerCase();
+        setFormsLeftTab(target, { focusTabButton: false });
+      });
+    })();
+  }
+
+  function bindActionButton(button, handler) {
+    if (!button || typeof handler !== "function") return;
+    button.addEventListener("click", function (ev) {
+      if (ev) ev.preventDefault();
+      handler();
+    });
+  }
+
+  bindActionButton(btnFirstToken, gotoFirstToken);
+  bindActionButton(btnPrevToken, gotoPrevToken);
+  bindActionButton(btnNextToken, gotoNextToken);
+  bindActionButton(btnLastToken, gotoLastToken);
+  bindActionButton(btnReplaceOnce, replaceOnce);
+  bindActionButton(btnReplaceAll, replaceAllTokens);
+  bindActionButton(btnResetWorkspace, resetWorkspace);
+  bindActionButton(btnPreviewMode, togglePreviewMode);
+  bindActionButton(btnPromptMissingSave, function () { promptForMissingValues(false); });
+  bindActionButton(btnPromptMissingAssemble, function () { promptForMissingValues(true); });
+
   if (tokenSelect) {
     tokenSelect.addEventListener("change", function () {
       syncDefaultReplaceValue();
@@ -2511,10 +2883,12 @@
   syncDownloadOverrides();
   syncDefaultReplaceValue();
   refreshMissingValuesBanner();
+  initializeFormsLeftTab();
   syncCaseListsLink();
   updatePreviewModeUi();
   recalcMatches();
   renderAllSurfaces(false);
+  if (renderPreviewEnabled) scheduleRenderedPreviewRefresh();
   if (resumePromptAfterLists) {
     setTimeout(function () {
       promptForMissingValues(resumeAssembleAfterLists);
