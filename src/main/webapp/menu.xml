@@ -3,6 +3,7 @@
   <item label="Home" href="/index.jsp" />
   <item label="Users &amp; Security" href="/users_roles.jsp" />
   <item label="Cases" href="/cases.jsp" />
+  <item label="Documents" href="/documents.jsp" />
   <item label="Tenant Fields" href="/tenant_fields.jsp" />
   <item label="Tenant Settings" href="/tenant_settings.jsp" />
   <item label="Form Assembly" href="/forms.jsp" />
