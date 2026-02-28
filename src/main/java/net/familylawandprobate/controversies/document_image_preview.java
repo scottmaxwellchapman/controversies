@@ -357,6 +357,27 @@ public final class document_image_preview {
         }
     }
 
+    public PreviewResult renderPlainText(String text,
+                                         List<String> highlightNeedles,
+                                         int maxPages,
+                                         String warning,
+                                         String engineLabel) {
+        int pageLimit = maxPages <= 0 ? DEFAULT_MAX_PAGES : Math.min(Math.max(1, maxPages), 20);
+        ArrayList<String> needles = normalizeNeedles(highlightNeedles);
+        ArrayList<document_assembler.StyledSegment> segments = new ArrayList<document_assembler.StyledSegment>();
+        segments.add(new document_assembler.StyledSegment(safe(text), ""));
+        try {
+            return rasterize(segments, needles, pageLimit, safe(warning), safe(engineLabel));
+        } catch (Exception ex) {
+            return new PreviewResult(
+                    new ArrayList<PageImage>(),
+                    new LinkedHashMap<String, ArrayList<HitRect>>(),
+                    "Image preview unavailable: " + safe(ex.getMessage()),
+                    safe(engineLabel)
+            );
+        }
+    }
+
     private static PreviewResult rasterize(ArrayList<document_assembler.StyledSegment> segments,
                                            ArrayList<String> needles,
                                            int maxPages,

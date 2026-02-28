@@ -379,6 +379,15 @@ public final class document_assembler {
         return out;
     }
 
+    /**
+     * Applies token replacement logic directly to plain text using the same resolver
+     * and token grammar as template assembly.
+     */
+    public String applyReplacementsToText(String sourceText, Map<String, String> values) {
+        TokenScan scan = scanTokens(safe(sourceText), values);
+        return safe(scan == null ? "" : scan.assembledText);
+    }
+
     public String normalizeExtension(String extOrName) {
         String v = safe(extOrName).trim().toLowerCase(Locale.ROOT);
         if (v.isBlank()) return "txt";

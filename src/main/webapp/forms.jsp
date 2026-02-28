@@ -447,6 +447,10 @@
     int highlightIndex = intOr(request.getParameter("highlight_index"), 0);
     String previewModeParam = safe(request.getParameter("preview_mode")).trim().toLowerCase(Locale.ROOT);
     boolean previewFullPage = "full".equals(previewModeParam);
+    String workspacePreviewText = safe(request.getParameter("workspace_text"));
+    if (workspacePreviewText.length() > 800000) {
+      workspacePreviewText = workspacePreviewText.substring(0, 800000);
+    }
     ArrayList<String> highlightNeedles = new ArrayList<String>();
     if (!tokenToHighlight.isBlank()) {
       highlightNeedles.add(tokenToHighlight);
@@ -455,7 +459,19 @@
     }
 
     document_image_preview.PreviewResult dynamicPreview = document_image_preview.PreviewResult.empty();
-    if (selectedTemplate != null && templateBytes.length > 0) {
+    if (!workspacePreviewText.isBlank()) {
+      String previewText = workspacePreviewText;
+      if (!previewReplacementValues.isEmpty()) {
+        previewText = assembler.applyReplacementsToText(previewText, previewReplacementValues);
+      }
+      dynamicPreview = imagePreviewer.renderPlainText(
+          previewText,
+          highlightNeedles,
+          6,
+          "",
+          "Workspace Text Renderer"
+      );
+    } else if (selectedTemplate != null && templateBytes.length > 0) {
       dynamicPreview = imagePreviewer.render(templateBytes, templateExt, previewReplacementValues, highlightNeedles, 6);
     }
     document_image_preview.FocusPreview focusPreview =
@@ -1491,7 +1507,7 @@
     syncWorkspaceTextValue();
   }
 
-  function appendStyledPiece(parent, text, css, activeHit) {
+  function appendStyledPiece(parent, text, css, hitKind) {
     if (!parent) return;
     var t = String(text || "");
     if (!t) return;
@@ -1500,10 +1516,16 @@
     span.textContent = t;
 
     var baseCss = String(css || "");
-    if (activeHit) {
+    var kind = String(hitKind || "");
+    if (kind === "active") {
       span.style.cssText = (baseCss ? (baseCss + ";") : "")
         + "background:#ffe79a;outline:1px solid #e6ba11;outline-offset:-1px;border-radius:2px;";
       span.setAttribute("data-hit", "1");
+      span.setAttribute("data-hit-kind", "active");
+    } else if (kind === "multi") {
+      span.style.cssText = (baseCss ? (baseCss + ";") : "")
+        + "background:rgba(244,114,182,0.35);outline:1px solid rgba(190,24,93,0.88);outline-offset:-1px;border-radius:2px;";
+      span.setAttribute("data-hit-kind", "multi");
     } else if (baseCss) {
       span.style.cssText = baseCss;
     }
@@ -1534,10 +1556,6 @@
     if (!container) return;
     container.innerHTML = "";
 
-    var active = activeMatch();
-    var activeStart = active ? active.start : -1;
-    var activeEnd = active ? active.end : -1;
-
     var frag = document.createDocumentFragment();
     var pos = 0;
     for (var i = 0; i < workspaceSegments.length; i++) {
@@ -1549,15 +1567,57 @@
 
       var segStart = pos;
       var segEnd = pos + len;
+      var ranges = [];
+      for (var hi = 0; hi < tokenMatches.length; hi++) {
+        var h = tokenMatches[hi];
+        if (!h) continue;
+        var hs = Number(h.start);
+        var he = Number(h.end);
+        if (!isFinite(hs) || !isFinite(he) || he <= hs) continue;
+        if (he <= segStart || hs >= segEnd) continue;
+        ranges.push({
+          start: hs,
+          end: he,
+          kind: hi === tokenMatchIndex ? "active" : "multi"
+        });
+      }
 
-      if (!active || activeEnd <= segStart || activeStart >= segEnd) {
-        appendStyledPiece(frag, text, css, false);
+      if (!ranges.length) {
+        appendStyledPiece(frag, text, css, "");
       } else {
-        var rs = Math.max(0, activeStart - segStart);
-        var re = Math.min(len, activeEnd - segStart);
-        if (rs > 0) appendStyledPiece(frag, text.substring(0, rs), css, false);
-        if (re > rs) appendStyledPiece(frag, text.substring(rs, re), css, true);
-        if (re < len) appendStyledPiece(frag, text.substring(re), css, false);
+        ranges.sort(function (a, b) {
+          if (a.start !== b.start) return a.start - b.start;
+          return a.end - b.end;
+        });
+
+        var cursor = segStart;
+        for (var ri = 0; ri < ranges.length && cursor < segEnd; ri++) {
+          var r = ranges[ri];
+          if (!r) continue;
+          if (r.end <= cursor) continue;
+
+          var preEnd = Math.min(segEnd, Math.max(cursor, r.start));
+          if (preEnd > cursor) {
+            var a1 = cursor - segStart;
+            var b1 = preEnd - segStart;
+            appendStyledPiece(frag, text.substring(a1, b1), css, "");
+            cursor = preEnd;
+          }
+          if (cursor >= segEnd) break;
+
+          var hs2 = Math.max(cursor, r.start);
+          var he2 = Math.min(segEnd, r.end);
+          if (he2 > hs2) {
+            var a2 = hs2 - segStart;
+            var b2 = he2 - segStart;
+            appendStyledPiece(frag, text.substring(a2, b2), css, r.kind);
+            cursor = he2;
+          }
+        }
+        if (cursor < segEnd) {
+          var a3 = cursor - segStart;
+          appendStyledPiece(frag, text.substring(a3), css, "");
+        }
       }
       pos = segEnd;
     }
@@ -2596,6 +2656,7 @@
     if (currentAssemblyUuid) addPair("assembly_uuid", currentAssemblyUuid);
     addPair("render_preview", "1");
     addPair("preview_mode", previewMode === "full" ? "full" : "context");
+    if (workspace && typeof workspace.value === "string") addPair("workspace_text", workspace.value);
     if (focusModeEnabled) addPair("focus", "1");
     if (tokenSelect && tokenSelect.value) addPair("highlight_token", String(tokenSelect.value));
     if (tokenMatchIndex >= 0) addPair("highlight_index", String(tokenMatchIndex));
@@ -2675,7 +2736,7 @@
 
   function replaceOnce() {
     if (!tokenSelect) return;
-    recordCurrentTokenOverride(true);
+    var token = String(tokenSelect.value || "");
     var literalReplaced = false;
     if (ensureMatchesReady() && tokenMatches.length > 0) {
       if (tokenMatchIndex < 0) tokenMatchIndex = 0;
@@ -2687,8 +2748,17 @@
       }
     }
 
-    if (!literalReplaced && tokenMatchMeta) {
-      tokenMatchMeta.textContent = "No literal token match in text. Replacement value saved for assembly.";
+    if (literalReplaced) {
+      // Replace Once is intentionally local to the current literal match.
+      clearPromptTokenValue(token);
+      syncDownloadOverrides();
+      refreshMissingValuesBanner();
+      scheduleDraftSave(260);
+    } else {
+      recordCurrentTokenOverride(true);
+      if (tokenMatchMeta) {
+        tokenMatchMeta.textContent = "No literal token match in text. Replacement value saved for assembly.";
+      }
     }
 
     var idxs = tokenOptionIndices();
@@ -2852,8 +2922,8 @@
 
   if (replaceValue) {
     replaceValue.addEventListener("input", function () {
-      recordCurrentTokenOverride();
-      scheduleRenderedPreviewRefresh();
+      // Keep typed value local until an explicit action (Replace Once/All, prompt, or token navigation save).
+      // This prevents "Replace Once" from appearing to behave like a global replace via live override refresh.
     });
     replaceValue.addEventListener("keydown", function (ev) {
       if (!ev) return;
