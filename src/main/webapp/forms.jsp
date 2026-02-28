@@ -447,9 +447,16 @@
     int highlightIndex = intOr(request.getParameter("highlight_index"), 0);
     String previewModeParam = safe(request.getParameter("preview_mode")).trim().toLowerCase(Locale.ROOT);
     boolean previewFullPage = "full".equals(previewModeParam);
+    String livePreviewToken = safe(request.getParameter("live_preview_token")).trim();
+    String livePreviewValue = safe(request.getParameter("live_preview_value"));
     String workspacePreviewText = safe(request.getParameter("workspace_text"));
     if (workspacePreviewText.length() > 800000) {
       workspacePreviewText = workspacePreviewText.substring(0, 800000);
+    }
+    LinkedHashMap<String,String> previewRuntimeValues = new LinkedHashMap<String,String>();
+    previewRuntimeValues.putAll(previewReplacementValues);
+    if (!livePreviewToken.isBlank()) {
+      applyLiteralOverride(previewRuntimeValues, livePreviewToken, livePreviewValue);
     }
     ArrayList<String> highlightNeedles = new ArrayList<String>();
     if (!tokenToHighlight.isBlank()) {
@@ -461,8 +468,8 @@
     document_image_preview.PreviewResult dynamicPreview = document_image_preview.PreviewResult.empty();
     if (!workspacePreviewText.isBlank()) {
       String previewText = workspacePreviewText;
-      if (!previewReplacementValues.isEmpty()) {
-        previewText = assembler.applyReplacementsToText(previewText, previewReplacementValues);
+      if (!previewRuntimeValues.isEmpty()) {
+        previewText = assembler.applyReplacementsToText(previewText, previewRuntimeValues);
       }
       dynamicPreview = imagePreviewer.renderPlainText(
           previewText,
@@ -472,7 +479,7 @@
           "Workspace Text Renderer"
       );
     } else if (selectedTemplate != null && templateBytes.length > 0) {
-      dynamicPreview = imagePreviewer.render(templateBytes, templateExt, previewReplacementValues, highlightNeedles, 6);
+      dynamicPreview = imagePreviewer.render(templateBytes, templateExt, previewRuntimeValues, highlightNeedles, 6);
     }
     document_image_preview.FocusPreview focusPreview =
         imagePreviewer.renderFocusPreview(dynamicPreview, tokenToHighlight, highlightIndex, previewFullPage);
@@ -1298,6 +1305,7 @@
   var draftSaveTimer = null;
   var draftSaveQueued = false;
   var draftSaveInFlight = false;
+  var livePreviewEnabled = false;
   var eachDirectiveKeys = Object.create(null);
   var formsLeftTab = "replace";
   var formsLeftTabInitialized = false;
@@ -2657,6 +2665,10 @@
     addPair("render_preview", "1");
     addPair("preview_mode", previewMode === "full" ? "full" : "context");
     if (workspace && typeof workspace.value === "string") addPair("workspace_text", workspace.value);
+    if (livePreviewEnabled && tokenSelect && tokenSelect.value && replaceValue) {
+      addPair("live_preview_token", String(tokenSelect.value));
+      addPair("live_preview_value", selectedReplacementValue());
+    }
     if (focusModeEnabled) addPair("focus", "1");
     if (tokenSelect && tokenSelect.value) addPair("highlight_token", String(tokenSelect.value));
     if (tokenMatchIndex >= 0) addPair("highlight_index", String(tokenMatchIndex));
@@ -2761,6 +2773,7 @@
       }
     }
 
+    livePreviewEnabled = false;
     var idxs = tokenOptionIndices();
     if (idxs.length > 1) {
       gotoNextToken(true);
@@ -2794,6 +2807,7 @@
       tokenMatchMeta.textContent = "Selected token is not replaceable in text. Replacement value saved for assembly.";
     }
 
+    livePreviewEnabled = false;
     var idxs = tokenOptionIndices();
     if (idxs.length > 1) {
       gotoNextToken(true);
@@ -2808,6 +2822,7 @@
   function resetWorkspace() {
     workspaceSegments = normalizeSegments(cloneSegments(originalWorkspaceSegments));
     tokenOverrideValues = Object.create(null);
+    livePreviewEnabled = false;
     syncDownloadOverrides();
     syncWorkspaceTextValue();
     refreshMissingValuesBanner();
@@ -2818,6 +2833,7 @@
 
   function syncDefaultReplaceValue() {
     if (!tokenSelect || !replaceValue) return;
+    livePreviewEnabled = false;
     var opt = tokenSelect.options[tokenSelect.selectedIndex];
     if (!opt) {
       replaceValue.value = "";
@@ -2913,6 +2929,7 @@
 
   if (tokenSelect) {
     tokenSelect.addEventListener("change", function () {
+      livePreviewEnabled = false;
       syncDefaultReplaceValue();
       recalcMatches();
       scheduleRenderedPreviewRefresh();
@@ -2922,8 +2939,9 @@
 
   if (replaceValue) {
     replaceValue.addEventListener("input", function () {
-      // Keep typed value local until an explicit action (Replace Once/All, prompt, or token navigation save).
-      // This prevents "Replace Once" from appearing to behave like a global replace via live override refresh.
+      // Keep typed value local (not persisted), but update preview with a transient server-side override.
+      livePreviewEnabled = true;
+      scheduleRenderedPreviewRefresh();
     });
     replaceValue.addEventListener("keydown", function (ev) {
       if (!ev) return;
