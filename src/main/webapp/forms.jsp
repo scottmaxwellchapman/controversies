@@ -99,6 +99,54 @@
     if (k.isBlank()) return;
     values.put(k, safe(value));
   }
+
+  private static String extractCurlyTokenKey(String tokenLiteral) {
+    String t = safe(tokenLiteral).trim();
+    if (t.length() < 4) return "";
+    if (!t.startsWith("{{") || !t.endsWith("}}")) return "";
+
+    String body = safe(t.substring(2, t.length() - 2)).trim();
+    if (body.isBlank()) return "";
+    for (int i = 0; i < body.length(); i++) {
+      char ch = body.charAt(i);
+      boolean ok = (ch >= 'A' && ch <= 'Z')
+          || (ch >= 'a' && ch <= 'z')
+          || (ch >= '0' && ch <= '9')
+          || ch == '_' || ch == '-' || ch == '.';
+      if (!ok) return "";
+    }
+    return body;
+  }
+
+  private static void applyLiteralOverride(Map<String,String> mergeValues, String tokenLiteral, String tokenValue) {
+    if (mergeValues == null) return;
+    String literal = safe(tokenLiteral).trim();
+    if (literal.isBlank()) return;
+
+    String value = safe(tokenValue);
+    mergeValues.put(literal, value);
+
+    String key = extractCurlyTokenKey(literal);
+    if (key.isBlank()) return;
+    mergeValues.put(key, value);
+
+    int dot = key.indexOf('.');
+    if (dot <= 0 || dot + 1 >= key.length()) return;
+
+    String prefix = safe(key.substring(0, dot)).toLowerCase(Locale.ROOT);
+    String tail = safe(key.substring(dot + 1)).trim();
+    if (tail.isBlank()) return;
+
+    if ("case".equals(prefix) || "kv".equals(prefix)) {
+      mergeValues.put("case." + tail, value);
+      mergeValues.put("kv." + tail, value);
+      mergeValues.put(tail, value);
+    } else if ("tenant".equals(prefix)) {
+      mergeValues.put("tenant." + tail, value);
+      mergeValues.put("kv." + tail, value);
+      mergeValues.put(tail, value);
+    }
+  }
 %>
 
 <%
@@ -289,9 +337,7 @@
   }
   for (Map.Entry<String,String> e : literalOverrides.entrySet()) {
     if (e == null) continue;
-    String tokenLiteral = safe(e.getKey()).trim();
-    if (tokenLiteral.isBlank()) continue;
-    mergeValues.put(tokenLiteral, safe(e.getValue()));
+    applyLiteralOverride(mergeValues, safe(e.getKey()), safe(e.getValue()));
   }
 
   byte[] templateBytes = new byte[0];
@@ -338,6 +384,48 @@
   String imagePreviewWarning = safe(imagePreviewResult.warning);
   String imagePreviewEngine = safe(imagePreviewResult.engine);
   boolean renderedAvailable = imagePreviewPages != null && !imagePreviewPages.isEmpty();
+
+  if ("save_draft_overrides".equalsIgnoreCase(action)) {
+    boolean ok = false;
+    String saveError = "";
+    if (selectedCase == null || selectedTemplate == null) {
+      saveError = "Select a case and template first.";
+    } else {
+      try {
+        assembled_forms.AssemblyRec draft = assembledStore.upsertInProgress(
+            tenantUuid,
+            selectedCase.uuid,
+            selectedAssemblyUuid,
+            selectedTemplate.uuid,
+            templateLabel,
+            templateExt,
+            userUuid,
+            userEmail,
+            literalOverrides
+        );
+        if (draft != null && !safe(draft.uuid).isBlank()) {
+          selectedAssemblyUuid = safe(draft.uuid);
+          ok = true;
+        } else {
+          saveError = "Unable to save draft overrides.";
+        }
+      } catch (Exception ex) {
+        saveError = safe(ex.getMessage());
+      }
+    }
+
+    response.setContentType("application/json; charset=UTF-8");
+    response.setHeader("Cache-Control", "no-store");
+    StringBuilder saveJson = new StringBuilder(512);
+    saveJson.append('{');
+    saveJson.append("\"ok\":").append(ok ? "true" : "false").append(',');
+    saveJson.append("\"assemblyUuid\":").append(jsonStr(selectedAssemblyUuid)).append(',');
+    saveJson.append("\"overrideCount\":").append(literalOverrides.size()).append(',');
+    saveJson.append("\"error\":").append(jsonStr(saveError));
+    saveJson.append('}');
+    response.getWriter().write(saveJson.toString());
+    return;
+  }
 
   if ("render_preview_json".equalsIgnoreCase(action)) {
     String tokenToHighlight = safe(request.getParameter("highlight_token")).trim();
@@ -748,12 +836,23 @@
     </div>
   </div>
 
-  <% if (!missingTokens.isEmpty()) { %>
-    <div class="alert alert-warn" style="margin:6px 0 0 0;">
-      Missing values for:
-      <% int mi = 0; for (String t : missingTokens) { if (mi > 0) { %>, <% } %><code><%= esc(tokenPreview(t)) %></code><% mi++; } %>
+  <div
+    id="missingValuesAlert"
+    class="<%= missingTokens.isEmpty() ? "meta" : "alert alert-warn" %>"
+    style="margin:6px 0 0 0;<%= missingTokens.isEmpty() ? "display:none;" : "" %>">
+    <div id="missingValuesText">
+      <% if (!missingTokens.isEmpty()) { %>
+        Missing values for:
+        <% int mi = 0; for (String t : missingTokens) { if (mi > 0) { %>, <% } %><code><%= esc(tokenPreview(t)) %></code><% mi++; } %>
+      <% } %>
     </div>
-  <% } %>
+    <div
+      id="missingValuesActions"
+      style="margin-top:8px; gap:8px; flex-wrap:wrap;<%= missingTokens.isEmpty() ? "display:none;" : "display:flex;" %>">
+      <button type="button" class="btn btn-ghost" id="btnPromptMissingSave" onclick="promptForMissingValues(false); return false;">Prompt Missing + Save</button>
+      <button type="button" class="btn btn-ghost" id="btnPromptMissingAssemble" onclick="promptForMissingValues(true); return false;">Prompt Missing + Save + Assemble</button>
+    </div>
+  </div>
 
   <div class="forms-compact-meta">
     <div class="meta" id="tokenMatchMeta">Select a token to navigate matches. Replacements also apply inside table cells and tolerate common delimiter mistakes (smart quotes/full-width brackets).</div>
@@ -863,6 +962,9 @@
   var downloadForm = document.getElementById("downloadForm");
   var downloadOverrides = document.getElementById("downloadOverrides");
   var assemblyUuidField = document.getElementById("assemblyUuidField");
+  var missingValuesAlert = document.getElementById("missingValuesAlert");
+  var missingValuesText = document.getElementById("missingValuesText");
+  var missingValuesActions = document.getElementById("missingValuesActions");
   var renderedPreviewPages = document.getElementById("renderedPreviewPages");
   var renderedPreviewMeta = document.getElementById("renderedPreviewMeta");
   var renderedPreviewWarning = document.getElementById("renderedPreviewWarning");
@@ -876,12 +978,20 @@
   var currentAssemblyUuid = "<%= js(selectedAssemblyUuid) %>";
   var focusModeEnabled = <%= focusMode ? "true" : "false" %>;
   var renderPreviewEnabled = <%= renderPreview ? "true" : "false" %>;
+  var templateSourceText = "<%= js(sourcePreviewText) %>";
   var imagePreviewHits = Object.create(null);
   var imagePreviewAnchorHits = Object.create(null);
   var tokenDefaultValues = Object.create(null);
   var tokenOverrideValues = Object.create(null);
+  var initialMissingKeys = [
+    <% int mki = 0; for (String t : missingTokens) { if (mki > 0) { %>, <% } %>"<%= js(t) %>"<% mki++; } %>
+  ];
+  var templateHasAdvancedDirectives = <%= sourcePreviewText.contains("{{#if") || sourcePreviewText.contains("{{#each") || sourcePreviewText.contains("{{format.date") ? "true" : "false" %>;
   var previewRefreshTimer = null;
   var previewRequestSeq = 0;
+  var draftSaveTimer = null;
+  var draftSaveQueued = false;
+  var draftSaveInFlight = false;
 
   var btnFirstToken = document.getElementById("btnFirstToken");
   var btnPrevToken = document.getElementById("btnPrevToken");
@@ -1516,6 +1626,374 @@
     return replaceValue ? String(replaceValue.value || "") : "";
   }
 
+  function htmlEscape(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function displayTokenLiteral(tokenLiteral) {
+    var t = String(tokenLiteral || "").trim();
+    if (!t) return "";
+    if ((t.indexOf("{{") === 0 && t.lastIndexOf("}}") === t.length - 2)
+        || (t.indexOf("[") === 0 && t.lastIndexOf("]") === t.length - 1)
+        || (t.indexOf("{") === 0 && t.lastIndexOf("}") === t.length - 1)) {
+      return t;
+    }
+    return "{{" + t + "}}";
+  }
+
+  function promptTokenKey(tokenLiteral) {
+    var t = String(tokenLiteral || "").trim();
+    if (!t) return "";
+    var curly = t.match(/^\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}$/);
+    if (curly) return String(curly[1] || "").toLowerCase();
+    if (/^[A-Za-z0-9_.-]+$/.test(t)) return t.toLowerCase();
+    return "";
+  }
+
+  function canonicalPromptKey(tokenLiteral) {
+    var key = promptTokenKey(tokenLiteral);
+    if (!key) return "";
+    var scoped = key.match(/^(case|kv|tenant)\.([A-Za-z0-9_.-]+)$/);
+    if (scoped) return String(scoped[2] || "");
+    return key;
+  }
+
+  function equivalentPromptTokens(a, b) {
+    var ka = promptTokenKey(a);
+    var kb = promptTokenKey(b);
+    if (!ka || !kb) return false;
+    if (ka === kb) return true;
+    var ca = canonicalPromptKey(ka);
+    var cb = canonicalPromptKey(kb);
+    if (!ca || !cb) return false;
+    return ca === cb;
+  }
+
+  function collectDirectivePromptTokens() {
+    var out = [];
+    var seen = Object.create(null);
+    var src = String(templateSourceText || "");
+    if (!src) return out;
+
+    function addExpr(rawExpr) {
+      var expr = String(rawExpr || "").trim().toLowerCase();
+      if (!expr) return;
+      if (!/^[A-Za-z0-9_.-]+$/.test(expr)) return;
+      var literal = "{{" + expr + "}}";
+      if (isPromptInternalToken(literal)) return;
+      if (hasOwn(seen, expr)) return;
+      seen[expr] = true;
+      out.push(literal);
+    }
+
+    var eachRe = /\{\{\s*#each\s+([A-Za-z0-9_.-]+)\s*\}\}/g;
+    var m;
+    while ((m = eachRe.exec(src)) !== null) addExpr(m[1]);
+
+    var ifRe = /\{\{\s*#if\s+([A-Za-z0-9_.-]+)\s*\}\}/g;
+    while ((m = ifRe.exec(src)) !== null) addExpr(m[1]);
+
+    var fmtRe = /\{\{\s*format\.date\s+([A-Za-z0-9_.-]+)\s*,[^}]*\}\}/g;
+    while ((m = fmtRe.exec(src)) !== null) addExpr(m[1]);
+
+    return out;
+  }
+
+  function tokenValueForPrompt(tokenLiteral) {
+    var t = displayTokenLiteral(tokenLiteral);
+    if (!t) return "";
+    if (hasOwn(tokenOverrideValues, t)) return String(tokenOverrideValues[t] == null ? "" : tokenOverrideValues[t]);
+    if (hasOwn(tokenDefaultValues, t)) return String(tokenDefaultValues[t] == null ? "" : tokenDefaultValues[t]);
+
+    var overrideKeys = Object.keys(tokenOverrideValues);
+    for (var oi = 0; oi < overrideKeys.length; oi++) {
+      var ovk = String(overrideKeys[oi] || "");
+      if (!ovk) continue;
+      if (!equivalentPromptTokens(ovk, t)) continue;
+      var ov = String(tokenOverrideValues[ovk] == null ? "" : tokenOverrideValues[ovk]);
+      if (ov.trim() !== "") return ov;
+    }
+
+    var defaultKeys = Object.keys(tokenDefaultValues);
+    for (var di = 0; di < defaultKeys.length; di++) {
+      var dvk = String(defaultKeys[di] || "");
+      if (!dvk) continue;
+      if (!equivalentPromptTokens(dvk, t)) continue;
+      var dv = String(tokenDefaultValues[dvk] == null ? "" : tokenDefaultValues[dvk]);
+      if (dv.trim() !== "") return dv;
+    }
+    return "";
+  }
+
+  function isPromptInternalToken(tokenLiteral) {
+    var t = String(tokenLiteral || "").trim();
+    if (!t) return true;
+    if (t === "{{this}}") return true;
+    if (/^\{\{\s*item\./.test(t)) return true;
+    if (/^\{\{#/.test(t) || /^\{\{\//.test(t)) return true;
+    return false;
+  }
+
+  function applyPromptTokenValue(tokenLiteral, value) {
+    var target = displayTokenLiteral(tokenLiteral);
+    if (!target) return;
+    var v = String(value == null ? "" : value);
+    var matched = false;
+
+    var defaults = Object.keys(tokenDefaultValues);
+    for (var i = 0; i < defaults.length; i++) {
+      var lit = String(defaults[i] || "").trim();
+      if (!lit) continue;
+      if (isPromptInternalToken(lit)) continue;
+      if (!equivalentPromptTokens(lit, target)) continue;
+      tokenOverrideValues[lit] = v;
+      matched = true;
+    }
+
+    var existing = Object.keys(tokenOverrideValues);
+    for (var j = 0; j < existing.length; j++) {
+      var ex = String(existing[j] || "").trim();
+      if (!ex) continue;
+      if (isPromptInternalToken(ex)) continue;
+      if (!equivalentPromptTokens(ex, target)) continue;
+      tokenOverrideValues[ex] = v;
+      matched = true;
+    }
+
+    if (!matched) tokenOverrideValues[target] = v;
+  }
+
+  function clearPromptTokenValue(tokenLiteral) {
+    var target = displayTokenLiteral(tokenLiteral);
+    if (!target) return;
+    var matched = false;
+
+    var existing = Object.keys(tokenOverrideValues);
+    for (var i = 0; i < existing.length; i++) {
+      var ex = String(existing[i] || "").trim();
+      if (!ex) continue;
+      if (!equivalentPromptTokens(ex, target)) continue;
+      delete tokenOverrideValues[ex];
+      matched = true;
+    }
+
+    if (!matched && hasOwn(tokenOverrideValues, target)) delete tokenOverrideValues[target];
+  }
+
+  function addPromptToken(out, seen, tokenLiteral) {
+    var literal = displayTokenLiteral(tokenLiteral);
+    if (!literal) return;
+    if (isPromptInternalToken(literal)) return;
+    if (String(tokenValueForPrompt(literal) || "").trim() !== "") return;
+    var key = canonicalPromptKey(literal);
+    if (!key) key = literal;
+    if (hasOwn(seen, key)) return;
+    seen[key] = true;
+    out.push(literal);
+  }
+
+  function collectPromptTokens() {
+    var out = [];
+    var seen = Object.create(null);
+
+    var directiveTokens = collectDirectivePromptTokens();
+    for (var d = 0; d < directiveTokens.length; d++) {
+      addPromptToken(out, seen, directiveTokens[d]);
+    }
+
+    var literals = Object.keys(tokenDefaultValues);
+    for (var i = 0; i < literals.length; i++) {
+      var literal = String(literals[i] || "").trim();
+      if (!literal) continue;
+      addPromptToken(out, seen, literal);
+    }
+
+    for (var j = 0; j < initialMissingKeys.length; j++) {
+      var k = String(initialMissingKeys[j] || "").trim();
+      if (!k) continue;
+      if (!/^[A-Za-z0-9_.-]+$/.test(k)) continue;
+      var curly = "{{" + k + "}}";
+      addPromptToken(out, seen, curly);
+    }
+
+    return out;
+  }
+
+  function refreshMissingValuesBanner() {
+    if (!missingValuesAlert || !missingValuesText || !missingValuesActions) return;
+    var tokens = collectPromptTokens();
+    if (!tokens.length) {
+      missingValuesAlert.style.display = "none";
+      missingValuesActions.style.display = "none";
+      return;
+    }
+    missingValuesAlert.style.display = "";
+    missingValuesAlert.className = "alert alert-warn";
+    missingValuesActions.style.display = "flex";
+    var parts = [];
+    for (var i = 0; i < tokens.length; i++) {
+      parts.push("<code>" + htmlEscape(displayTokenLiteral(tokens[i])) + "</code>");
+    }
+    missingValuesText.innerHTML = "Missing values for: " + parts.join(", ");
+  }
+
+  function ensureAdvancedModeForPrompt() {
+    if (!templateHasAdvancedDirectives) return;
+    var current = String(tokenValueForPrompt("{{tenant.advanced_assembly_enabled}}") || "").trim().toLowerCase();
+    if (current === "true" || current === "1" || current === "yes" || current === "on") return;
+
+    tokenOverrideValues["tenant.advanced_assembly_enabled"] = "true";
+    tokenOverrideValues["advanced_assembly_enabled"] = "true";
+    tokenOverrideValues["kv.advanced_assembly_enabled"] = "true";
+    syncDownloadOverrides();
+  }
+
+  function saveDraftOverridesNow() {
+    if (!selectedMatterUuid || !selectedTemplateUuid) return Promise.resolve(false);
+
+    var pairs = [];
+    function addPair(k, v) {
+      pairs.push(encodeURIComponent(String(k || "")) + "=" + encodeURIComponent(String(v == null ? "" : v)));
+    }
+
+    addPair("csrfToken", csrfTokenValue);
+    addPair("action", "save_draft_overrides");
+    addPair("matter_uuid", selectedMatterUuid);
+    addPair("template_uuid", selectedTemplateUuid);
+    if (currentAssemblyUuid) addPair("assembly_uuid", currentAssemblyUuid);
+    if (focusModeEnabled) addPair("focus", "1");
+    addPair("render_preview", renderPreviewEnabled ? "1" : "0");
+
+    var keys = Object.keys(tokenOverrideValues);
+    for (var i = 0; i < keys.length; i++) {
+      var token = String(keys[i] || "");
+      if (!token) continue;
+      addPair("override_token", token);
+      addPair("override_value", String(tokenOverrideValues[token] == null ? "" : tokenOverrideValues[token]));
+    }
+
+    return fetch(formsEndpoint, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+      body: pairs.join("&")
+    })
+    .then(function (res) {
+      if (!res || !res.ok) throw new Error("save_draft_failed");
+      return res.json();
+    })
+    .then(function (data) {
+      var d = data || {};
+      if (d.assemblyUuid != null) {
+        var incoming = String(d.assemblyUuid || "").trim();
+        if (incoming) syncAssemblyUuid(incoming);
+      }
+      return d.ok !== false;
+    })
+    .catch(function () {
+      return false;
+    });
+  }
+
+  function flushQueuedDraftSave() {
+    if (!draftSaveQueued) return Promise.resolve(true);
+    if (draftSaveInFlight) return Promise.resolve(true);
+
+    draftSaveQueued = false;
+    draftSaveInFlight = true;
+    return saveDraftOverridesNow()
+      .then(function (saved) {
+        return !!saved;
+      })
+      .catch(function () {
+        return false;
+      })
+      .then(function (saved) {
+        draftSaveInFlight = false;
+        if (draftSaveQueued) return flushQueuedDraftSave();
+        return saved;
+      });
+  }
+
+  function scheduleDraftSave(delayMs) {
+    if (!selectedMatterUuid || !selectedTemplateUuid) return;
+    draftSaveQueued = true;
+
+    var wait = Number(delayMs);
+    if (!isFinite(wait) || wait < 0) wait = 260;
+    if (draftSaveTimer) {
+      clearTimeout(draftSaveTimer);
+      draftSaveTimer = null;
+    }
+    draftSaveTimer = setTimeout(function () {
+      draftSaveTimer = null;
+      flushQueuedDraftSave();
+    }, wait);
+  }
+
+  function promptForMissingValues(assembleAfterSave) {
+    var shouldAssemble = !!assembleAfterSave;
+    ensureAdvancedModeForPrompt();
+
+    var targets = collectPromptTokens();
+    if (!targets.length) {
+      saveDraftOverridesNow().then(function (saved) {
+        if (!saved) return;
+        if (!shouldAssemble) {
+          if (renderPreviewEnabled) refreshRenderedPreviewNow();
+          refreshMissingValuesBanner();
+          return;
+        }
+        if (renderPreviewEnabled) {
+          refreshRenderedPreviewNow().then(function () {
+            submitDownloadAssembled();
+          });
+        } else {
+          submitDownloadAssembled();
+        }
+      });
+      return;
+    }
+
+    for (var i = 0; i < targets.length; i++) {
+      var token = String(targets[i] || "");
+      if (!token) continue;
+      var current = tokenValueForPrompt(token);
+      var answer = window.prompt(
+        "Enter value for " + displayTokenLiteral(token) + "\\nLeave blank to keep unresolved. Click Cancel to stop prompting.",
+        current
+      );
+      if (answer === null) break;
+      var value = String(answer);
+      if (value.trim() === "") {
+        clearPromptTokenValue(token);
+      } else {
+        applyPromptTokenValue(token, value);
+      }
+    }
+
+    syncDownloadOverrides();
+    syncDefaultReplaceValue();
+    recalcMatches();
+    refreshMissingValuesBanner();
+
+    saveDraftOverridesNow().then(function (saved) {
+      if (!saved) return;
+      if (renderPreviewEnabled) {
+        refreshRenderedPreviewNow().then(function () {
+          if (shouldAssemble) submitDownloadAssembled();
+        });
+      } else if (shouldAssemble) {
+        submitDownloadAssembled();
+      }
+    });
+  }
+
   function syncDownloadOverrides() {
     if (!downloadOverrides) return;
     downloadOverrides.innerHTML = "";
@@ -1610,7 +2088,7 @@
   }
 
   function refreshRenderedPreviewNow() {
-    if (!renderPreviewEnabled || !renderedPreviewPages) return;
+    if (!renderPreviewEnabled || !renderedPreviewPages) return Promise.resolve(null);
 
     var reqId = ++previewRequestSeq;
     var pairs = [];
@@ -1634,7 +2112,7 @@
       addPair("override_value", String(tokenOverrideValues[token] == null ? "" : tokenOverrideValues[token]));
     }
 
-    fetch(formsEndpoint, {
+    return fetch(formsEndpoint, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
@@ -1647,9 +2125,11 @@
     .then(function (data) {
       if (reqId !== previewRequestSeq) return;
       applyRenderedPreviewData(data);
+      return data;
     })
     .catch(function () {
       // Keep token navigation fully functional even when preview refresh fails.
+      return null;
     });
   }
 
@@ -1678,6 +2158,8 @@
       tokenOverrideValues[token] = current;
     }
     syncDownloadOverrides();
+    refreshMissingValuesBanner();
+    scheduleDraftSave(260);
   }
 
   function replaceOnce() {
@@ -1726,6 +2208,8 @@
     tokenOverrideValues = Object.create(null);
     syncDownloadOverrides();
     syncWorkspaceTextValue();
+    refreshMissingValuesBanner();
+    scheduleDraftSave(0);
     recalcMatches();
     scheduleRenderedPreviewRefresh();
   }
@@ -1828,6 +2312,7 @@
   syncAssemblyUuid(currentAssemblyUuid);
   syncDownloadOverrides();
   syncDefaultReplaceValue();
+  refreshMissingValuesBanner();
   updatePreviewModeUi();
   recalcMatches();
   renderAllSurfaces(false);

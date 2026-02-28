@@ -1,5 +1,6 @@
 package net.familylawandprobate.controversies;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
@@ -26,6 +27,7 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
 
 /**
  * form_templates
@@ -131,6 +133,7 @@ public final class form_templates {
         if (bytes == null || bytes.length == 0) {
             throw new IllegalArgumentException("Template file is required");
         }
+        validateTemplateBytes(ext, bytes);
 
         String safeFileName = sanitizeFileName(sourceFileName, ext);
 
@@ -214,6 +217,7 @@ public final class form_templates {
         if (bytes == null || bytes.length == 0) {
             throw new IllegalArgumentException("Template file is required");
         }
+        validateTemplateBytes(ext, bytes);
 
         String safeFileName = sanitizeFileName(sourceFileName, ext);
 
@@ -531,6 +535,18 @@ public final class form_templates {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static void validateTemplateBytes(String ext, byte[] bytes) {
+        String normalized = normalizeExtensionStatic(ext);
+        if (!"docx".equals(normalized)) return;
+        if (bytes == null || bytes.length == 0) throw new IllegalArgumentException("Template file is required");
+
+        try (XWPFDocument ignored = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+            // Valid DOCX package.
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("Invalid DOCX template package.");
+        }
     }
 
     private static String safeFileToken(String s) {

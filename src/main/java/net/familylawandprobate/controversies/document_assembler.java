@@ -17,6 +17,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
@@ -122,7 +124,12 @@ public final class document_assembler {
 
         try {
             if ("docx".equals(ext)) {
-                source = extractDocxText(templateBytes);
+                try {
+                    source = extractDocxText(templateBytes);
+                } catch (Exception ex) {
+                    source = extractDocxTextLenient(templateBytes);
+                    if (source.isBlank()) throw ex;
+                }
             } else if ("doc".equals(ext)) {
                 source = extractDocText(templateBytes);
             } else if ("rtf".equals(ext)) {
@@ -131,7 +138,8 @@ public final class document_assembler {
                 source = extractTxtText(templateBytes);
             }
         } catch (Exception ex) {
-            source = extractTxtText(templateBytes);
+            if ("docx".equals(ext)) source = "";
+            else source = extractTxtText(templateBytes);
         }
 
         TokenScan scan = scanTokens(source, values);
@@ -344,7 +352,7 @@ public final class document_assembler {
             return new StyledPreview(out, true);
         } catch (Exception ex) {
             try {
-                String source = extractDocxText(templateBytes);
+                String source = extractDocxTextLenient(templateBytes);
                 ArrayList<StyledSegment> out = new ArrayList<StyledSegment>();
                 out.add(new StyledSegment(source, ""));
                 return new StyledPreview(out, false);
@@ -559,6 +567,58 @@ public final class document_assembler {
              XWPFWordExtractor ex = new XWPFWordExtractor(doc)) {
             return safe(ex.getText());
         }
+    }
+
+    private static String extractDocxTextLenient(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) return "";
+
+        String xml = "";
+        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+            ZipEntry entry;
+            byte[] buf = new byte[8192];
+            while ((entry = zin.getNextEntry()) != null) {
+                String name = safe(entry.getName()).replace('\\', '/');
+                if (!"word/document.xml".equalsIgnoreCase(name)) continue;
+
+                int sizeHint = 4096;
+                long declaredSize = entry.getSize();
+                if (declaredSize > 0L && declaredSize < Integer.MAX_VALUE) {
+                    sizeHint = (int) Math.max(2048L, declaredSize);
+                }
+                ByteArrayOutputStream out = new ByteArrayOutputStream(sizeHint);
+                int n;
+                while ((n = zin.read(buf)) >= 0) {
+                    if (n == 0) continue;
+                    out.write(buf, 0, n);
+                }
+                xml = out.toString(StandardCharsets.UTF_8);
+                break;
+            }
+        } catch (Exception ignored) {
+            return "";
+        }
+
+        if (xml.isBlank()) return "";
+        return extractWordDocumentXmlText(xml);
+    }
+
+    private static String extractWordDocumentXmlText(String xml) {
+        String src = safe(xml);
+        if (src.isBlank()) return "";
+
+        String out = src
+                .replaceAll("(?is)<w:tab\\b[^>]*/>", "\t")
+                .replaceAll("(?is)<w:(br|cr)\\b[^>]*/>", "\n")
+                .replaceAll("(?is)</w:p\\s*>", "\n")
+                .replaceAll("(?is)<[^>]+>", "");
+
+        out = out
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'");
+        return safe(out);
     }
 
     private static String extractDocText(byte[] bytes) throws Exception {
