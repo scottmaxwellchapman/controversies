@@ -51,6 +51,13 @@ public final class tenant_settings {
             "clio_matters_last_sync_at",
             "feature_advanced_assembly",
             "feature_async_sync",
+            "theme_mode_default",
+            "theme_use_location",
+            "theme_latitude",
+            "theme_longitude",
+            "theme_light_start_hour",
+            "theme_dark_start_hour",
+            "theme_text_size_default",
             "secret_rotation_storage_at",
             "secret_rotation_clio_at",
             "storage_connection_status",
@@ -234,6 +241,13 @@ public final class tenant_settings {
         d.put("clio_matters_last_sync_at", "");
         d.put("feature_advanced_assembly", "false");
         d.put("feature_async_sync", "false");
+        d.put("theme_mode_default", "auto");
+        d.put("theme_use_location", "true");
+        d.put("theme_latitude", "");
+        d.put("theme_longitude", "");
+        d.put("theme_light_start_hour", "7");
+        d.put("theme_dark_start_hour", "19");
+        d.put("theme_text_size_default", "md");
         d.put("secret_rotation_storage_at", "");
         d.put("secret_rotation_clio_at", "");
         d.put("storage_connection_status", "unknown");
@@ -262,8 +276,55 @@ public final class tenant_settings {
     private String normalizeValue(String key, String value) {
         String v = safe(value).trim();
 
-        if ("feature_advanced_assembly".equals(key) || "feature_async_sync".equals(key) || "clio_enabled".equals(key)) {
+        if ("feature_advanced_assembly".equals(key) || "feature_async_sync".equals(key)
+                || "clio_enabled".equals(key) || "theme_use_location".equals(key)) {
             return truthy(v) ? "true" : "false";
+        }
+
+        if ("theme_mode_default".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if (!"light".equals(mode) && !"dark".equals(mode) && !"auto".equals(mode)) return "auto";
+            return mode;
+        }
+
+        if ("theme_text_size_default".equals(key)) {
+            String size = v.toLowerCase(Locale.ROOT);
+            if (!"sm".equals(size) && !"md".equals(size) && !"lg".equals(size) && !"xl".equals(size)) return "md";
+            return size;
+        }
+
+        if ("theme_light_start_hour".equals(key)) {
+            int hour = parseInt(v, 7);
+            if (hour < 0 || hour > 23) return "7";
+            return String.valueOf(hour);
+        }
+
+        if ("theme_dark_start_hour".equals(key)) {
+            int hour = parseInt(v, 19);
+            if (hour < 0 || hour > 23) return "19";
+            return String.valueOf(hour);
+        }
+
+        if ("theme_latitude".equals(key)) {
+            if (v.isBlank()) return "";
+            try {
+                double lat = Double.parseDouble(v);
+                if (lat < -90.0 || lat > 90.0) return "";
+                return String.valueOf(lat);
+            } catch (Exception ignored) {
+                return "";
+            }
+        }
+
+        if ("theme_longitude".equals(key)) {
+            if (v.isBlank()) return "";
+            try {
+                double lon = Double.parseDouble(v);
+                if (lon < -180.0 || lon > 180.0) return "";
+                return String.valueOf(lon);
+            } catch (Exception ignored) {
+                return "";
+            }
         }
 
 
@@ -349,6 +410,14 @@ public final class tenant_settings {
     private boolean truthy(String s) {
         String v = safe(s).trim().toLowerCase(Locale.ROOT);
         return "1".equals(v) || "true".equals(v) || "on".equals(v) || "yes".equals(v);
+    }
+
+    private int parseInt(String raw, int fallback) {
+        try {
+            return Integer.parseInt(safe(raw).trim());
+        } catch (Exception ignored) {
+            return fallback;
+        }
     }
 
     private static Path settingsPath(String tenantUuid) {

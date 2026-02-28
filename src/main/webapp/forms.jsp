@@ -620,6 +620,8 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: stable;
   }
 
   .forms-toolbar {
@@ -670,6 +672,8 @@
     height: 100%;
     min-height: 460px;
     overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: stable;
     border: 1px solid #d8dee7;
     border-radius: 10px;
     background: #eef3fa;
@@ -1018,6 +1022,7 @@
   var btnDownloadAssembled = document.getElementById("btnDownloadAssembled");
   var btnPreviewMode = document.getElementById("btnPreviewMode");
   var previewMode = "context";
+  var fullPreviewScrollTop = 0;
   try {
     var storedPreviewMode = String(localStorage.getItem("forms.preview.mode") || "");
     if (storedPreviewMode === "full" || storedPreviewMode === "context") previewMode = storedPreviewMode;
@@ -1411,8 +1416,12 @@
   }
 
   function togglePreviewMode() {
+    if (previewMode === "full" && contextPreviewViewport) {
+      fullPreviewScrollTop = Math.max(0, Number(contextPreviewViewport.scrollTop) || 0);
+    }
     previewMode = (previewMode === "full") ? "context" : "full";
     try { localStorage.setItem("forms.preview.mode", previewMode); } catch (ignored) {}
+    if (previewMode === "context" && contextPreviewViewport) contextPreviewViewport.scrollTop = 0;
     updatePreviewModeUi();
     renderImageTokenHighlights(tokenSelect ? tokenSelect.value : "", tokenMatchIndex);
   }
@@ -1484,7 +1493,15 @@
             ? " • full page preview"
             : " • context: 1.5in above and below highlight");
       }
-      if (contextPreviewViewport) contextPreviewViewport.scrollTop = 0;
+      if (contextPreviewViewport) {
+        if (previewMode === "full") {
+          var fullMax = Math.max(0, contextPreviewViewport.scrollHeight - contextPreviewViewport.clientHeight);
+          if (fullPreviewScrollTop > fullMax) fullPreviewScrollTop = fullMax;
+          contextPreviewViewport.scrollTop = fullPreviewScrollTop;
+        } else {
+          contextPreviewViewport.scrollTop = 0;
+        }
+      }
     };
 
     if (img.complete && (img.naturalWidth || img.width)) {
@@ -1521,7 +1538,15 @@
       if (contextPreviewMeta) {
         contextPreviewMeta.textContent = msg || ("Showing page " + (idx + 1) + " (no token hit found).");
       }
-      if (contextPreviewViewport) contextPreviewViewport.scrollTop = 0;
+      if (contextPreviewViewport) {
+        if (previewMode === "full") {
+          var fallbackMax = Math.max(0, contextPreviewViewport.scrollHeight - contextPreviewViewport.clientHeight);
+          if (fullPreviewScrollTop > fallbackMax) fullPreviewScrollTop = fallbackMax;
+          contextPreviewViewport.scrollTop = fullPreviewScrollTop;
+        } else {
+          contextPreviewViewport.scrollTop = 0;
+        }
+      }
     };
 
     if (img.complete && (img.naturalWidth || img.width)) {
@@ -2470,6 +2495,12 @@
   if (downloadForm) {
     downloadForm.addEventListener("submit", function () {
       syncDownloadOverrides();
+    });
+  }
+  if (contextPreviewViewport) {
+    contextPreviewViewport.addEventListener("scroll", function () {
+      if (previewMode !== "full") return;
+      fullPreviewScrollTop = Math.max(0, Number(contextPreviewViewport.scrollTop) || 0);
     });
   }
   document.addEventListener("keydown", handleHotKeys, true);

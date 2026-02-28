@@ -68,6 +68,54 @@ public class tenant_settings_test {
     }
 
     @Test
+    void sanitize_supports_theme_defaults_and_location_fields() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("theme_mode_default", "DaRk");
+        in.put("theme_use_location", "yes");
+        in.put("theme_latitude", "35.2271");
+        in.put("theme_longitude", "-80.8431");
+        in.put("theme_light_start_hour", "6");
+        in.put("theme_dark_start_hour", "20");
+        in.put("theme_text_size_default", "LG");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("dark", out.get("theme_mode_default"));
+        assertEquals("true", out.get("theme_use_location"));
+        assertEquals("35.2271", out.get("theme_latitude"));
+        assertEquals("-80.8431", out.get("theme_longitude"));
+        assertEquals("6", out.get("theme_light_start_hour"));
+        assertEquals("20", out.get("theme_dark_start_hour"));
+        assertEquals("lg", out.get("theme_text_size_default"));
+    }
+
+    @Test
+    void sanitize_defaults_invalid_theme_values() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("theme_mode_default", "night");
+        in.put("theme_use_location", "off");
+        in.put("theme_latitude", "200");
+        in.put("theme_longitude", "-300");
+        in.put("theme_light_start_hour", "99");
+        in.put("theme_dark_start_hour", "-1");
+        in.put("theme_text_size_default", "huge");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("auto", out.get("theme_mode_default"));
+        assertEquals("false", out.get("theme_use_location"));
+        assertEquals("", out.get("theme_latitude"));
+        assertEquals("", out.get("theme_longitude"));
+        assertEquals("7", out.get("theme_light_start_hour"));
+        assertEquals("19", out.get("theme_dark_start_hour"));
+        assertEquals("md", out.get("theme_text_size_default"));
+    }
+
+    @Test
     void writes_secrets_in_encrypted_blob_separate_from_general_settings() throws Exception {
         Path pepper = Paths.get("data", "sec", "random_pepper.bin").toAbsolutePath();
         Files.createDirectories(pepper.getParent());

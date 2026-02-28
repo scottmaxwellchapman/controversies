@@ -455,6 +455,62 @@
 
 <jsp:include page="header.jsp" />
 
+<style>
+  .dataset-card-row {
+    border-left: 3px solid transparent;
+  }
+
+  .dataset-card-row.dataset-focus {
+    border-left-color: #1d4ed8;
+    background: #f8fbff;
+  }
+
+  .dataset-value-shell {
+    display: grid;
+    gap: 8px;
+  }
+
+  .dataset-editor-block {
+    display: grid;
+    gap: 8px;
+  }
+
+  .dataset-list-table th,
+  .dataset-list-table td,
+  .dataset-grid-table th,
+  .dataset-grid-table td {
+    vertical-align: top;
+  }
+
+  .dataset-list-table input,
+  .dataset-grid-table input,
+  .dataset-xml-input {
+    width: 100%;
+  }
+
+  .dataset-xml-input {
+    min-height: 140px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  }
+
+  .dataset-editor-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .dataset-inline-btn {
+    min-width: 74px;
+  }
+
+  .dataset-head-cell {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+    align-items: center;
+  }
+</style>
+
 <section class="card">
   <h1 style="margin:0;">Case Lists/Grids</h1>
   <div class="meta" style="margin-top:4px;">Store case-specific list and table datasets used by <code>{{#each ...}}</code> directives in form templates.</div>
@@ -545,12 +601,12 @@
     </div>
 
     <div class="meta" style="margin-bottom:10px;">
-      <strong>Type guide:</strong> <code>list</code> = one value per line.
-      <code>grid</code> = first line headers with <code>|</code>, then one row per line.
-      <code>xml</code> = raw XML dataset.
+      <strong>Type guide:</strong> <code>list</code> uses one-column list inputs.
+      <code>grid</code> uses table-style row/column inputs.
+      <code>xml</code> uses raw XML.
     </div>
 
-    <form class="form" method="post" action="<%= ctx %>/case_lists.jsp">
+    <form class="form" method="post" action="<%= ctx %>/case_lists.jsp" id="caseListsForm">
       <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
       <input type="hidden" name="action" value="save_case_lists" />
       <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
@@ -577,8 +633,9 @@
                String k = safe(rowKeys.get(i));
                String kind = safe(rowKinds.get(i));
                String payload = safe(rowPayloads.get(i));
+               boolean focused = !focusListKey.isBlank() && focusListKey.equals(k);
           %>
-            <tr>
+            <tr class="dataset-card-row <%= focused ? "dataset-focus" : "" %>">
               <td><input type="text" name="dataset_key" value="<%= esc(k) %>" placeholder="service_rows" /></td>
               <td>
                 <select name="dataset_kind">
@@ -587,7 +644,17 @@
                   <option value="xml" <%= "xml".equals(kind) ? "selected" : "" %>>xml</option>
                 </select>
               </td>
-              <td><textarea name="dataset_payload" rows="4" placeholder="list: one item per line&#10;grid: col1 | col2&#10;row1v1 | row1v2"><%= esc(payload) %></textarea></td>
+              <td>
+                <div class="dataset-value-shell">
+                  <textarea
+                    name="dataset_payload"
+                    class="dataset-payload-raw"
+                    rows="2"
+                    style="display:none;"
+                    placeholder="list: one item per line&#10;grid: col1 | col2&#10;row1v1 | row1v2"><%= esc(payload) %></textarea>
+                  <div class="dataset-editor-block"></div>
+                </div>
+              </td>
               <td><button type="button" class="btn btn-ghost" onclick="removeDatasetRow(this)">Remove</button></td>
             </tr>
           <% } %>
@@ -604,20 +671,407 @@
 </section>
 
 <script>
-  function addDatasetRow() {
-    var tbody = document.getElementById("datasetRows");
+  var focusListKey = "<%= esc(focusListKey) %>";
+
+  function splitLines(raw) {
+    var text = String(raw == null ? "" : raw).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    var lines = text.split("\n");
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = String(lines[i] || "");
+      if (!line.trim()) continue;
+      out.push(line.trim());
+    }
+    return out;
+  }
+
+  function splitColumns(line, delim) {
+    var d = String(delim || "|");
+    var raw = String(line == null ? "" : line);
+    var parts = raw.split(d);
+    var out = [];
+    for (var i = 0; i < parts.length; i++) out.push(String(parts[i] || "").trim());
+    return out;
+  }
+
+  function normalizeKeyClient(raw) {
+    var key = String(raw == null ? "" : raw).toLowerCase().trim();
+    if (!key) return "";
+    var out = "";
+    var lastUnderscore = false;
+    for (var i = 0; i < key.length; i++) {
+      var ch = key.charAt(i);
+      var ok = (ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "_" || ch === "-";
+      if (ok) {
+        out += ch;
+        lastUnderscore = false;
+      } else if (out && !lastUnderscore) {
+        out += "_";
+        lastUnderscore = true;
+      }
+    }
+    while (out.indexOf("__") >= 0) out = out.replace(/__+/g, "_");
+    out = out.replace(/^_+/, "").replace(/_+$/, "");
+    return out;
+  }
+
+  function parseGridPayload(payload) {
+    var lines = splitLines(payload);
+    if (!lines.length) return { headers: [""], rows: [[""]] };
+
+    var headerLine = String(lines[0] || "");
+    var delim = headerLine.indexOf("|") >= 0 ? "|" : ",";
+    var headers = splitColumns(headerLine, delim);
+    if (!headers.length) headers = [""];
+
+    var rows = [];
+    for (var i = 1; i < lines.length; i++) {
+      var rowVals = splitColumns(lines[i], delim);
+      while (rowVals.length < headers.length) rowVals.push("");
+      if (rowVals.length > headers.length) rowVals = rowVals.slice(0, headers.length);
+      rows.push(rowVals);
+    }
+    if (!rows.length) rows.push(new Array(headers.length).fill(""));
+    return { headers: headers, rows: rows };
+  }
+
+  function serializeListEditor(editor) {
+    if (!editor) return "";
+    var inputs = editor.querySelectorAll("tbody input[data-role='list-item']");
+    var out = [];
+    for (var i = 0; i < inputs.length; i++) {
+      var v = String(inputs[i].value || "").trim();
+      if (!v) continue;
+      out.push(v);
+    }
+    return out.join("\n");
+  }
+
+  function serializeGridEditor(editor) {
+    if (!editor) return "";
+    var headerInputs = editor.querySelectorAll("thead input[data-role='grid-header']");
+    var headers = [];
+    for (var i = 0; i < headerInputs.length; i++) headers.push(String(headerInputs[i].value || "").trim());
+    if (!headers.length) headers.push("");
+
+    var lines = [headers.join(" | ")];
+    var rowEls = editor.querySelectorAll("tbody tr");
+    for (var r = 0; r < rowEls.length; r++) {
+      var rowInputs = rowEls[r].querySelectorAll("input[data-role='grid-cell']");
+      var row = [];
+      var hasAny = false;
+      for (var c = 0; c < headers.length; c++) {
+        var cell = rowInputs[c] ? String(rowInputs[c].value || "").trim() : "";
+        if (cell) hasAny = true;
+        row.push(cell);
+      }
+      if (!hasAny) continue;
+      lines.push(row.join(" | "));
+    }
+    return lines.join("\n");
+  }
+
+  function syncRowPayload(row, kindOverride) {
+    if (!row) return;
+    var kindSel = row.querySelector("select[name='dataset_kind']");
+    var payload = row.querySelector("textarea[name='dataset_payload']");
+    var editor = row.querySelector(".dataset-editor-block");
+    if (!kindSel || !payload || !editor) return;
+
+    var kind = String(kindOverride || kindSel.value || "list");
+    if (kind === "xml") {
+      var xmlInput = editor.querySelector("textarea.dataset-xml-input");
+      payload.value = xmlInput ? String(xmlInput.value || "") : "";
+      return;
+    }
+    if (kind === "grid") {
+      payload.value = serializeGridEditor(editor);
+      return;
+    }
+    payload.value = serializeListEditor(editor);
+  }
+
+  function addListItemRow(tbody, value) {
     if (!tbody) return;
     var tr = document.createElement("tr");
     tr.innerHTML =
+      '<td><input type="text" data-role="list-item" value="" placeholder="List item" /></td>' +
+      '<td style="width:92px;"><button type="button" class="btn btn-ghost dataset-inline-btn" data-role="remove-list-item">Remove</button></td>';
+    var input = tr.querySelector("input[data-role='list-item']");
+    if (input) input.value = String(value == null ? "" : value);
+    tbody.appendChild(tr);
+  }
+
+  function buildListEditor(editor, payloadValue) {
+    editor.innerHTML =
+      '<div class="table-wrap">' +
+        '<table class="table dataset-list-table">' +
+          '<thead><tr><th>List Item</th><th style="width:92px;">&nbsp;</th></tr></thead>' +
+          '<tbody></tbody>' +
+        '</table>' +
+      '</div>' +
+      '<div class="dataset-editor-actions">' +
+        '<button type="button" class="btn btn-ghost" data-role="add-list-item">Add Item</button>' +
+      '</div>';
+
+    var tbody = editor.querySelector("tbody");
+    var lines = splitLines(payloadValue);
+    if (!lines.length) lines.push("");
+    for (var i = 0; i < lines.length; i++) addListItemRow(tbody, lines[i]);
+
+    editor.addEventListener("click", function (ev) {
+      var t = ev.target;
+      if (!t) return;
+      var role = String(t.getAttribute("data-role") || "");
+      if (role === "add-list-item") {
+        addListItemRow(tbody, "");
+        return;
+      }
+      if (role === "remove-list-item") {
+        var tr = t.closest ? t.closest("tr") : null;
+        if (!tr || !tbody) return;
+        if (tbody.children.length <= 1) {
+          var input = tr.querySelector("input[data-role='list-item']");
+          if (input) input.value = "";
+          return;
+        }
+        tbody.removeChild(tr);
+      }
+    });
+  }
+
+  function createGridRow(headersCount, rowValues) {
+    var tr = document.createElement("tr");
+    var cells = "";
+    var count = Math.max(1, Number(headersCount) || 1);
+    for (var i = 0; i < count; i++) {
+      cells += '<td><input type="text" data-role="grid-cell" value="" /></td>';
+    }
+    cells += '<td style="width:92px;"><button type="button" class="btn btn-ghost dataset-inline-btn" data-role="remove-grid-row">Remove</button></td>';
+    tr.innerHTML = cells;
+
+    var inputs = tr.querySelectorAll("input[data-role='grid-cell']");
+    for (var j = 0; j < inputs.length; j++) {
+      inputs[j].value = rowValues && j < rowValues.length ? String(rowValues[j] || "") : "";
+    }
+    return tr;
+  }
+
+  function buildGridEditor(editor, payloadValue) {
+    editor.innerHTML =
+      '<div class="table-wrap">' +
+        '<table class="table dataset-grid-table">' +
+          '<thead><tr data-role="grid-header-row"></tr></thead>' +
+          '<tbody data-role="grid-body"></tbody>' +
+        '</table>' +
+      '</div>' +
+      '<div class="dataset-editor-actions">' +
+        '<button type="button" class="btn btn-ghost" data-role="add-grid-row">Add Row</button>' +
+        '<button type="button" class="btn btn-ghost" data-role="add-grid-col">Add Column</button>' +
+      '</div>';
+
+    var parsed = parseGridPayload(payloadValue);
+    var headerRow = editor.querySelector("tr[data-role='grid-header-row']");
+    var body = editor.querySelector("tbody[data-role='grid-body']");
+    var headers = parsed.headers && parsed.headers.length ? parsed.headers : [""];
+
+    function renderHeaders() {
+      headerRow.innerHTML = "";
+      for (var i = 0; i < headers.length; i++) {
+        var th = document.createElement("th");
+        var shell = document.createElement("div");
+        shell.className = "dataset-head-cell";
+
+        var input = document.createElement("input");
+        input.type = "text";
+        input.setAttribute("data-role", "grid-header");
+        input.value = String(headers[i] || "");
+        input.placeholder = "column_" + (i + 1);
+        shell.appendChild(input);
+
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn btn-ghost dataset-inline-btn";
+        btn.setAttribute("data-role", "remove-grid-col");
+        btn.setAttribute("data-col-index", String(i));
+        btn.textContent = "X";
+        shell.appendChild(btn);
+
+        th.appendChild(shell);
+        headerRow.appendChild(th);
+      }
+
+      var spacer = document.createElement("th");
+      spacer.style.width = "92px";
+      spacer.innerHTML = "&nbsp;";
+      headerRow.appendChild(spacer);
+    }
+
+    function renderRows(rows) {
+      body.innerHTML = "";
+      var src = Array.isArray(rows) ? rows : [];
+      if (!src.length) src = [new Array(headers.length).fill("")];
+      for (var i = 0; i < src.length; i++) {
+        var vals = Array.isArray(src[i]) ? src[i].slice(0, headers.length) : [];
+        while (vals.length < headers.length) vals.push("");
+        body.appendChild(createGridRow(headers.length, vals));
+      }
+    }
+
+    function readRows() {
+      var out = [];
+      var rowEls = body.querySelectorAll("tr");
+      for (var i = 0; i < rowEls.length; i++) {
+        var rowInputs = rowEls[i].querySelectorAll("input[data-role='grid-cell']");
+        var row = [];
+        for (var j = 0; j < headers.length; j++) {
+          row.push(rowInputs[j] ? String(rowInputs[j].value || "") : "");
+        }
+        out.push(row);
+      }
+      return out;
+    }
+
+    function addColumn() {
+      headers.push("");
+      var rows = readRows();
+      for (var i = 0; i < rows.length; i++) rows[i].push("");
+      renderHeaders();
+      renderRows(rows);
+    }
+
+    function removeColumn(idx) {
+      if (headers.length <= 1) return;
+      var col = Number(idx);
+      if (!isFinite(col) || col < 0 || col >= headers.length) return;
+      headers.splice(col, 1);
+      var rows = readRows();
+      for (var i = 0; i < rows.length; i++) {
+        if (col < rows[i].length) rows[i].splice(col, 1);
+      }
+      renderHeaders();
+      renderRows(rows);
+    }
+
+    renderHeaders();
+    renderRows(parsed.rows);
+
+    editor.addEventListener("click", function (ev) {
+      var t = ev.target;
+      if (!t) return;
+      var role = String(t.getAttribute("data-role") || "");
+      if (role === "add-grid-row") {
+        body.appendChild(createGridRow(headers.length, new Array(headers.length).fill("")));
+        return;
+      }
+      if (role === "remove-grid-row") {
+        var tr = t.closest ? t.closest("tr") : null;
+        if (!tr) return;
+        if (body.children.length <= 1) {
+          var cells = tr.querySelectorAll("input[data-role='grid-cell']");
+          for (var ci = 0; ci < cells.length; ci++) cells[ci].value = "";
+          return;
+        }
+        body.removeChild(tr);
+        return;
+      }
+      if (role === "add-grid-col") {
+        addColumn();
+        return;
+      }
+      if (role === "remove-grid-col") {
+        removeColumn(t.getAttribute("data-col-index"));
+      }
+    });
+  }
+
+  function buildXmlEditor(editor, payloadValue) {
+    editor.innerHTML = '<textarea class="dataset-xml-input" rows="8" placeholder="&lt;list&gt;...&lt;/list&gt;"></textarea>';
+    var input = editor.querySelector("textarea.dataset-xml-input");
+    if (input) input.value = String(payloadValue == null ? "" : payloadValue);
+  }
+
+  function renderDatasetEditor(row) {
+    if (!row) return;
+    var kindSel = row.querySelector("select[name='dataset_kind']");
+    var payload = row.querySelector("textarea[name='dataset_payload']");
+    var editor = row.querySelector(".dataset-editor-block");
+    if (!kindSel || !payload || !editor) return;
+
+    var kind = String(kindSel.value || "list");
+    var raw = String(payload.value || "");
+    editor.innerHTML = "";
+    if (kind === "grid") {
+      buildGridEditor(editor, raw);
+      return;
+    }
+    if (kind === "xml") {
+      buildXmlEditor(editor, raw);
+      return;
+    }
+    buildListEditor(editor, raw);
+  }
+
+  function bindDatasetRow(row) {
+    if (!row) return;
+    var kindSel = row.querySelector("select[name='dataset_kind']");
+    var keyInput = row.querySelector("input[name='dataset_key']");
+    if (keyInput && focusListKey) {
+      var normalized = normalizeKeyClient(keyInput.value);
+      if (normalized && normalized === focusListKey) row.classList.add("dataset-focus");
+    }
+
+    if (kindSel) {
+      kindSel.setAttribute("data-prev-kind", String(kindSel.value || "list"));
+      kindSel.addEventListener("change", function () {
+        var prevKind = String(kindSel.getAttribute("data-prev-kind") || "list");
+        syncRowPayload(row, prevKind);
+        renderDatasetEditor(row);
+        kindSel.setAttribute("data-prev-kind", String(kindSel.value || "list"));
+      });
+    }
+    renderDatasetEditor(row);
+  }
+
+  function syncAllPayloads() {
+    var tbody = document.getElementById("datasetRows");
+    if (!tbody) return;
+    var rows = tbody.querySelectorAll("tr");
+    for (var i = 0; i < rows.length; i++) syncRowPayload(rows[i]);
+  }
+
+  function createDatasetRow(key, kind, payload) {
+    var tr = document.createElement("tr");
+    tr.className = "dataset-card-row";
+    tr.innerHTML =
       '<td><input type="text" name="dataset_key" value="" placeholder="service_rows" /></td>' +
       '<td><select name="dataset_kind">' +
-        '<option value="list" selected>list</option>' +
+        '<option value="list">list</option>' +
         '<option value="grid">grid</option>' +
         '<option value="xml">xml</option>' +
       '</select></td>' +
-      '<td><textarea name="dataset_payload" rows="4" placeholder="list: one item per line&#10;grid: col1 | col2&#10;row1v1 | row1v2"></textarea></td>' +
+      '<td>' +
+        '<div class="dataset-value-shell">' +
+          '<textarea name="dataset_payload" class="dataset-payload-raw" rows="2" style="display:none;"></textarea>' +
+          '<div class="dataset-editor-block"></div>' +
+        '</div>' +
+      '</td>' +
       '<td><button type="button" class="btn btn-ghost" onclick="removeDatasetRow(this)">Remove</button></td>';
-    tbody.appendChild(tr);
+
+    var keyInput = tr.querySelector("input[name='dataset_key']");
+    var kindSel = tr.querySelector("select[name='dataset_kind']");
+    var payloadInput = tr.querySelector("textarea[name='dataset_payload']");
+    if (keyInput) keyInput.value = String(key == null ? "" : key);
+    if (kindSel) kindSel.value = (kind === "grid" || kind === "xml") ? kind : "list";
+    if (payloadInput) payloadInput.value = String(payload == null ? "" : payload);
+    bindDatasetRow(tr);
+    return tr;
+  }
+
+  function addDatasetRow() {
+    var tbody = document.getElementById("datasetRows");
+    if (!tbody) return;
+    tbody.appendChild(createDatasetRow("", "list", ""));
   }
 
   function removeDatasetRow(btn) {
@@ -627,6 +1081,20 @@
     if (!tr || !tr.parentNode) return;
     tr.parentNode.removeChild(tr);
   }
+
+  (function initCaseListEditors() {
+    var tbody = document.getElementById("datasetRows");
+    if (!tbody) return;
+    var rows = tbody.querySelectorAll("tr");
+    for (var i = 0; i < rows.length; i++) bindDatasetRow(rows[i]);
+
+    var form = document.getElementById("caseListsForm");
+    if (form) {
+      form.addEventListener("submit", function () {
+        syncAllPayloads();
+      });
+    }
+  })();
 </script>
 
 <jsp:include page="footer.jsp" />

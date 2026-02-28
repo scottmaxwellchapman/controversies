@@ -47,6 +47,52 @@
     return s;
   }
 
+  private static String tsThemeMode(String raw) {
+    String v = tsSafe(raw).trim().toLowerCase(Locale.ROOT);
+    if (!"light".equals(v) && !"dark".equals(v) && !"auto".equals(v)) return "auto";
+    return v;
+  }
+
+  private static String tsTextSize(String raw) {
+    String v = tsSafe(raw).trim().toLowerCase(Locale.ROOT);
+    if (!"sm".equals(v) && !"md".equals(v) && !"lg".equals(v) && !"xl".equals(v)) return "md";
+    return v;
+  }
+
+  private static String tsHour(String raw, int fallback) {
+    try {
+      int v = Integer.parseInt(tsSafe(raw).trim());
+      if (v < 0 || v > 23) return String.valueOf(fallback);
+      return String.valueOf(v);
+    } catch (Exception ignored) {
+      return String.valueOf(fallback);
+    }
+  }
+
+  private static String tsLatitude(String raw) {
+    String v = tsSafe(raw).trim();
+    if (v.isBlank()) return "";
+    try {
+      double lat = Double.parseDouble(v);
+      if (lat < -90.0 || lat > 90.0) return "";
+      return String.valueOf(lat);
+    } catch (Exception ignored) {
+      return "";
+    }
+  }
+
+  private static String tsLongitude(String raw) {
+    String v = tsSafe(raw).trim();
+    if (v.isBlank()) return "";
+    try {
+      double lon = Double.parseDouble(v);
+      if (lon < -180.0 || lon > 180.0) return "";
+      return String.valueOf(lon);
+    } catch (Exception ignored) {
+      return "";
+    }
+  }
+
   private static String csrfForRender(jakarta.servlet.http.HttpServletRequest req) {
     Object a = req.getAttribute("csrfToken");
     if (a instanceof String) {
@@ -124,6 +170,13 @@
 
     boolean featureAdvancedAssembly = tsChecked(request.getParameter("feature_advanced_assembly"));
     boolean featureAsyncSync = tsChecked(request.getParameter("feature_async_sync"));
+    String themeModeDefault = tsThemeMode(request.getParameter("theme_mode_default"));
+    boolean themeUseLocation = tsChecked(request.getParameter("theme_use_location"));
+    String themeLatitude = tsLatitude(request.getParameter("theme_latitude"));
+    String themeLongitude = tsLongitude(request.getParameter("theme_longitude"));
+    String themeLightStartHour = tsHour(request.getParameter("theme_light_start_hour"), 7);
+    String themeDarkStartHour = tsHour(request.getParameter("theme_dark_start_hour"), 19);
+    String themeTextSizeDefault = tsTextSize(request.getParameter("theme_text_size_default"));
 
     boolean saveStorageSecret = tsChecked(request.getParameter("save_storage_secret"));
     boolean saveStorageEncryptionKey = tsChecked(request.getParameter("save_storage_encryption_key"));
@@ -142,6 +195,13 @@
     settings.put("clio_private_relay_url", clioPrivateRelayUrl);
     settings.put("feature_advanced_assembly", featureAdvancedAssembly ? "true" : "false");
     settings.put("feature_async_sync", featureAsyncSync ? "true" : "false");
+    settings.put("theme_mode_default", themeModeDefault);
+    settings.put("theme_use_location", themeUseLocation ? "true" : "false");
+    settings.put("theme_latitude", themeLatitude);
+    settings.put("theme_longitude", themeLongitude);
+    settings.put("theme_light_start_hour", themeLightStartHour);
+    settings.put("theme_dark_start_hour", themeDarkStartHour);
+    settings.put("theme_text_size_default", themeTextSizeDefault);
 
     if (saveStorageSecret && !storageSecret.isBlank()) settings.put("storage_secret", storageSecret);
     if (saveStorageEncryptionKey && !storageEncryptionKey.isBlank()) settings.put("storage_encryption_key", storageEncryptionKey);
@@ -271,6 +331,10 @@
         valid = false;
         error = "S3 SSE aws_kms requires a KMS key id.";
       }
+      if ((themeLatitude.isBlank() && !themeLongitude.isBlank()) || (!themeLatitude.isBlank() && themeLongitude.isBlank())) {
+        valid = false;
+        error = "Provide both theme latitude and longitude, or leave both blank.";
+      }
 
       if (!valid) {
         logs.logVerbose("tenant_settings_validation_failed", tenantUuid, userUuid, "", "", Map.of("action", action, "error", tsSafe(error)));
@@ -292,6 +356,9 @@
           details.put("storage_backend", tsSafe(settings.get("storage_backend")));
           details.put("feature_advanced_assembly", tsSafe(settings.get("feature_advanced_assembly")));
           details.put("feature_async_sync", tsSafe(settings.get("feature_async_sync")));
+          details.put("theme_mode_default", tsSafe(settings.get("theme_mode_default")));
+          details.put("theme_use_location", tsSafe(settings.get("theme_use_location")));
+          details.put("theme_text_size_default", tsSafe(settings.get("theme_text_size_default")));
           details.put("storage_connection_status", tsSafe(settings.get("storage_connection_status")));
           details.put("storage_encryption_mode", tsSafe(settings.get("storage_encryption_mode")));
           details.put("storage_s3_sse_mode", tsSafe(settings.get("storage_s3_sse_mode")));
@@ -330,6 +397,12 @@
   String maskedStorageAccessKey = tsSafe(settings.get("storage_access_key")).isBlank() ? "" : "********";
   String clioMode = tsSafe(settings.get("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
   if (!"private".equals(clioMode)) clioMode = "public";
+  String themeMode = tsThemeMode(settings.get("theme_mode_default"));
+  String themeTextSize = tsTextSize(settings.get("theme_text_size_default"));
+  String themeLatitudeSaved = tsSafe(settings.get("theme_latitude")).trim();
+  String themeLongitudeSaved = tsSafe(settings.get("theme_longitude")).trim();
+  String themeLightHourSaved = tsHour(settings.get("theme_light_start_hour"), 7);
+  String themeDarkHourSaved = tsHour(settings.get("theme_dark_start_hour"), 19);
 %>
 
 <jsp:include page="header.jsp" />
@@ -477,6 +550,43 @@
   </section>
 
   <section class="card" style="margin-top:12px;">
+    <h2 style="margin-top:0;">Appearance & Theme</h2>
+    <div class="meta" style="margin-bottom:10px;">
+      Default tenant theme behavior for all pages. End users can still manually override in the navigation bar.
+    </div>
+    <div class="grid grid-2">
+      <label>Default Theme Mode
+        <select name="theme_mode_default">
+          <option value="auto" <%= "auto".equals(themeMode) ? "selected" : "" %>>Auto (time + sunrise/sunset)</option>
+          <option value="light" <%= "light".equals(themeMode) ? "selected" : "" %>>Light</option>
+          <option value="dark" <%= "dark".equals(themeMode) ? "selected" : "" %>>Dark</option>
+        </select>
+      </label>
+      <label>Default Text Size
+        <select name="theme_text_size_default">
+          <option value="sm" <%= "sm".equals(themeTextSize) ? "selected" : "" %>>Smaller</option>
+          <option value="md" <%= "md".equals(themeTextSize) ? "selected" : "" %>>Normal</option>
+          <option value="lg" <%= "lg".equals(themeTextSize) ? "selected" : "" %>>Larger</option>
+          <option value="xl" <%= "xl".equals(themeTextSize) ? "selected" : "" %>>Largest</option>
+        </select>
+      </label>
+      <label>Fallback Light Start Hour (0-23)
+        <input type="number" min="0" max="23" name="theme_light_start_hour" value="<%= tsEsc(themeLightHourSaved) %>" />
+      </label>
+      <label>Fallback Dark Start Hour (0-23)
+        <input type="number" min="0" max="23" name="theme_dark_start_hour" value="<%= tsEsc(themeDarkHourSaved) %>" />
+      </label>
+      <label>Latitude (optional)
+        <input type="text" name="theme_latitude" value="<%= tsEsc(themeLatitudeSaved) %>" placeholder="35.2271" />
+      </label>
+      <label>Longitude (optional)
+        <input type="text" name="theme_longitude" value="<%= tsEsc(themeLongitudeSaved) %>" placeholder="-80.8431" />
+      </label>
+      <label><input type="checkbox" name="theme_use_location" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("theme_use_location"))) ? "checked" : "" %> /> Use browser location for sunrise/sunset auto theme</label>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px;">
     <h2 style="margin-top:0;">Feature Flags</h2>
     <div class="grid grid-2">
       <label><input type="checkbox" name="feature_advanced_assembly" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("feature_advanced_assembly"))) ? "checked" : "" %> /> Enable advanced assembly</label>
@@ -494,6 +604,8 @@
       <div>S3 SSE mode: <strong><%= tsEsc(tsSafe(settings.get("storage_s3_sse_mode"))) %></strong></div>
       <div>Clio connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_connection_checked_at")))) %>)</div>
       <div>Clio auth mode health: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_auth_health_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_auth_health_checked_at")))) %>)</div>
+      <div>Theme default: <strong><%= tsEsc(themeMode) %></strong> • text size <strong><%= tsEsc(themeTextSize) %></strong></div>
+      <div>Theme auto schedule: light <strong><%= tsEsc(themeLightHourSaved) %>:00</strong>, dark <strong><%= tsEsc(themeDarkHourSaved) %>:00</strong></div>
       <div>Sensitive output policy: <strong><%= tsEsc(secret_redactor.redactValue("hidden")) %></strong></div>
       <div>Audit logging: <strong>Verbose tenant events with secret redaction enabled</strong></div>
     </div>

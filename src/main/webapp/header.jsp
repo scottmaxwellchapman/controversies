@@ -4,12 +4,13 @@
 <%@ page import="java.net.URLEncoder" %>
 <%@ page import="java.nio.charset.StandardCharsets" %>
 <%@ page import="java.nio.file.Files,java.nio.file.Path,java.nio.file.Paths" %>
-<%@ page import="java.util.ArrayList,java.util.List" %>
+<%@ page import="java.util.ArrayList,java.util.LinkedHashMap,java.util.List,java.util.Locale" %>
 <%@ page import="javax.xml.XMLConstants" %>
 <%@ page import="javax.xml.parsers.DocumentBuilder,javax.xml.parsers.DocumentBuilderFactory" %>
 <%@ page import="org.w3c.dom.Document,org.w3c.dom.Element,org.w3c.dom.Node,org.w3c.dom.NodeList" %>
 
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
+<%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 
 <%!
     // -----------------------------
@@ -125,6 +126,40 @@
         }
         return requestUri.equals(h) || requestUri.endsWith(h);
     }
+
+    private static String uiThemeMode(String raw) {
+        String s = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+        if (!"light".equals(s) && !"dark".equals(s) && !"auto".equals(s)) return "auto";
+        return s;
+    }
+
+    private static String uiTextSize(String raw) {
+        String s = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+        if (!"sm".equals(s) && !"md".equals(s) && !"lg".equals(s) && !"xl".equals(s)) return "md";
+        return s;
+    }
+
+    private static String uiHour(String raw, int fallback) {
+        try {
+            int v = Integer.parseInt(raw == null ? "" : raw.trim());
+            if (v < 0 || v > 23) return String.valueOf(fallback);
+            return String.valueOf(v);
+        } catch (Exception ignored) {
+            return String.valueOf(fallback);
+        }
+    }
+
+    private static String uiDecimalOrBlank(String raw, double min, double max) {
+        String s = raw == null ? "" : raw.trim();
+        if (s.isBlank()) return "";
+        try {
+            double v = Double.parseDouble(s);
+            if (v < min || v > max) return "";
+            return String.valueOf(v);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
 %>
 
 <%
@@ -199,6 +234,26 @@
     boolean userLoggedIn =
             userUuid != null && !userUuid.isBlank() &&
             userEmail != null && !userEmail.isBlank();
+
+    String uiThemeDefaultMode = "auto";
+    String uiThemeUseLocation = "false";
+    String uiThemeLatitude = "";
+    String uiThemeLongitude = "";
+    String uiThemeLightHour = "7";
+    String uiThemeDarkHour = "19";
+    String uiThemeTextSizeDefault = "md";
+    if (tenantLoggedIn) {
+        try {
+            LinkedHashMap<String, String> uiCfg = tenant_settings.defaultStore().read(tenantUuid);
+            uiThemeDefaultMode = uiThemeMode(uiCfg.get("theme_mode_default"));
+            uiThemeUseLocation = "true".equalsIgnoreCase((uiCfg.get("theme_use_location") == null ? "" : uiCfg.get("theme_use_location").trim())) ? "true" : "false";
+            uiThemeLatitude = uiDecimalOrBlank(uiCfg.get("theme_latitude"), -90.0, 90.0);
+            uiThemeLongitude = uiDecimalOrBlank(uiCfg.get("theme_longitude"), -180.0, 180.0);
+            uiThemeLightHour = uiHour(uiCfg.get("theme_light_start_hour"), 7);
+            uiThemeDarkHour = uiHour(uiCfg.get("theme_dark_start_hour"), 19);
+            uiThemeTextSizeDefault = uiTextSize(uiCfg.get("theme_text_size_default"));
+        } catch (Exception ignored) {}
+    }
 
     // Build safe `next` (path-only, no scheme/host) for login pages
     String currentPath = uri;
@@ -283,6 +338,14 @@
                 </div>
             </details>
 
+            <div class="header-ui-controls" aria-label="Display controls">
+                <button type="button" id="uiThemeToggle" class="btn btn-ghost btn-sm header-ui-btn" title="Cycle theme mode: Auto, Dark, Light">
+                    Theme: Auto
+                </button>
+                <button type="button" id="uiTextSmaller" class="btn btn-ghost btn-sm header-ui-btn" title="Text smaller">A-</button>
+                <button type="button" id="uiTextBigger" class="btn btn-ghost btn-sm header-ui-btn" title="Text bigger">A+</button>
+            </div>
+
             <!-- =========================
                  Login / Logout UI
                  ========================= -->
@@ -321,5 +384,381 @@
         </div>
     </div>
 </header>
+
+<div id="uiThemeConfig"
+     style="display:none;"
+     data-tenant-scope="<%= esc((tenantUuid == null || tenantUuid.isBlank()) ? "public" : tenantUuid) %>"
+     data-theme-default="<%= esc(uiThemeDefaultMode) %>"
+     data-theme-use-location="<%= esc(uiThemeUseLocation) %>"
+     data-theme-latitude="<%= esc(uiThemeLatitude) %>"
+     data-theme-longitude="<%= esc(uiThemeLongitude) %>"
+     data-theme-light-hour="<%= esc(uiThemeLightHour) %>"
+     data-theme-dark-hour="<%= esc(uiThemeDarkHour) %>"
+     data-text-size-default="<%= esc(uiThemeTextSizeDefault) %>"></div>
+
+<script>
+(() => {
+    const root = document.documentElement;
+    const configEl = document.getElementById("uiThemeConfig");
+    const btnTheme = document.getElementById("uiThemeToggle");
+    const btnSmaller = document.getElementById("uiTextSmaller");
+    const btnBigger = document.getElementById("uiTextBigger");
+    if (!root || !configEl) return;
+
+    const scope = String(configEl.getAttribute("data-tenant-scope") || "public");
+    const modeDefaultRaw = String(configEl.getAttribute("data-theme-default") || "auto").toLowerCase();
+    const useLocationDefault = String(configEl.getAttribute("data-theme-use-location") || "true").toLowerCase() === "true";
+    const latDefaultRaw = String(configEl.getAttribute("data-theme-latitude") || "").trim();
+    const lonDefaultRaw = String(configEl.getAttribute("data-theme-longitude") || "").trim();
+    const lightHourDefault = parseHour(configEl.getAttribute("data-theme-light-hour"), 7);
+    const darkHourDefault = parseHour(configEl.getAttribute("data-theme-dark-hour"), 19);
+    const textDefaultRaw = String(configEl.getAttribute("data-text-size-default") || "md").toLowerCase();
+
+    const MODE_KEY = "ui.theme.mode." + scope;
+    const ACTIVE_THEME_KEY = "ui.theme.active." + scope;
+    const GEO_CACHE_KEY = "ui.theme.geo.coords." + scope;
+    const GEO_BLOCKED_KEY = "ui.theme.geo.blocked." + scope;
+    const TEXT_SIZE_KEY = "ui.text.size." + scope;
+    const SIZE_STEPS = ["sm", "md", "lg", "xl"];
+    const MODE_STEPS = ["auto", "dark", "light"];
+
+    let activeMode = normalizeMode(readStorage(MODE_KEY) || modeDefaultRaw || "auto");
+    let activeTextSize = normalizeTextSize(readStorage(TEXT_SIZE_KEY) || textDefaultRaw || "md");
+    let autoTimer = null;
+    let pendingGeo = false;
+    let fullAutoResolvedOnce = false;
+
+    applyTextSize(activeTextSize);
+    updateTextButtons();
+
+    if (activeMode === "auto") applyAutoTheme();
+    else applyTheme(activeMode);
+
+    updateThemeButton();
+
+    if (btnTheme) {
+        btnTheme.addEventListener("click", function () {
+            const next = nextThemeMode(activeMode);
+            activeMode = next;
+            safeWriteStorage(MODE_KEY, next);
+            if (next === "auto") {
+                applyAutoTheme(true);
+            } else {
+                clearAutoTimer();
+                applyTheme(next);
+            }
+            updateThemeButton();
+        });
+    }
+
+    if (btnSmaller) {
+        btnSmaller.addEventListener("click", function () {
+            changeTextSize(-1);
+        });
+    }
+    if (btnBigger) {
+        btnBigger.addEventListener("click", function () {
+            changeTextSize(1);
+        });
+    }
+
+    function normalizeMode(raw) {
+        const v = String(raw || "").trim().toLowerCase();
+        return (v === "light" || v === "dark" || v === "auto") ? v : "auto";
+    }
+
+    function normalizeTextSize(raw) {
+        const v = String(raw || "").trim().toLowerCase();
+        return SIZE_STEPS.indexOf(v) >= 0 ? v : "md";
+    }
+
+    function parseHour(raw, fallback) {
+        const n = Number(String(raw || "").trim());
+        if (!isFinite(n)) return fallback;
+        const i = Math.round(n);
+        if (i < 0 || i > 23) return fallback;
+        return i;
+    }
+
+    function nextThemeMode(current) {
+        const idx = MODE_STEPS.indexOf(current);
+        if (idx < 0) return "auto";
+        return MODE_STEPS[(idx + 1) % MODE_STEPS.length];
+    }
+
+    function changeTextSize(direction) {
+        const idx = SIZE_STEPS.indexOf(activeTextSize);
+        const current = idx < 0 ? 1 : idx;
+        const next = Math.max(0, Math.min(SIZE_STEPS.length - 1, current + direction));
+        const size = SIZE_STEPS[next];
+        activeTextSize = size;
+        applyTextSize(size);
+        safeWriteStorage(TEXT_SIZE_KEY, size);
+        updateTextButtons();
+    }
+
+    function applyTheme(theme) {
+        const t = theme === "dark" ? "dark" : "light";
+        root.setAttribute("data-theme", t);
+        safeWriteStorage(ACTIVE_THEME_KEY, t);
+        updateThemeButton();
+    }
+
+    function applyTextSize(size) {
+        const s = normalizeTextSize(size);
+        root.setAttribute("data-text-size", s);
+    }
+
+    function updateThemeButton() {
+        if (!btnTheme) return;
+        const activeTheme = String(root.getAttribute("data-theme") || readStorage(ACTIVE_THEME_KEY) || "light");
+        let label = "";
+        if (activeMode === "auto") {
+            label = "Theme: Auto (" + (activeTheme === "dark" ? "Dark" : "Light") + ")";
+            btnTheme.classList.add("is-auto");
+        } else if (activeMode === "dark") {
+            label = "Theme: Dark";
+            btnTheme.classList.remove("is-auto");
+        } else {
+            label = "Theme: Light";
+            btnTheme.classList.remove("is-auto");
+        }
+        btnTheme.textContent = label;
+    }
+
+    function updateTextButtons() {
+        const idx = SIZE_STEPS.indexOf(activeTextSize);
+        if (btnSmaller) btnSmaller.disabled = idx <= 0;
+        if (btnBigger) btnBigger.disabled = idx >= SIZE_STEPS.length - 1;
+    }
+
+    function clearAutoTimer() {
+        if (autoTimer) {
+            clearInterval(autoTimer);
+            autoTimer = null;
+        }
+    }
+
+    function applyAutoTheme(forceGeoRefresh) {
+        if (activeMode !== "auto") return;
+        const now = new Date();
+        const fallbackTheme = isDayByHours(now, lightHourDefault, darkHourDefault) ? "light" : "dark";
+        applyTheme(fallbackTheme);
+
+        clearAutoTimer();
+        autoTimer = setInterval(() => {
+            if (activeMode !== "auto") return;
+            resolveAutoTheme(false).then((theme) => {
+                applyTheme(theme);
+            });
+        }, 5 * 60 * 1000);
+
+        resolveAutoTheme(!!forceGeoRefresh).then((theme) => {
+            applyTheme(theme);
+        });
+    }
+
+    function resolveAutoTheme(forceGeoRefresh) {
+        const now = new Date();
+        const fallbackTheme = isDayByHours(now, lightHourDefault, darkHourDefault) ? "light" : "dark";
+        const configured = readConfiguredCoords();
+        if (configured) {
+            const bySun = themeFromSun(now, configured.lat, configured.lon);
+            if (bySun) {
+                fullAutoResolvedOnce = true;
+                return Promise.resolve(bySun);
+            }
+        }
+
+        const cached = readCachedCoords();
+        if (cached && !forceGeoRefresh) {
+            const bySun = themeFromSun(now, cached.lat, cached.lon);
+            if (bySun) {
+                fullAutoResolvedOnce = true;
+                return Promise.resolve(bySun);
+            }
+        }
+
+        if (!useLocationDefault) return Promise.resolve(fallbackTheme);
+        if (pendingGeo) return Promise.resolve(fallbackTheme);
+        if (readStorage(GEO_BLOCKED_KEY) === "1") return Promise.resolve(fallbackTheme);
+        if (!navigator.geolocation) return Promise.resolve(fallbackTheme);
+        if (fullAutoResolvedOnce && !forceGeoRefresh) return Promise.resolve(fallbackTheme);
+
+        pendingGeo = true;
+        return requestBrowserCoords()
+            .then((coords) => {
+                pendingGeo = false;
+                if (!coords) return fallbackTheme;
+                writeCachedCoords(coords.lat, coords.lon);
+                const bySun = themeFromSun(now, coords.lat, coords.lon);
+                if (bySun) {
+                    fullAutoResolvedOnce = true;
+                    return bySun;
+                }
+                return fallbackTheme;
+            })
+            .catch(() => {
+                pendingGeo = false;
+                return fallbackTheme;
+            });
+    }
+
+    function readConfiguredCoords() {
+        const lat = Number(latDefaultRaw);
+        const lon = Number(lonDefaultRaw);
+        if (!isFinite(lat) || !isFinite(lon)) return null;
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+        return { lat: lat, lon: lon };
+    }
+
+    function readCachedCoords() {
+        const raw = readStorage(GEO_CACHE_KEY);
+        if (!raw) return null;
+        try {
+            const data = JSON.parse(raw);
+            if (!data) return null;
+            const lat = Number(data.lat);
+            const lon = Number(data.lon);
+            const ts = Number(data.ts || 0);
+            if (!isFinite(lat) || !isFinite(lon)) return null;
+            if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+            if (!isFinite(ts) || ts <= 0) return null;
+            if ((Date.now() - ts) > (12 * 60 * 60 * 1000)) return null;
+            return { lat: lat, lon: lon };
+        } catch (ignored) {
+            return null;
+        }
+    }
+
+    function writeCachedCoords(lat, lon) {
+        safeWriteStorage(GEO_CACHE_KEY, JSON.stringify({
+            lat: lat,
+            lon: lon,
+            ts: Date.now()
+        }));
+    }
+
+    async function requestBrowserCoords() {
+        try {
+            if (navigator.permissions && navigator.permissions.query) {
+                const perm = await navigator.permissions.query({ name: "geolocation" });
+                if (perm && perm.state === "denied") {
+                    safeWriteStorage(GEO_BLOCKED_KEY, "1");
+                    return null;
+                }
+            }
+        } catch (ignored) {}
+
+        return new Promise((resolve) => {
+            try {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        safeWriteStorage(GEO_BLOCKED_KEY, "0");
+                        if (!pos || !pos.coords) {
+                            resolve(null);
+                            return;
+                        }
+                        resolve({ lat: Number(pos.coords.latitude), lon: Number(pos.coords.longitude) });
+                    },
+                    (err) => {
+                        if (err && (err.code === 1 || String(err.message || "").toLowerCase().indexOf("denied") >= 0)) {
+                            safeWriteStorage(GEO_BLOCKED_KEY, "1");
+                        }
+                        resolve(null);
+                    },
+                    { enableHighAccuracy: false, timeout: 5000, maximumAge: 4 * 60 * 60 * 1000 }
+                );
+            } catch (ignored) {
+                resolve(null);
+            }
+        });
+    }
+
+    function isDayByHours(now, lightHour, darkHour) {
+        const h = now.getHours() + (now.getMinutes() / 60) + (now.getSeconds() / 3600);
+        if (lightHour === darkHour) return true;
+        if (lightHour < darkHour) return h >= lightHour && h < darkHour;
+        return !(h >= darkHour && h < lightHour);
+    }
+
+    function themeFromSun(now, lat, lon) {
+        const sun = sunriseSunsetLocalHours(now, lat, lon);
+        if (!sun) return null;
+        const h = now.getHours() + (now.getMinutes() / 60) + (now.getSeconds() / 3600);
+        if (sun.sunrise <= sun.sunset) return (h >= sun.sunrise && h < sun.sunset) ? "light" : "dark";
+        return (h >= sun.sunrise || h < sun.sunset) ? "light" : "dark";
+    }
+
+    function sunriseSunsetLocalHours(date, lat, lon) {
+        const sunrise = calcSunTime(date, lat, lon, true);
+        const sunset = calcSunTime(date, lat, lon, false);
+        if (sunrise == null || sunset == null) return null;
+        return { sunrise: sunrise, sunset: sunset };
+    }
+
+    function calcSunTime(date, lat, lon, isSunrise) {
+        const zenith = 90.833;
+        const n = dayOfYear(date);
+        const lngHour = lon / 15;
+        const t = n + (((isSunrise ? 6 : 18) - lngHour) / 24);
+        const m = (0.9856 * t) - 3.289;
+        let l = m + (1.916 * sinDeg(m)) + (0.020 * sinDeg(2 * m)) + 282.634;
+        l = normalizeDeg(l);
+
+        let ra = radToDeg(Math.atan(0.91764 * Math.tan(degToRad(l))));
+        ra = normalizeDeg(ra);
+        const lQuadrant = Math.floor(l / 90) * 90;
+        const raQuadrant = Math.floor(ra / 90) * 90;
+        ra = (ra + (lQuadrant - raQuadrant)) / 15;
+
+        const sinDec = 0.39782 * sinDeg(l);
+        const cosDec = Math.cos(Math.asin(sinDec));
+        const cosH = (cosDeg(zenith) - (sinDec * sinDeg(lat))) / (cosDec * cosDeg(lat));
+        if (cosH > 1 || cosH < -1) return null;
+
+        let h;
+        if (isSunrise) h = 360 - radToDeg(Math.acos(cosH));
+        else h = radToDeg(Math.acos(cosH));
+        h = h / 15;
+
+        const localMeanTime = h + ra - (0.06571 * t) - 6.622;
+        let utc = localMeanTime - lngHour;
+        utc = normalizeHour(utc);
+        let local = utc + (-date.getTimezoneOffset() / 60);
+        local = normalizeHour(local);
+        return local;
+    }
+
+    function dayOfYear(date) {
+        const start = new Date(date.getFullYear(), 0, 1);
+        const diff = date - start;
+        return Math.floor(diff / 86400000) + 1;
+    }
+
+    function degToRad(v) { return v * Math.PI / 180; }
+    function radToDeg(v) { return v * 180 / Math.PI; }
+    function sinDeg(v) { return Math.sin(degToRad(v)); }
+    function cosDeg(v) { return Math.cos(degToRad(v)); }
+    function normalizeDeg(v) {
+        let out = v % 360;
+        if (out < 0) out += 360;
+        return out;
+    }
+    function normalizeHour(v) {
+        let out = v % 24;
+        if (out < 0) out += 24;
+        return out;
+    }
+
+    function readStorage(key) {
+        try { return window.localStorage.getItem(key); } catch (ignored) { return null; }
+    }
+
+    function safeWriteStorage(key, value) {
+        try { window.localStorage.setItem(key, String(value == null ? "" : value)); } catch (ignored) {}
+    }
+})();
+</script>
 
 <main class="container main">
