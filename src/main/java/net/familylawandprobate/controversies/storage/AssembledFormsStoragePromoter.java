@@ -36,7 +36,7 @@ public final class AssembledFormsStoragePromoter {
 
             DocumentStorageBackend backend = resolver.resolve(tenantUuid, matterUuid, targetBackendType);
             String ext = rec.outputFileExt == null || rec.outputFileExt.isBlank() ? "txt" : rec.outputFileExt;
-            String key = "matters/" + matterUuid + "/assembled/files/" + rec.uuid + "." + ext;
+            String key = "matters/" + safeFileToken(matterUuid) + "/assemblies/" + safeFileToken(rec.uuid) + "." + ext;
             key = backend.put(key, bytes);
             Map<String, String> md = backend.metadata(key);
 
@@ -51,5 +51,11 @@ public final class AssembledFormsStoragePromoter {
             moved++;
         }
         return moved;
+    }
+
+    private static String safeFileToken(String s) {
+        String t = s == null ? "" : s.trim();
+        if (t.isBlank()) return "";
+        return t.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 }

@@ -390,10 +390,10 @@ public final class assembled_forms {
             if (assemblyUuid.isBlank()) assemblyUuid = UUID.randomUUID().toString();
 
             String configuredBackendType = normalizeBackendType(backendResolver.resolveBackendType(tu));
-            String objectKey = storageKey(mu, assemblyUuid, normalizedOutExt);
+            String localObjectKey = localStorageKey(assemblyUuid, normalizedOutExt);
             DocumentStorageBackend localBackend = backendResolver.resolve(tu, mu, "local");
-            objectKey = localBackend.put(objectKey, outputBytes);
-            Map<String, String> metadata = localBackend.metadata(objectKey);
+            localObjectKey = localBackend.put(localObjectKey, outputBytes);
+            Map<String, String> metadata = localBackend.metadata(localObjectKey);
             String checksum = safe(metadata.get("checksum_sha256"));
 
             AssemblyRec completed = new AssemblyRec(
@@ -412,7 +412,7 @@ public final class assembled_forms {
                     normalizedOutExt,
                     outputBytes.length,
                     "local",
-                    objectKey,
+                    localObjectKey,
                     checksum,
                     cleanedOverrides
             );
@@ -426,7 +426,8 @@ public final class assembled_forms {
             sortByUpdatedDesc(all);
             writeAllLocked(tu, mu, all);
             if (!"local".equals(configuredBackendType)) {
-                enqueueSyncJob(tu, mu, assemblyUuid, configuredBackendType, objectKey);
+                String remoteObjectKey = remoteStorageKey(mu, assemblyUuid, normalizedOutExt);
+                enqueueSyncJob(tu, mu, assemblyUuid, configuredBackendType, remoteObjectKey);
             } else {
                 markSyncState(tu, mu, assemblyUuid, "synced", 0, "", "", "");
             }
@@ -454,7 +455,11 @@ public final class assembled_forms {
 
             String backendType = normalizeBackendType(rec.storageBackendType);
             String objectKey = safe(rec.storageObjectKey).trim();
-            if (objectKey.isBlank()) objectKey = storageKey(mu, au, ext);
+            if (objectKey.isBlank()) {
+                objectKey = "local".equals(backendType)
+                        ? localStorageKey(au, ext)
+                        : remoteStorageKey(mu, au, ext);
+            }
 
             DocumentStorageBackend backend = backendResolver.resolve(tu, mu, backendType);
             if (backend.exists(objectKey)) return backend.get(objectKey);
@@ -545,6 +550,7 @@ public final class assembled_forms {
         String mu = safeFileToken(matterUuid);
         String au = safe(assemblyUuid).trim();
         if (tu.isBlank() || mu.isBlank() || au.isBlank()) return false;
+        boolean queued = false;
         ReentrantReadWriteLock lock = queueLockFor(tu);
         lock.writeLock().lock();
         try {
@@ -556,14 +562,18 @@ public final class assembled_forms {
                 SyncRec updated = new SyncRec(tu, mu, au, rec.targetBackendType, rec.targetObjectKey, "pending", 0, "", Instant.now().toString(), "", Instant.now().toString());
                 all.set(i, updated);
                 writeSyncQueueLocked(tu, all);
-                return true;
+                queued = true;
+                break;
             }
-            return false;
         } catch (Exception ignored) {
             return false;
         } finally {
             lock.writeLock().unlock();
         }
+        if (!queued) return false;
+        processTenantSyncQueue(tu);
+        SyncRec updated = getSyncRecord(tu, mu, au);
+        return updated != null && "synced".equals(updated.state);
     }
 
     private static ReentrantReadWriteLock lockFor(String tenantUuid, String matterUuid) {
@@ -815,12 +825,19 @@ public final class assembled_forms {
         return "local";
     }
 
-    private static String storageKey(String matterUuid, String assemblyUuid, String ext) {
+    private static String localStorageKey(String assemblyUuid, String ext) {
+        String au = safeFileToken(assemblyUuid);
+        String outExt = normalizeExtension(ext);
+        if (outExt.isBlank()) outExt = "txt";
+        return au + "." + outExt;
+    }
+
+    private static String remoteStorageKey(String matterUuid, String assemblyUuid, String ext) {
         String mu = safeFileToken(matterUuid);
         String au = safeFileToken(assemblyUuid);
         String outExt = normalizeExtension(ext);
         if (outExt.isBlank()) outExt = "txt";
-        return "matters/" + mu + "/assembled/files/" + au + "." + outExt;
+        return "matters/" + mu + "/assemblies/" + au + "." + outExt;
     }
 
     private static String normalizeStatus(String s) {

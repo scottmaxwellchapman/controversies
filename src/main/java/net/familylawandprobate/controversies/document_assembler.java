@@ -1172,7 +1172,9 @@ public final class document_assembler {
                 chunk = replaceEachFields(chunk, item);
                 repeated.append(chunk);
             }
-            out = out.substring(0, start) + repeated + out.substring(end + 9);
+            int suffixStart = end + 9;
+            if (endsWithLineBreak(repeated)) suffixStart = consumeLeadingLineBreak(out, suffixStart);
+            out = out.substring(0, start) + repeated + out.substring(suffixStart);
         }
         return out;
     }
@@ -1250,7 +1252,7 @@ public final class document_assembler {
             if (!xmlItems.isEmpty()) return xmlItems;
         }
 
-        String[] parts = raw.split("\r?\n|\|");
+        String[] parts = raw.split("\\r?\\n|\\|");
         if (parts.length <= 1) parts = raw.split(",");
         for (String p : parts) {
             String v = safe(p).trim();
@@ -1340,6 +1342,27 @@ public final class document_assembler {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private static boolean endsWithLineBreak(CharSequence text) {
+        if (text == null || text.length() == 0) return false;
+        int last = text.length() - 1;
+        char c = text.charAt(last);
+        if (c == '\n' || c == '\r') return true;
+        return false;
+    }
+
+    private static int consumeLeadingLineBreak(String text, int index) {
+        String src = safe(text);
+        int i = Math.max(0, index);
+        if (i >= src.length()) return i;
+        char c = src.charAt(i);
+        if (c == '\r') {
+            if (i + 1 < src.length() && src.charAt(i + 1) == '\n') return i + 2;
+            return i + 1;
+        }
+        if (c == '\n') return i + 1;
+        return i;
     }
 
     private static boolean containsDirectiveSyntax(String text) {

@@ -1693,6 +1693,11 @@
     var hit = tokenMatches[tokenMatchIndex];
     if (!hit) return;
     replaceRange(hit.start, hit.end, selectedReplacementValue());
+    var idxs = tokenOptionIndices();
+    if (idxs.length > 1) {
+      gotoNextToken();
+      return;
+    }
     recalcMatches();
     scheduleRenderedPreviewRefresh();
   }

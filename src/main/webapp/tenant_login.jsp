@@ -472,78 +472,57 @@
                     if (ex != null && ex.isPresent()) until = ex.get();
                 } catch (Exception ignored) {}
                 error = "Too many login attempts. Please try again in " + formatRemaining(until) + ".";
+            } else if (selectedLabel.length() < 3) {
+                error = "Please select a tenant.";
             } else {
-                String pw = safe(request.getParameter("password"));
+                tenants.Tenant found = null;
 
-                if (selectedLabel.length() < 3) {
-                    error = "Please select a tenant.";
-                } else if (pw.isBlank()) {
-                    error = "Password is required.";
+                // Only allow selecting an ENABLED tenant from our list (prevents tampering)
+                for (tenants.Tenant t : enabledTenants) {
+                    if (t.label != null && t.label.equalsIgnoreCase(selectedLabel)) {
+                        found = t;
+                        break;
+                    }
+                }
+
+                if (found == null) {
+                    int c = noteFailure(application, clientIp);
+                    error = "Invalid tenant selection.";
+                    if (!isLocalhostIp(clientIp)) {
+                        try {
+                            if (c == 5) lists.banTemporary(clientIp, 10 * 60, "tenant_login: 5 failures");
+                            else if (c == 8) lists.banTemporary(clientIp, 30 * 60, "tenant_login: 8 failures");
+                            else if (c >= 12) { lists.banTemporary(clientIp, 2 * 60 * 60, "tenant_login: 12+ failures"); clearFailures(application, clientIp); }
+                        } catch (Exception ignored) {}
+                    }
                 } else {
-                    tenants.Tenant found = null;
+                    // SUCCESS
+                    clearFailures(application, clientIp);
 
-                    // Only allow selecting an ENABLED tenant from our list (prevents tampering)
-                    for (tenants.Tenant t : enabledTenants) {
-                        if (t.label != null && t.label.equalsIgnoreCase(selectedLabel)) {
-                            found = t;
-                            break;
-                        }
-                    }
+                    // rotate cookie binding
+                    String newCookieBind = randomTokenUrlSafe(32);
+                    setHttpOnlyCookie(request, response, TENANT_BIND_COOKIE, newCookieBind, 30 * 24 * 60 * 60); // 30 days
 
-                    if (found == null) {
-                        int c = noteFailure(application, clientIp);
-                        error = "Invalid tenant or password.";
-                        if (!isLocalhostIp(clientIp)) {
-                            try {
-                                if (c == 5) lists.banTemporary(clientIp, 10 * 60, "tenant_login: 5 failures");
-                                else if (c == 8) lists.banTemporary(clientIp, 30 * 60, "tenant_login: 8 failures");
-                                else if (c >= 12) { lists.banTemporary(clientIp, 2 * 60 * 60, "tenant_login: 12+ failures"); clearFailures(application, clientIp); }
-                            } catch (Exception ignored) {}
-                        }
-                    } else {
-                        boolean ok = false;
-                        try { ok = store.verifyPassword(found.uuid, pw.toCharArray()); } catch (Exception ignored) { ok = false; }
+                    // rotate session to prevent fixation
+                    try { session.invalidate(); } catch (Exception ignored) {}
+                    HttpSession s2 = request.getSession(true);
 
-                        if (!ok) {
-                            int c = noteFailure(application, clientIp);
-                            error = "Invalid tenant or password.";
-                            if (!isLocalhostIp(clientIp)) {
-                                try {
-                                    if (c == 5) lists.banTemporary(clientIp, 10 * 60, "tenant_login: 5 failures");
-                                    else if (c == 8) lists.banTemporary(clientIp, 30 * 60, "tenant_login: 8 failures");
-                                    else if (c >= 12) { lists.banTemporary(clientIp, 2 * 60 * 60, "tenant_login: 12+ failures"); clearFailures(application, clientIp); }
-                                } catch (Exception ignored) {}
-                            }
-                        } else {
-                            // SUCCESS
-                            clearFailures(application, clientIp);
+                    // store tenant uuid + label in session
+                    s2.setAttribute(S_TENANT_UUID, found.uuid);
+                    s2.setAttribute(S_TENANT_LABEL, found.label);
+                    s2.setAttribute(S_TENANT_SID, s2.getId());
+                    s2.setAttribute(S_TENANT_IP, clientIp);
+                    s2.setAttribute(S_TENANT_CB, newCookieBind);
 
-                            // rotate cookie binding
-                            String newCookieBind = randomTokenUrlSafe(32);
-                            setHttpOnlyCookie(request, response, TENANT_BIND_COOKIE, newCookieBind, 30 * 24 * 60 * 60); // 30 days
+                    // write binding file (IP + session + cookie) - PER SESSION
+                    try {
+                        Binding b = new Binding(found.uuid, found.label, clientIp, s2.getId(), newCookieBind);
+                        writeBinding(bindingPath(found.uuid, s2.getId()), b);
+                    } catch (Exception ignored) {}
 
-                            // rotate session to prevent fixation
-                            try { session.invalidate(); } catch (Exception ignored) {}
-                            HttpSession s2 = request.getSession(true);
-
-                            // store tenant uuid + label in session
-                            s2.setAttribute(S_TENANT_UUID, found.uuid);
-                            s2.setAttribute(S_TENANT_LABEL, found.label);
-                            s2.setAttribute(S_TENANT_SID, s2.getId());
-                            s2.setAttribute(S_TENANT_IP, clientIp);
-                            s2.setAttribute(S_TENANT_CB, newCookieBind);
-
-                            // write binding file (IP + session + cookie) - PER SESSION
-                            try {
-                                Binding b = new Binding(found.uuid, found.label, clientIp, s2.getId(), newCookieBind);
-                                writeBinding(bindingPath(found.uuid, s2.getId()), b);
-                            } catch (Exception ignored) {}
-
-                            // ALWAYS go to user_login.jsp next (carrying next=final destination)
-                            response.sendRedirect(userLoginUrl);
-                            return;
-                        }
-                    }
+                    // ALWAYS go to user_login.jsp next (carrying next=final destination)
+                    response.sendRedirect(userLoginUrl);
+                    return;
                 }
             }
         }
@@ -563,7 +542,7 @@
     <div class="section-head">
       <div>
         <h1>Tenant login</h1>
-        <div class="meta">Select an enabled tenant, then enter the password.</div>
+        <div class="meta">Select an enabled tenant to continue.</div>
       </div>
     </div>
 
@@ -604,11 +583,6 @@
             }
           %>
         </select>
-      </label>
-
-      <label>
-        <span>Password</span>
-        <input type="password" name="password" required <%= enabledTenants.isEmpty() ? "disabled" : "" %> />
       </label>
 
       <div class="actions">

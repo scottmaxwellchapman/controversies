@@ -40,9 +40,12 @@ public final class StorageBackendResolver {
         String env = safe(System.getenv(envKey)).trim();
         if (!env.isBlank()) return FilesystemRemoteStorageBackend.normalizeBackendType(env);
 
-        LinkedHashMap<String, String> settings = tenant_settings.defaultStore().read(tenantUuid);
-        String tenantSettingBackend = safe(settings.get("storage_backend")).trim();
-        if (!tenantSettingBackend.isBlank()) return FilesystemRemoteStorageBackend.normalizeBackendType(tenantSettingBackend);
+        Path tenantSettingsPath = Paths.get("data", "tenants", sanitizedTenant, "settings", "tenant_settings.json").toAbsolutePath();
+        if (Files.exists(tenantSettingsPath)) {
+            LinkedHashMap<String, String> settings = tenant_settings.defaultStore().read(tenantUuid);
+            String tenantSettingBackend = safe(settings.get("storage_backend")).trim();
+            if (!tenantSettingBackend.isBlank()) return FilesystemRemoteStorageBackend.normalizeBackendType(tenantSettingBackend);
+        }
 
         Path cfg = Paths.get("data", "tenants", sanitizedTenant, "assembled", "storage.properties").toAbsolutePath();
         if (Files.exists(cfg)) {

@@ -44,7 +44,7 @@ public final class part_versions {
             if (!(n instanceof Element)) continue;
             out.add(readRec((Element) n));
         }
-        out.sort(Comparator.comparing(a -> document_workflow_support.safe(a.createdAt)).reversed());
+        out.sort(Comparator.comparing((VersionRec a) -> document_workflow_support.safe(a.createdAt)).reversed());
         return out;
     }
 

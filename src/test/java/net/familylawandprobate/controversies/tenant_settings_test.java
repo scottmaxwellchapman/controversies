@@ -6,9 +6,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -75,36 +77,39 @@ public class tenant_settings_test {
 
         tenant_settings store = tenant_settings.defaultStore();
         String tenantUuid = "test-" + UUID.randomUUID();
+        try {
+            LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+            in.put("storage_backend", "s3_compatible");
+            in.put("storage_endpoint", "smb://server/share");
+            in.put("storage_access_key", "AKIA_TEST");
+            in.put("storage_secret", "storage-secret");
+            in.put("storage_encryption_mode", "tenant_managed");
+            in.put("storage_encryption_key", "encryption-secret");
+            in.put("storage_s3_sse_mode", "aws_kms");
+            in.put("storage_s3_sse_kms_key_id", "kms-key-123");
+            in.put("clio_client_secret", "clio-secret");
+            store.write(tenantUuid, in);
 
-        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
-        in.put("storage_backend", "s3_compatible");
-        in.put("storage_endpoint", "smb://server/share");
-        in.put("storage_access_key", "AKIA_TEST");
-        in.put("storage_secret", "storage-secret");
-        in.put("storage_encryption_mode", "tenant_managed");
-        in.put("storage_encryption_key", "encryption-secret");
-        in.put("storage_s3_sse_mode", "aws_kms");
-        in.put("storage_s3_sse_kms_key_id", "kms-key-123");
-        in.put("clio_client_secret", "clio-secret");
-        store.write(tenantUuid, in);
+            Path settingsPath = Paths.get("data", "tenants", tenantUuid, "settings", "tenant_settings.json").toAbsolutePath();
+            Path secretsPath = Paths.get("data", "tenants", tenantUuid, "settings", "tenant_secrets.json").toAbsolutePath();
 
-        Path settingsPath = Paths.get("data", "tenants", tenantUuid, "settings", "tenant_settings.json").toAbsolutePath();
-        Path secretsPath = Paths.get("data", "tenants", tenantUuid, "settings", "tenant_secrets.json").toAbsolutePath();
+            String settingsJson = Files.readString(settingsPath, StandardCharsets.UTF_8);
+            String secretsJson = Files.readString(secretsPath, StandardCharsets.UTF_8);
 
-        String settingsJson = Files.readString(settingsPath, StandardCharsets.UTF_8);
-        String secretsJson = Files.readString(secretsPath, StandardCharsets.UTF_8);
+            assertFalse(settingsJson.contains("storage-secret"));
+            assertFalse(settingsJson.contains("clio-secret"));
+            assertTrue(secretsJson.contains("ciphertext"));
 
-        assertFalse(settingsJson.contains("storage-secret"));
-        assertFalse(settingsJson.contains("clio-secret"));
-        assertTrue(secretsJson.contains("ciphertext"));
-
-        Map<String, String> roundtrip = store.read(tenantUuid);
-        assertEquals("storage-secret", roundtrip.get("storage_secret"));
-        assertEquals("tenant_managed", roundtrip.get("storage_encryption_mode"));
-        assertEquals("encryption-secret", roundtrip.get("storage_encryption_key"));
-        assertEquals("aws_kms", roundtrip.get("storage_s3_sse_mode"));
-        assertEquals("kms-key-123", roundtrip.get("storage_s3_sse_kms_key_id"));
-        assertEquals("clio-secret", roundtrip.get("clio_client_secret"));
+            Map<String, String> roundtrip = store.read(tenantUuid);
+            assertEquals("storage-secret", roundtrip.get("storage_secret"));
+            assertEquals("tenant_managed", roundtrip.get("storage_encryption_mode"));
+            assertEquals("encryption-secret", roundtrip.get("storage_encryption_key"));
+            assertEquals("aws_kms", roundtrip.get("storage_s3_sse_mode"));
+            assertEquals("kms-key-123", roundtrip.get("storage_s3_sse_kms_key_id"));
+            assertEquals("clio-secret", roundtrip.get("clio_client_secret"));
+        } finally {
+            deleteTenantDirQuiet(tenantUuid);
+        }
     }
 
     @Test
@@ -118,25 +123,42 @@ public class tenant_settings_test {
         tenant_settings store = tenant_settings.defaultStore();
 
         String disabledTenant = "test-disabled-" + UUID.randomUUID();
-        LinkedHashMap<String, String> disabledCfg = new LinkedHashMap<String, String>();
-        disabledCfg.put("clio_enabled", "false");
-        disabledCfg.put("clio_base_url", "");
-        disabledCfg.put("clio_client_id", "");
-        store.write(disabledTenant, disabledCfg);
-
         String enabledTenant = "test-enabled-" + UUID.randomUUID();
-        LinkedHashMap<String, String> enabledCfg = new LinkedHashMap<String, String>();
-        enabledCfg.put("clio_enabled", "true");
-        enabledCfg.put("clio_auth_mode", "public");
-        enabledCfg.put("clio_base_url", "https://app.clio.com");
-        enabledCfg.put("clio_client_id", "client-id");
-        // missing clio_client_secret and callback on purpose
-        store.write(enabledTenant, enabledCfg);
+        try {
+            LinkedHashMap<String, String> disabledCfg = new LinkedHashMap<String, String>();
+            disabledCfg.put("clio_enabled", "false");
+            disabledCfg.put("clio_base_url", "");
+            disabledCfg.put("clio_client_id", "");
+            store.write(disabledTenant, disabledCfg);
 
-        tenant_settings.StartupSelfCheckResult result = store.startupSelfCheckAllTenants();
-        assertFalse(result.ok);
-        String joined = String.join("\n", result.failures);
-        assertTrue(joined.contains(enabledTenant));
-        assertFalse(joined.contains(disabledTenant));
+            LinkedHashMap<String, String> enabledCfg = new LinkedHashMap<String, String>();
+            enabledCfg.put("clio_enabled", "true");
+            enabledCfg.put("clio_auth_mode", "public");
+            enabledCfg.put("clio_base_url", "https://app.clio.com");
+            enabledCfg.put("clio_client_id", "client-id");
+            // missing clio_client_secret and callback on purpose
+            store.write(enabledTenant, enabledCfg);
+
+            tenant_settings.StartupSelfCheckResult result = store.startupSelfCheckAllTenants();
+            assertFalse(result.ok);
+            String joined = String.join("\n", result.failures);
+            assertTrue(joined.contains(enabledTenant));
+            assertFalse(joined.contains(disabledTenant));
+        } finally {
+            deleteTenantDirQuiet(disabledTenant);
+            deleteTenantDirQuiet(enabledTenant);
+        }
+    }
+
+    private static void deleteTenantDirQuiet(String tenantUuid) {
+        if (tenantUuid == null || tenantUuid.isBlank()) return;
+        Path root = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();
+        if (!Files.exists(root)) return;
+        try (Stream<Path> walk = Files.walk(root)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try { Files.deleteIfExists(path); } catch (Exception ignored) {}
+            });
+        } catch (Exception ignored) {
+        }
     }
 }
