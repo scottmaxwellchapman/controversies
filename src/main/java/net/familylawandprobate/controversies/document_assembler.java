@@ -117,7 +117,7 @@ public final class document_assembler {
     }
 
     public PreviewResult preview(byte[] templateBytes, String templateExtOrName, Map<String, String> values) {
-        String ext = normalizeExtension(templateExtOrName);
+        String ext = effectiveExtension(templateExtOrName, templateBytes);
         String source;
 
         if ("doc".equals(ext) && isLikelyRtfContent(templateBytes, null)) ext = "rtf";
@@ -153,7 +153,7 @@ public final class document_assembler {
     }
 
     public AssembledFile assemble(byte[] templateBytes, String templateExtOrName, Map<String, String> values) throws Exception {
-        String ext = normalizeExtension(templateExtOrName);
+        String ext = effectiveExtension(templateExtOrName, templateBytes);
         if ("doc".equals(ext) && isLikelyRtfContent(templateBytes, null)) ext = "rtf";
 
         if ("docx".equals(ext)) {
@@ -329,7 +329,7 @@ public final class document_assembler {
     }
 
     public StyledPreview previewStyled(byte[] templateBytes, String templateExtOrName) {
-        String ext = normalizeExtension(templateExtOrName);
+        String ext = effectiveExtension(templateExtOrName, templateBytes);
         if (!"docx".equals(ext)) {
             try {
                 String source = preview(templateBytes, ext, new LinkedHashMap<String, String>()).sourceText;
@@ -392,6 +392,46 @@ public final class document_assembler {
         v = v.replaceAll("[^a-z0-9]", "");
         if (v.isBlank()) return "txt";
         return v;
+    }
+
+    private String effectiveExtension(String extOrName, byte[] bytes) {
+        String ext = normalizeExtension(extOrName);
+        if (!"txt".equals(ext)) return ext;
+        if (looksLikeDocxZip(bytes)) return "docx";
+        if (looksLikeOleDoc(bytes)) return "doc";
+        if (looksLikeRtf(bytes)) return "rtf";
+        return ext;
+    }
+
+    private static boolean looksLikeDocxZip(byte[] bytes) {
+        if (bytes == null || bytes.length < 4) return false;
+        if ((bytes[0] & 0xFF) != 0x50 || (bytes[1] & 0xFF) != 0x4B) return false;
+        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+            ZipEntry entry;
+            while ((entry = zin.getNextEntry()) != null) {
+                String name = safe(entry.getName()).replace('\\', '/').toLowerCase(Locale.ROOT);
+                if ("word/document.xml".equals(name)) return true;
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    private static boolean looksLikeOleDoc(byte[] bytes) {
+        if (bytes == null || bytes.length < 8) return false;
+        return (bytes[0] & 0xFF) == 0xD0
+                && (bytes[1] & 0xFF) == 0xCF
+                && (bytes[2] & 0xFF) == 0x11
+                && (bytes[3] & 0xFF) == 0xE0
+                && (bytes[4] & 0xFF) == 0xA1
+                && (bytes[5] & 0xFF) == 0xB1
+                && (bytes[6] & 0xFF) == 0x1A
+                && (bytes[7] & 0xFF) == 0xE1;
+    }
+
+    private static boolean looksLikeRtf(byte[] bytes) {
+        if (bytes == null || bytes.length < 5) return false;
+        String prefix = new String(bytes, 0, Math.min(bytes.length, 24), StandardCharsets.US_ASCII).toLowerCase(Locale.ROOT);
+        return prefix.contains("{\\rtf");
     }
 
     private static void ensureDocxTemplateTools(String ext) {

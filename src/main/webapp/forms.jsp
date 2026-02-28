@@ -184,8 +184,11 @@
   String selectedMatterUuid = safe(request.getParameter("matter_uuid")).trim();
   String selectedTemplateUuid = safe(request.getParameter("template_uuid")).trim();
   String selectedAssemblyUuid = safe(request.getParameter("assembly_uuid")).trim();
+  String focusTokenParam = safe(request.getParameter("focus_token")).trim();
   boolean focusMode = "1".equals(safe(request.getParameter("focus")).trim());
   boolean renderPreview = !"0".equals(safe(request.getParameter("render_preview")).trim());
+  boolean resumePromptAfterLists = "1".equals(safe(request.getParameter("resume_prompt")).trim());
+  boolean assembleAfterResume = "1".equals(safe(request.getParameter("assemble_after")).trim());
   String focusQs = focusMode ? "&focus=1" : "";
   String renderPreviewQs = renderPreview ? "&render_preview=1" : "&render_preview=0";
   String assemblyQs = selectedAssemblyUuid.isBlank() ? "" : "&assembly_uuid=" + enc(selectedAssemblyUuid);
@@ -572,6 +575,9 @@
   }
 
   assemblyQs = selectedAssemblyUuid.isBlank() ? "" : "&assembly_uuid=" + enc(selectedAssemblyUuid);
+  if ("1".equals(safe(request.getParameter("lists_saved")).trim())) {
+    message = "Case list/grid datasets saved.";
+  }
 
 %>
 <jsp:include page="header.jsp" />
@@ -778,6 +784,7 @@
       <% } %>
       <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Template Library</a>
       <a class="btn btn-ghost" href="<%= ctx %>/case_fields.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Case Fields</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/case_lists.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= assemblyQs %><%= focusQs %><%= renderPreviewQs %>">Case Lists/Grids</a>
       <a class="btn btn-ghost" href="<%= ctx %>/token_guide.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Token Guide</a>
       <a class="btn btn-ghost" href="<%= ctx %>/markup_notation.jsp">Markup Notation</a>
       <a class="btn btn-ghost" href="<%= ctx %>/log_viewer.jsp">Logs</a>
@@ -801,6 +808,7 @@
       <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= renderPreviewQs %><%= assemblyQs %>">Exit Focus Mode</a>
       <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Template Library</a>
       <a class="btn btn-ghost" href="<%= ctx %>/case_fields.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Case Fields</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/case_lists.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= assemblyQs %><%= focusQs %><%= renderPreviewQs %>">Case Lists/Grids</a>
       <a class="btn btn-ghost" href="<%= ctx %>/token_guide.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Token Guide</a>
       <a class="btn btn-ghost" href="<%= ctx %>/markup_notation.jsp">Markup Notation</a>
       <a class="btn btn-ghost" href="<%= ctx %>/log_viewer.jsp">Logs</a>
@@ -851,6 +859,7 @@
       style="margin-top:8px; gap:8px; flex-wrap:wrap;<%= missingTokens.isEmpty() ? "display:none;" : "display:flex;" %>">
       <button type="button" class="btn btn-ghost" id="btnPromptMissingSave" onclick="promptForMissingValues(false); return false;">Prompt Missing + Save</button>
       <button type="button" class="btn btn-ghost" id="btnPromptMissingAssemble" onclick="promptForMissingValues(true); return false;">Prompt Missing + Save + Assemble</button>
+      <a class="btn btn-ghost" id="btnOpenCaseLists" href="<%= ctx %>/case_lists.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= assemblyQs %><%= focusQs %><%= renderPreviewQs %>">Open List/Grid Editor</a>
     </div>
   </div>
 
@@ -971,11 +980,16 @@
   var contextPreviewViewport = document.getElementById("contextPreviewViewport");
   var contextPreviewCanvas = document.getElementById("contextPreviewCanvas");
   var contextPreviewMeta = document.getElementById("contextPreviewMeta");
+  var btnOpenCaseLists = document.getElementById("btnOpenCaseLists");
   var formsEndpoint = "<%= js(ctx + "/forms.jsp") %>";
+  var caseListsBaseUrl = "<%= js(ctx + "/case_lists.jsp?matter_uuid=" + enc(selectedMatterUuid) + "&template_uuid=" + enc(selectedTemplateUuid) + "&return_to=forms" + assemblyQs + focusQs + renderPreviewQs) %>";
   var csrfTokenValue = "<%= js(csrfToken) %>";
   var selectedMatterUuid = "<%= js(selectedMatterUuid) %>";
   var selectedTemplateUuid = "<%= js(selectedTemplateUuid) %>";
   var currentAssemblyUuid = "<%= js(selectedAssemblyUuid) %>";
+  var focusTokenParam = "<%= js(focusTokenParam) %>";
+  var resumePromptAfterLists = <%= resumePromptAfterLists ? "true" : "false" %>;
+  var resumeAssembleAfterLists = <%= assembleAfterResume ? "true" : "false" %>;
   var focusModeEnabled = <%= focusMode ? "true" : "false" %>;
   var renderPreviewEnabled = <%= renderPreview ? "true" : "false" %>;
   var templateSourceText = "<%= js(sourcePreviewText) %>";
@@ -992,6 +1006,7 @@
   var draftSaveTimer = null;
   var draftSaveQueued = false;
   var draftSaveInFlight = false;
+  var eachDirectiveKeys = Object.create(null);
 
   var btnFirstToken = document.getElementById("btnFirstToken");
   var btnPrevToken = document.getElementById("btnPrevToken");
@@ -1329,6 +1344,23 @@
       if (v) out.push(i);
     }
     return out;
+  }
+
+  function selectTokenByLiteral(tokenLiteral) {
+    if (!tokenSelect) return false;
+    var target = displayTokenLiteral(tokenLiteral);
+    if (!target) return false;
+    for (var i = 0; i < tokenSelect.options.length; i++) {
+      var opt = tokenSelect.options[i];
+      if (!opt) continue;
+      var v = String(opt.value || "").trim();
+      if (!v) continue;
+      if (v === target || equivalentPromptTokens(v, target)) {
+        tokenSelect.selectedIndex = i;
+        return true;
+      }
+    }
+    return false;
   }
 
   function currentTokenOrdinal(indices) {
@@ -1674,7 +1706,23 @@
     return ca === cb;
   }
 
+  function rebuildEachDirectiveKeys() {
+    eachDirectiveKeys = Object.create(null);
+    var src = String(templateSourceText || "");
+    if (!src) return;
+    var eachRe = /\{\{\s*#each\s+([A-Za-z0-9_.-]+)\s*\}\}/g;
+    var m;
+    while ((m = eachRe.exec(src)) !== null) {
+      var expr = String(m[1] || "").trim().toLowerCase();
+      if (!expr) continue;
+      var key = canonicalPromptKey(expr);
+      if (!key) continue;
+      eachDirectiveKeys[key] = true;
+    }
+  }
+
   function collectDirectivePromptTokens() {
+    rebuildEachDirectiveKeys();
     var out = [];
     var seen = Object.create(null);
     var src = String(templateSourceText || "");
@@ -1702,6 +1750,15 @@
     while ((m = fmtRe.exec(src)) !== null) addExpr(m[1]);
 
     return out;
+  }
+
+  function looksLikeStructuredListValue(value) {
+    var v = String(value == null ? "" : value).trim();
+    if (!v) return false;
+    if (/^<\s*list[\s>]/i.test(v)) return true;
+    if (/<\s*(item|row)\b/i.test(v)) return true;
+    if (v.indexOf("\n") >= 0 && v.indexOf("|") >= 0) return true;
+    return false;
   }
 
   function tokenValueForPrompt(tokenLiteral) {
@@ -1737,6 +1794,42 @@
     if (/^\{\{\s*item\./.test(t)) return true;
     if (/^\{\{#/.test(t) || /^\{\{\//.test(t)) return true;
     return false;
+  }
+
+  function isListOrGridToken(tokenLiteral) {
+    var literal = displayTokenLiteral(tokenLiteral);
+    if (!literal) return false;
+    if (templateHasAdvancedDirectives && Object.keys(eachDirectiveKeys).length === 0) rebuildEachDirectiveKeys();
+
+    var key = canonicalPromptKey(literal);
+    if (key && hasOwn(eachDirectiveKeys, key)) return true;
+    if (key && /(^|[._-])(rows|row|list|items|table|grid|columns)$/.test(key)) return true;
+    return looksLikeStructuredListValue(tokenValueForPrompt(literal));
+  }
+
+  function listGridFocusKey() {
+    if (!tokenSelect) return "";
+    var selected = String(tokenSelect.value || "").trim();
+    if (!selected) return "";
+    if (!isListOrGridToken(selected)) return "";
+    return canonicalPromptKey(selected);
+  }
+
+  function buildCaseListsUrl(focusKey, assembleAfterSave) {
+    var url = String(caseListsBaseUrl || "");
+    if (currentAssemblyUuid && url.indexOf("assembly_uuid=") < 0) {
+      url += "&assembly_uuid=" + encodeURIComponent(String(currentAssemblyUuid));
+    }
+    var focus = String(focusKey || "").trim();
+    if (focus) url += "&focus_list_key=" + encodeURIComponent(focus);
+    if (assembleAfterSave) url += "&assemble_after=1";
+    return url;
+  }
+
+  function syncCaseListsLink() {
+    if (!btnOpenCaseLists) return;
+    var focus = listGridFocusKey();
+    btnOpenCaseLists.href = buildCaseListsUrl(focus, false);
   }
 
   function applyPromptTokenValue(tokenLiteral, value) {
@@ -1785,11 +1878,28 @@
     if (!matched && hasOwn(tokenOverrideValues, target)) delete tokenOverrideValues[target];
   }
 
-  function addPromptToken(out, seen, tokenLiteral) {
+  function tokenListContainsEquivalent(list, tokenLiteral) {
+    var arr = Array.isArray(list) ? list : [];
+    var literal = String(tokenLiteral || "");
+    if (!literal) return false;
+    for (var i = 0; i < arr.length; i++) {
+      if (equivalentPromptTokens(arr[i], literal)) return true;
+    }
+    return false;
+  }
+
+  function addPromptToken(out, seen, tokenLiteral, opts) {
     var literal = displayTokenLiteral(tokenLiteral);
     if (!literal) return;
     if (isPromptInternalToken(literal)) return;
     if (String(tokenValueForPrompt(literal) || "").trim() !== "") return;
+
+    var includeListGrid = !!(opts && opts.includeListGrid);
+    var focusLiteral = displayTokenLiteral((opts && opts.focusToken) || "");
+    if (isListOrGridToken(literal) && !includeListGrid) {
+      if (!focusLiteral || !equivalentPromptTokens(literal, focusLiteral)) return;
+    }
+
     var key = canonicalPromptKey(literal);
     if (!key) key = literal;
     if (hasOwn(seen, key)) return;
@@ -1797,20 +1907,21 @@
     out.push(literal);
   }
 
-  function collectPromptTokens() {
+  function collectPromptTokens(opts) {
     var out = [];
     var seen = Object.create(null);
+    var options = opts || {};
 
     var directiveTokens = collectDirectivePromptTokens();
     for (var d = 0; d < directiveTokens.length; d++) {
-      addPromptToken(out, seen, directiveTokens[d]);
+      addPromptToken(out, seen, directiveTokens[d], options);
     }
 
     var literals = Object.keys(tokenDefaultValues);
     for (var i = 0; i < literals.length; i++) {
       var literal = String(literals[i] || "").trim();
       if (!literal) continue;
-      addPromptToken(out, seen, literal);
+      addPromptToken(out, seen, literal, options);
     }
 
     for (var j = 0; j < initialMissingKeys.length; j++) {
@@ -1818,7 +1929,7 @@
       if (!k) continue;
       if (!/^[A-Za-z0-9_.-]+$/.test(k)) continue;
       var curly = "{{" + k + "}}";
-      addPromptToken(out, seen, curly);
+      addPromptToken(out, seen, curly, options);
     }
 
     return out;
@@ -1826,8 +1937,19 @@
 
   function refreshMissingValuesBanner() {
     if (!missingValuesAlert || !missingValuesText || !missingValuesActions) return;
-    var tokens = collectPromptTokens();
-    if (!tokens.length) {
+    var focusToken = tokenSelect ? tokenSelect.value : "";
+    var allTokens = collectPromptTokens({ includeListGrid: true, focusToken: focusToken });
+    var promptNow = collectPromptTokens({ includeListGrid: false, focusToken: focusToken });
+    var deferred = [];
+    for (var i = 0; i < allTokens.length; i++) {
+      var t = String(allTokens[i] || "");
+      if (!t) continue;
+      if (!isListOrGridToken(t)) continue;
+      if (tokenListContainsEquivalent(promptNow, t)) continue;
+      deferred.push(t);
+    }
+
+    if (!allTokens.length) {
       missingValuesAlert.style.display = "none";
       missingValuesActions.style.display = "none";
       return;
@@ -1836,10 +1958,20 @@
     missingValuesAlert.className = "alert alert-warn";
     missingValuesActions.style.display = "flex";
     var parts = [];
-    for (var i = 0; i < tokens.length; i++) {
-      parts.push("<code>" + htmlEscape(displayTokenLiteral(tokens[i])) + "</code>");
+    for (var j = 0; j < allTokens.length; j++) {
+      parts.push("<code>" + htmlEscape(displayTokenLiteral(allTokens[j])) + "</code>");
     }
-    missingValuesText.innerHTML = "Missing values for: " + parts.join(", ");
+    var html = "Missing values for: " + parts.join(", ");
+    if (deferred.length > 0) {
+      var deferredParts = [];
+      for (var k = 0; k < deferred.length; k++) {
+        deferredParts.push("<code>" + htmlEscape(displayTokenLiteral(deferred[k])) + "</code>");
+      }
+      html += "<br><span class=\"meta\">List/grid values are prompted only when that token is focused: "
+        + deferredParts.join(", ") + ".</span>";
+    }
+    missingValuesText.innerHTML = html;
+    syncCaseListsLink();
   }
 
   function ensureAdvancedModeForPrompt() {
@@ -1940,8 +2072,23 @@
     var shouldAssemble = !!assembleAfterSave;
     ensureAdvancedModeForPrompt();
 
-    var targets = collectPromptTokens();
+    var focusToken = tokenSelect ? tokenSelect.value : "";
+    var targets = collectPromptTokens({ includeListGrid: false, focusToken: focusToken });
+    var allMissing = collectPromptTokens({ includeListGrid: true, focusToken: focusToken });
     if (!targets.length) {
+      var deferredList = [];
+      for (var di = 0; di < allMissing.length; di++) {
+        var dl = String(allMissing[di] || "");
+        if (!dl) continue;
+        if (!isListOrGridToken(dl)) continue;
+        deferredList.push(dl);
+      }
+      if (deferredList.length > 0) {
+        var focusedKey = listGridFocusKey();
+        if (!focusedKey) {
+          window.alert("List/grid values are still missing. Select that list/grid token first, then prompt again, or open List/Grid Editor.");
+        }
+      }
       saveDraftOverridesNow().then(function (saved) {
         if (!saved) return;
         if (!shouldAssemble) {
@@ -1963,6 +2110,24 @@
     for (var i = 0; i < targets.length; i++) {
       var token = String(targets[i] || "");
       if (!token) continue;
+
+      if (isListOrGridToken(token)) {
+        var datasetKey = canonicalPromptKey(token);
+        var openEditor = window.confirm(
+          displayTokenLiteral(token) + " is list/grid data. Click OK to open the Case Lists/Grids editor for this dataset."
+        );
+        if (openEditor) {
+          syncDownloadOverrides();
+          saveDraftOverridesNow().then(function () {
+            window.location.href = buildCaseListsUrl(datasetKey, shouldAssemble);
+          }).catch(function () {
+            window.location.href = buildCaseListsUrl(datasetKey, shouldAssemble);
+          });
+          return;
+        }
+        continue;
+      }
+
       var current = tokenValueForPrompt(token);
       var answer = window.prompt(
         "Enter value for " + displayTokenLiteral(token) + "\\nLeave blank to keep unresolved. Click Cancel to stop prompting.",
@@ -2284,6 +2449,7 @@
       syncDefaultReplaceValue();
       recalcMatches();
       scheduleRenderedPreviewRefresh();
+      syncCaseListsLink();
     });
   }
 
@@ -2310,12 +2476,19 @@
 
   syncWorkspaceTextValue();
   syncAssemblyUuid(currentAssemblyUuid);
+  if (focusTokenParam) selectTokenByLiteral(focusTokenParam);
   syncDownloadOverrides();
   syncDefaultReplaceValue();
   refreshMissingValuesBanner();
+  syncCaseListsLink();
   updatePreviewModeUi();
   recalcMatches();
   renderAllSurfaces(false);
+  if (resumePromptAfterLists) {
+    setTimeout(function () {
+      promptForMissingValues(resumeAssembleAfterLists);
+    }, 50);
+  }
 </script>
 
 <jsp:include page="footer.jsp" />

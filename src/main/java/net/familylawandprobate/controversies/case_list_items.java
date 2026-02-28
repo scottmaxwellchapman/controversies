@@ -88,7 +88,7 @@ public final class case_list_items {
                 Element listEl = doc.createElement("list");
                 listEl.setAttribute("key", key);
 
-                Document listDoc = parseXml(rawXml);
+                Document listDoc = looksLikeXml(rawXml) ? parseXml(rawXml) : null;
                 if (listDoc != null && listDoc.getDocumentElement() != null) {
                     Node imported = doc.importNode(listDoc.getDocumentElement(), true);
                     listEl.appendChild(imported);
@@ -173,6 +173,11 @@ public final class case_list_items {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private static boolean looksLikeXml(String raw) {
+        String s = safe(raw).trim();
+        return s.startsWith("<") && s.endsWith(">") && s.contains("</");
     }
 
     private static String toXmlString(Node node) {

@@ -2,14 +2,18 @@ package net.familylawandprobate.controversies;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import org.apache.poi.xwpf.extractor.XWPFWordExtractor;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.junit.jupiter.api.Test;
 
 public class document_assembler_snapshot_test {
@@ -106,6 +110,38 @@ public class document_assembler_snapshot_test {
         assertEquals("Service List:\nDone.", emptyPreview.assembledText);
     }
 
+    @Test
+    void preview_detects_docx_payload_when_template_extension_is_txt() throws Exception {
+        document_assembler assembler = new document_assembler();
+        Map<String, String> values = new LinkedHashMap<String, String>();
+        values.put("case.label", "Sample Matter");
+
+        byte[] docx = minimalDocx("Case Label: {{case.label}}");
+        document_assembler.PreviewResult preview = assembler.preview(docx, "txt", values);
+
+        assertTrue(preview.sourceText.contains("{{case.label}}"));
+        assertEquals("Case Label: Sample Matter", preview.assembledText.trim());
+        assertTrue(preview.usedTokens.contains("case.label"));
+        assertFalse(preview.sourceText.contains("[Content_Types].xml"));
+    }
+
+    @Test
+    void assemble_detects_docx_payload_when_template_extension_is_txt() throws Exception {
+        document_assembler assembler = new document_assembler();
+        Map<String, String> values = new LinkedHashMap<String, String>();
+        values.put("case.label", "Assembled Matter");
+
+        byte[] docx = minimalDocx("Case Label: {{case.label}}");
+        document_assembler.AssembledFile assembled = assembler.assemble(docx, "txt", values);
+
+        assertEquals("docx", assembled.extension);
+        try (XWPFDocument outDoc = new XWPFDocument(new java.io.ByteArrayInputStream(assembled.bytes));
+             XWPFWordExtractor extractor = new XWPFWordExtractor(outDoc)) {
+            String text = extractor.getText();
+            assertTrue(text.contains("Case Label: Assembled Matter"));
+        }
+    }
+
     private static Map<String, String> baseValues() {
         Map<String, String> values = new LinkedHashMap<String, String>();
         values.put("tenant.name", "Acme Tenancy LLC");
@@ -146,5 +182,14 @@ public class document_assembler_snapshot_test {
         InputStream stream = Thread.currentThread().getContextClassLoader().getResourceAsStream(path);
         if (stream == null) throw new IllegalArgumentException("Missing fixture: " + path);
         return stream;
+    }
+
+    private static byte[] minimalDocx(String text) throws Exception {
+        try (XWPFDocument doc = new XWPFDocument();
+             ByteArrayOutputStream out = new ByteArrayOutputStream(2048)) {
+            doc.createParagraph().createRun().setText(String.valueOf(text == null ? "" : text));
+            doc.write(out);
+            return out.toByteArray();
+        }
     }
 }
