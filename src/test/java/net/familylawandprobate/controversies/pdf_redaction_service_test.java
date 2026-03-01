@@ -5,6 +5,7 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -53,6 +54,10 @@ public class pdf_redaction_service_test {
             assertEquals(2, run.appliedRectCount);
             assertTrue(Files.exists(output));
             assertTrue(Files.size(output) > 0L);
+            if (!run.usedPdfRedactor) {
+                String extracted = extractText(output);
+                assertTrue(extracted.trim().isEmpty(), "Rasterized fallback should not retain extractable source text.");
+            }
 
             String sha = pdf_redaction_service.sha256(output);
             assertEquals(64, sha.length());
@@ -105,6 +110,12 @@ public class pdf_redaction_service_test {
                 }
             }
             doc.save(target.toFile());
+        }
+    }
+
+    private static String extractText(Path target) throws Exception {
+        try (PDDocument doc = PDDocument.load(target.toFile())) {
+            return new PDFTextStripper().getText(doc);
         }
     }
 

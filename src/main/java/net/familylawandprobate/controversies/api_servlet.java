@@ -1108,7 +1108,7 @@ public final class api_servlet extends HttpServlet {
                 }
                 String notes = str(params, "notes");
                 if (!run.usedPdfRedactor) {
-                    String fallback = "Rendered with PDFBox fallback redaction overlay.";
+                    String fallback = "Rendered with PDFBox rasterized redaction burn-in.";
                     notes = notes.isBlank() ? fallback : (notes + " " + fallback);
                 }
 

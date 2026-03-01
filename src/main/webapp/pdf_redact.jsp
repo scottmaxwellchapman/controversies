@@ -182,7 +182,7 @@ if ("POST".equalsIgnoreCase(request.getMethod())) {
       }
       String notes = safe(request.getParameter("notes")).trim();
       if (!run.usedPdfRedactor) {
-        String warn = "Rendered with PDFBox fallback redaction overlay.";
+        String warn = "Rendered with PDFBox rasterized redaction burn-in.";
         notes = notes.isBlank() ? warn : notes + " " + warn;
       }
 

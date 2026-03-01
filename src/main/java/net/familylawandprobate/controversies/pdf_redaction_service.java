@@ -4,10 +4,14 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Constructor;
@@ -26,12 +30,13 @@ import java.util.Map;
 /**
  * PDF redaction helper for the document version workflow.
  *
- * Uses pdfredactor (if available on classpath) and falls back to PDFBox
- * burn-in overlay redactions when pdfredactor classes are unavailable.
+ * Uses pdfredactor (if available on classpath) and falls back to a
+ * PDFBox rasterized burn-in workflow (page -> image -> redaction -> PDF).
  */
 public final class pdf_redaction_service {
 
     private static final int DEFAULT_RENDER_DPI = 144;
+    private static final int RASTER_REDACTION_DPI = 200;
     private static final int MAX_REDACTION_RECTS = 5000;
 
     private pdf_redaction_service() {
@@ -260,7 +265,7 @@ public final class pdf_redaction_service {
 
         boolean usedPdfRedactor = tryPdfRedactor(input, outputPdf, rects);
         if (!usedPdfRedactor) {
-            applyPdfBoxOverlay(input, outputPdf, rects);
+            applyPdfBoxRasterizedRedaction(input, outputPdf, rects);
         }
         if (!Files.exists(outputPdf) || Files.size(outputPdf) <= 0L) {
             throw new IllegalStateException("Redacted PDF output was not created.");
@@ -306,41 +311,83 @@ public final class pdf_redaction_service {
         return n;
     }
 
-    private static void applyPdfBoxOverlay(Path inputPdf, Path outputPdf, List<RedactionRectPt> rects) throws Exception {
+    private static void applyPdfBoxRasterizedRedaction(Path inputPdf, Path outputPdf, List<RedactionRectPt> rects) throws Exception {
         LinkedHashMap<Integer, ArrayList<RedactionRectPt>> byPage = new LinkedHashMap<Integer, ArrayList<RedactionRectPt>>();
         for (RedactionRectPt rect : rects) {
             if (rect == null) continue;
             byPage.computeIfAbsent(rect.pageIndex, k -> new ArrayList<RedactionRectPt>()).add(rect);
         }
 
-        try (PDDocument doc = PDDocument.load(inputPdf.toFile())) {
-            int pages = Math.max(0, doc.getNumberOfPages());
-            for (Map.Entry<Integer, ArrayList<RedactionRectPt>> e : byPage.entrySet()) {
-                if (e == null) continue;
-                int pageIndex = e.getKey() == null ? -1 : e.getKey();
-                if (pageIndex < 0 || pageIndex >= pages) continue;
-                PDPage page = doc.getPage(pageIndex);
-                if (page == null) continue;
-                ArrayList<RedactionRectPt> rows = e.getValue();
-                if (rows == null || rows.isEmpty()) continue;
+        try (PDDocument input = PDDocument.load(inputPdf.toFile());
+             PDDocument output = new PDDocument()) {
+            int pages = Math.max(0, input.getNumberOfPages());
+            PDFRenderer renderer = new PDFRenderer(input);
 
-                try (PDPageContentStream cs = new PDPageContentStream(
-                        doc,
-                        page,
-                        PDPageContentStream.AppendMode.APPEND,
-                        true,
-                        true
-                )) {
-                    cs.setNonStrokingColor(Color.BLACK);
-                    for (RedactionRectPt r : rows) {
-                        if (r == null) continue;
-                        if (r.widthPt <= 0f || r.heightPt <= 0f) continue;
-                        cs.addRect(r.xPt, r.yPt, r.widthPt, r.heightPt);
-                        cs.fill();
-                    }
+            for (int pageIndex = 0; pageIndex < pages; pageIndex++) {
+                PDPage sourcePage = input.getPage(pageIndex);
+                if (sourcePage == null) continue;
+
+                BufferedImage rendered = renderer.renderImageWithDPI(pageIndex, RASTER_REDACTION_DPI, ImageType.RGB);
+                applyRasterRedactions(rendered, sourcePage, byPage.get(pageIndex));
+
+                float pageWidthPt = (float) (rendered.getWidth() * 72d / RASTER_REDACTION_DPI);
+                float pageHeightPt = (float) (rendered.getHeight() * 72d / RASTER_REDACTION_DPI);
+                if (pageWidthPt <= 0f || pageHeightPt <= 0f) {
+                    rendered.flush();
+                    continue;
                 }
+
+                PDPage outPage = new PDPage(new PDRectangle(pageWidthPt, pageHeightPt));
+                output.addPage(outPage);
+
+                PDImageXObject pageImage = LosslessFactory.createFromImage(output, rendered);
+                try (PDPageContentStream cs = new PDPageContentStream(
+                        output,
+                        outPage,
+                        PDPageContentStream.AppendMode.OVERWRITE,
+                        false,
+                        false
+                )) {
+                    cs.drawImage(pageImage, 0f, 0f, pageWidthPt, pageHeightPt);
+                }
+                rendered.flush();
             }
-            doc.save(outputPdf.toFile());
+            output.save(outputPdf.toFile());
+        }
+    }
+
+    private static void applyRasterRedactions(BufferedImage image, PDPage sourcePage, List<RedactionRectPt> rects) {
+        if (image == null || sourcePage == null || rects == null || rects.isEmpty()) return;
+
+        PDRectangle crop = sourcePage.getCropBox();
+        if (crop == null) crop = sourcePage.getMediaBox();
+        if (crop == null) return;
+
+        float pageWidthPt = Math.max(1f, crop.getWidth());
+        float pageHeightPt = Math.max(1f, crop.getHeight());
+        double scaleX = image.getWidth() / pageWidthPt;
+        double scaleY = image.getHeight() / pageHeightPt;
+
+        Graphics2D g = image.createGraphics();
+        try {
+            g.setColor(Color.BLACK);
+            int imageWidth = Math.max(1, image.getWidth());
+            int imageHeight = Math.max(1, image.getHeight());
+
+            for (RedactionRectPt r : rects) {
+                if (r == null) continue;
+                if (r.widthPt <= 0f || r.heightPt <= 0f) continue;
+
+                int x1 = clamp((int) Math.floor(r.xPt * scaleX), 0, imageWidth);
+                int y1 = clamp((int) Math.floor((pageHeightPt - (r.yPt + r.heightPt)) * scaleY), 0, imageHeight);
+                int x2 = clamp((int) Math.ceil((r.xPt + r.widthPt) * scaleX), 0, imageWidth);
+                int y2 = clamp((int) Math.ceil((pageHeightPt - r.yPt) * scaleY), 0, imageHeight);
+
+                if (x2 <= x1 || y2 <= y1) continue;
+                g.fillRect(x1, y1, x2 - x1, y2 - y1);
+            }
+        } finally {
+            g.dispose();
         }
     }
 

@@ -5,6 +5,7 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -118,6 +119,7 @@ public class api_pdf_redaction_test {
 
         LinkedHashMap<String, Object> redactResult = invokeApi("document.versions.redact", redactParams, tenant);
         assertEquals(2, asInt(redactResult.get("redaction_count")));
+        boolean usedPdfRedactor = Boolean.parseBoolean(String.valueOf(redactResult.get("used_pdfredactor")));
         Object createdObj = redactResult.get("version");
         assertTrue(createdObj instanceof Map<?, ?>);
 
@@ -138,6 +140,10 @@ public class api_pdf_redaction_test {
             assertNotNull(redactedPath);
             assertTrue(Files.isRegularFile(redactedPath));
             assertTrue(Files.size(redactedPath) > 0L);
+            if (!usedPdfRedactor) {
+                String extracted = extractText(redactedPath);
+                assertTrue(extracted.trim().isEmpty(), "Rasterized fallback should not retain extractable source text.");
+            }
         }
         assertTrue(hasRedacted);
     }
@@ -189,6 +195,12 @@ public class api_pdf_redaction_test {
                 }
             }
             doc.save(target.toFile());
+        }
+    }
+
+    private static String extractText(Path target) throws Exception {
+        try (PDDocument doc = PDDocument.load(target.toFile())) {
+            return new PDFTextStripper().getText(doc);
         }
     }
 
