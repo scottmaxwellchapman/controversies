@@ -93,6 +93,15 @@
     return t;
   }
 
+  private static String templateDisplayPath(form_templates.TemplateRec t) {
+    if (t == null) return "";
+    String folder = safe(t.folderPath).trim();
+    String label = safe(t.label).trim();
+    if (folder.isBlank()) return label;
+    if (label.isBlank()) return folder;
+    return folder + "/" + label;
+  }
+
   private static void putToken(Map<String,String> values, String key, String value) {
     if (values == null) return;
     String k = safe(key).trim();
@@ -259,6 +268,7 @@
     selectedTemplate = templates.get(0);
     selectedTemplateUuid = safe(selectedTemplate.uuid);
   }
+  String selectedTemplateDisplayPath = selectedTemplate == null ? "" : templateDisplayPath(selectedTemplate);
 
   LinkedHashMap<String,String> tenantKv = new LinkedHashMap<String,String>();
   try { tenantKv.putAll(tenantStore.read(tenantUuid)); } catch (Exception ignored) {}
@@ -936,6 +946,163 @@
     background: var(--surface);
   }
 
+  .template-picker-field {
+    display: grid;
+    gap: 8px;
+  }
+
+  .template-picker-current {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 9px 10px;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    color: var(--text);
+  }
+
+  .template-picker-current.is-empty {
+    color: var(--muted);
+  }
+
+  .template-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px;
+  }
+
+  .template-modal[hidden] {
+    display: none !important;
+  }
+
+  .template-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(11, 20, 34, 0.54);
+  }
+
+  .template-modal-dialog {
+    position: relative;
+    width: min(860px, 100%);
+    max-height: min(86vh, 900px);
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    box-shadow: var(--shadow-2);
+  }
+
+  .template-modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .template-modal-list {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+    padding: 8px;
+    overflow: auto;
+    min-height: 280px;
+  }
+
+  .template-modal-group {
+    margin-bottom: 10px;
+  }
+
+  .template-modal-group:last-child {
+    margin-bottom: 0;
+  }
+
+  .template-modal-group-head {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    margin: 6px 2px;
+  }
+
+  .template-modal-item {
+    width: 100%;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    margin-bottom: 6px;
+  }
+
+  .template-modal-item:last-child {
+    margin-bottom: 0;
+  }
+
+  .template-modal-item:hover {
+    background: var(--surface-2);
+  }
+
+  .template-modal-item.is-selected {
+    border-color: var(--accent);
+    box-shadow: var(--focus);
+  }
+
+  .template-modal-item-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .template-modal-item-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    word-break: break-word;
+  }
+
+  .template-modal-item-file {
+    font-size: 11px;
+    color: var(--muted);
+    word-break: break-word;
+  }
+
+  .template-modal-item-ext {
+    font-size: 11px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--chip-bg);
+    padding: 3px 8px;
+    flex: 0 0 auto;
+  }
+
+  .template-modal-empty {
+    display: none;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    color: var(--muted);
+    background: var(--surface);
+  }
+
+  .template-modal-empty.is-visible {
+    display: block;
+  }
+
   @media (max-width: 1400px) {
     .forms-workbench-split {
       grid-template-columns: minmax(300px, 34fr) minmax(0, 66fr);
@@ -996,7 +1163,7 @@
 
 <% if (!focusMode) { %>
 <section class="card" style="margin-top:12px;">
-  <form class="form" method="get" action="<%= ctx %>/forms.jsp">
+  <form class="form" method="get" action="<%= ctx %>/forms.jsp" id="formsSelectionForm">
     <input type="hidden" name="render_preview" value="<%= renderPreview ? "1" : "0" %>" />
 
     <div class="grid" style="display:grid; grid-template-columns: 2fr 2fr auto; gap:12px;">
@@ -1018,25 +1185,21 @@
         </select>
       </label>
 
-      <label>
+      <div class="template-picker-field">
         <span>Template</span>
-        <select name="template_uuid">
-          <% if (templates.isEmpty()) { %>
-            <option value="">No templates</option>
-          <% } else {
-               for (int i = 0; i < templates.size(); i++) {
-                 form_templates.TemplateRec t = templates.get(i);
-                 if (t == null) continue;
-                 String id = safe(t.uuid);
-                 boolean sel = id.equals(safe(selectedTemplateUuid));
-          %>
-            <option value="<%= esc(id) %>" <%= sel ? "selected" : "" %>>
-              <%= esc(safe(t.label)) %> (<%= esc(safe(t.fileExt).toUpperCase(Locale.ROOT)) %>)
-            </option>
-          <%   }
-             } %>
-        </select>
-      </label>
+        <input type="hidden" name="template_uuid" id="selectedTemplateUuidField" value="<%= esc(selectedTemplateUuid) %>" />
+        <div class="template-picker-current <%= selectedTemplate == null ? "is-empty" : "" %>" id="selectedTemplatePath">
+          <% if (selectedTemplate == null) { %>
+            No template selected
+          <% } else { %>
+            <%= esc(selectedTemplateDisplayPath) %> (<%= esc(safe(selectedTemplate.fileExt).toUpperCase(Locale.ROOT)) %>)
+          <% } %>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-ghost" type="button" id="btnOpenTemplatePicker" <%= templates.isEmpty() ? "disabled" : "" %>>Choose Template</button>
+          <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Manage Templates</a>
+        </div>
+      </div>
 
       <label>
         <span>&nbsp;</span>
@@ -1048,7 +1211,6 @@
       <% if (selectedTemplate != null) { %>
         <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>&focus=1<%= renderPreviewQs %><%= assemblyQs %>">Start Focus Mode</a>
       <% } %>
-      <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Template Library</a>
       <a class="btn btn-ghost" href="<%= ctx %>/case_fields.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Case Fields</a>
       <a class="btn btn-ghost" href="<%= ctx %>/case_lists.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= assemblyQs %><%= focusQs %><%= renderPreviewQs %>">Case Lists/Grids</a>
       <a class="btn btn-ghost" href="<%= ctx %>/token_guide.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Token Guide</a>
@@ -1062,6 +1224,87 @@
       <% } %>
     </div>
   </form>
+
+  <div class="template-modal" id="templatePickerModal" hidden>
+    <div class="template-modal-backdrop" data-template-modal-close="1"></div>
+    <div class="template-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="templatePickerTitle">
+      <div class="template-modal-head">
+        <div>
+          <h3 id="templatePickerTitle" style="margin:0;">Select Template</h3>
+          <div class="meta">Browse folders and subfolders, then choose one template.</div>
+        </div>
+        <button type="button" class="btn btn-ghost" id="btnCloseTemplatePicker">Close</button>
+      </div>
+
+      <label style="margin:0;">
+        <span>Search</span>
+        <input type="text" id="templatePickerSearch" placeholder="Search path, name, or extension" />
+      </label>
+
+      <div class="template-modal-list" id="templatePickerList">
+        <% if (templates.isEmpty()) { %>
+          <div class="template-modal-empty is-visible" id="templatePickerEmpty">No templates found.</div>
+        <% } else { %>
+          <%
+            String currentFolderPath = "__none__";
+            boolean groupOpen = false;
+            boolean hasTemplateRows = false;
+            for (int i = 0; i < templates.size(); i++) {
+              form_templates.TemplateRec t = templates.get(i);
+              if (t == null) continue;
+              String id = safe(t.uuid).trim();
+              if (id.isBlank()) continue;
+              hasTemplateRows = true;
+              String folderPath = safe(t.folderPath).trim();
+              String folderLabel = folderPath.isBlank() ? "Root" : folderPath;
+              String displayPath = templateDisplayPath(t);
+              String fileExt = safe(t.fileExt).trim().toUpperCase(Locale.ROOT);
+              String fileName = safe(t.fileName).trim();
+              String searchBlob = (folderPath + " " + safe(t.label) + " " + fileExt + " " + fileName).toLowerCase(Locale.ROOT);
+              boolean selected = id.equals(safe(selectedTemplateUuid));
+              if (!folderPath.equals(currentFolderPath)) {
+                if (groupOpen) {
+          %>
+              </div>
+            </div>
+          <%
+                }
+                currentFolderPath = folderPath;
+                groupOpen = true;
+          %>
+            <div class="template-modal-group" data-template-group="1">
+              <div class="template-modal-group-head"><%= esc(folderLabel) %></div>
+              <div>
+          <% } %>
+                <button
+                  type="button"
+                  class="template-modal-item <%= selected ? "is-selected" : "" %>"
+                  data-template-item="1"
+                  data-template-id="<%= esc(id) %>"
+                  data-template-display="<%= esc(displayPath + " (" + fileExt + ")") %>"
+                  data-template-search="<%= esc(searchBlob) %>">
+                  <span class="template-modal-item-main">
+                    <span class="template-modal-item-name"><%= esc(safe(t.label)) %></span>
+                    <span class="template-modal-item-file"><%= esc(fileName) %></span>
+                  </span>
+                  <span class="template-modal-item-ext"><%= esc(fileExt) %></span>
+                </button>
+          <% } %>
+          <% if (groupOpen) { %>
+              </div>
+            </div>
+          <% } %>
+          <div class="template-modal-empty <%= hasTemplateRows ? "" : "is-visible" %>" id="templatePickerEmpty">
+            <%= hasTemplateRows ? "No templates match your search." : "No templates found." %>
+          </div>
+        <% } %>
+      </div>
+
+      <div class="actions" style="display:flex; justify-content:flex-end; gap:8px; margin:0;">
+        <button type="button" class="btn btn-ghost" data-template-modal-close="1">Done</button>
+      </div>
+    </div>
+  </div>
 </section>
 <% } else { %>
 <section class="card" style="margin-top:12px;">
@@ -1263,6 +1506,7 @@
   var workspaceStyled = null;
   var tokenMatchMeta = document.getElementById("tokenMatchMeta");
   var downloadForm = document.getElementById("downloadForm");
+  var formsSelectionForm = document.getElementById("formsSelectionForm");
   var downloadOverrides = document.getElementById("downloadOverrides");
   var assemblyUuidField = document.getElementById("assemblyUuidField");
   var missingValuesAlert = document.getElementById("missingValuesAlert");
@@ -1272,6 +1516,17 @@
   var formsMissingCountPill = document.getElementById("formsMissingCountPill");
   var formsTabButtons = Array.prototype.slice.call(document.querySelectorAll("[data-forms-tab-target]"));
   var formsTabPanels = Array.prototype.slice.call(document.querySelectorAll("[data-forms-tab-panel]"));
+  var selectedTemplateUuidField = document.getElementById("selectedTemplateUuidField");
+  var selectedTemplatePath = document.getElementById("selectedTemplatePath");
+  var btnOpenTemplatePicker = document.getElementById("btnOpenTemplatePicker");
+  var templatePickerModal = document.getElementById("templatePickerModal");
+  var btnCloseTemplatePicker = document.getElementById("btnCloseTemplatePicker");
+  var templatePickerSearch = document.getElementById("templatePickerSearch");
+  var templatePickerList = document.getElementById("templatePickerList");
+  var templatePickerEmpty = document.getElementById("templatePickerEmpty");
+  var templatePickerItems = Array.prototype.slice.call(document.querySelectorAll("[data-template-item]"));
+  var templatePickerGroups = Array.prototype.slice.call(document.querySelectorAll("[data-template-group]"));
+  var templatePickerCloseTriggers = Array.prototype.slice.call(document.querySelectorAll("[data-template-modal-close]"));
   var renderedPreviewPages = document.getElementById("renderedPreviewPages");
   var renderedPreviewMeta = document.getElementById("renderedPreviewMeta");
   var renderedPreviewWarning = document.getElementById("renderedPreviewWarning");
@@ -2175,6 +2430,83 @@
     btnOpenCaseLists.href = buildCaseListsUrl(focus, false);
   }
 
+  function updateTemplatePickerSelectionUi() {
+    if (!templatePickerItems || templatePickerItems.length === 0) return;
+    var selectedId = selectedTemplateUuidField ? String(selectedTemplateUuidField.value || "").trim() : "";
+    for (var i = 0; i < templatePickerItems.length; i++) {
+      var item = templatePickerItems[i];
+      if (!item) continue;
+      var id = String(item.getAttribute("data-template-id") || "").trim();
+      if (id && selectedId && id === selectedId) item.classList.add("is-selected");
+      else item.classList.remove("is-selected");
+    }
+  }
+
+  function filterTemplatePickerList() {
+    if (!templatePickerItems || templatePickerItems.length === 0) {
+      if (templatePickerEmpty) templatePickerEmpty.classList.add("is-visible");
+      return;
+    }
+    var query = templatePickerSearch ? String(templatePickerSearch.value || "").trim().toLowerCase() : "";
+    var visibleCount = 0;
+    for (var i = 0; i < templatePickerItems.length; i++) {
+      var item = templatePickerItems[i];
+      if (!item) continue;
+      var hay = String(item.getAttribute("data-template-search") || "").toLowerCase();
+      var visible = !query || hay.indexOf(query) >= 0;
+      item.style.display = visible ? "" : "none";
+      if (visible) visibleCount++;
+    }
+    for (var gi = 0; gi < templatePickerGroups.length; gi++) {
+      var grp = templatePickerGroups[gi];
+      if (!grp) continue;
+      var itemsInGroup = grp.querySelectorAll("[data-template-item]");
+      var visibleInGroup = 0;
+      for (var j = 0; j < itemsInGroup.length; j++) {
+        if (itemsInGroup[j] && itemsInGroup[j].style.display !== "none") visibleInGroup++;
+      }
+      grp.style.display = visibleInGroup > 0 ? "" : "none";
+    }
+    if (templatePickerEmpty) {
+      if (visibleCount > 0) templatePickerEmpty.classList.remove("is-visible");
+      else templatePickerEmpty.classList.add("is-visible");
+    }
+  }
+
+  function closeTemplatePicker() {
+    if (!templatePickerModal || templatePickerModal.hidden) return;
+    templatePickerModal.hidden = true;
+    if (btnOpenTemplatePicker) btnOpenTemplatePicker.focus();
+  }
+
+  function openTemplatePicker() {
+    if (!templatePickerModal) return;
+    templatePickerModal.hidden = false;
+    if (templatePickerSearch) templatePickerSearch.value = "";
+    updateTemplatePickerSelectionUi();
+    filterTemplatePickerList();
+    if (templatePickerSearch) templatePickerSearch.focus();
+  }
+
+  function chooseTemplateFromPicker(item) {
+    if (!item) return;
+    var templateId = String(item.getAttribute("data-template-id") || "").trim();
+    var templateDisplay = String(item.getAttribute("data-template-display") || "").trim();
+    if (!templateId) return;
+
+    if (selectedTemplateUuidField) selectedTemplateUuidField.value = templateId;
+    if (selectedTemplatePath) {
+      selectedTemplatePath.textContent = templateDisplay || "Template selected";
+      selectedTemplatePath.classList.remove("is-empty");
+    }
+    updateTemplatePickerSelectionUi();
+    closeTemplatePicker();
+    if (formsSelectionForm) {
+      if (formsSelectionForm.requestSubmit) formsSelectionForm.requestSubmit();
+      else formsSelectionForm.submit();
+    }
+  }
+
   function applyPromptTokenValue(tokenLiteral, value) {
     var target = displayTokenLiteral(tokenLiteral);
     if (!target) return;
@@ -2856,6 +3188,7 @@
   }
 
   function handleHotKeys(ev) {
+    if (templatePickerModal && !templatePickerModal.hidden) return;
     if (!ev || !ev.altKey || ev.ctrlKey || ev.metaKey) return;
     var key = String(ev.key || "").toLowerCase();
     if (!key) return;
@@ -2926,6 +3259,37 @@
   bindActionButton(btnPreviewMode, togglePreviewMode);
   bindActionButton(btnPromptMissingSave, function () { promptForMissingValues(false); });
   bindActionButton(btnPromptMissingAssemble, function () { promptForMissingValues(true); });
+  bindActionButton(btnOpenTemplatePicker, openTemplatePicker);
+
+  if (btnCloseTemplatePicker) {
+    btnCloseTemplatePicker.addEventListener("click", function (ev) {
+      if (ev) ev.preventDefault();
+      closeTemplatePicker();
+    });
+  }
+  for (var cti = 0; cti < templatePickerCloseTriggers.length; cti++) {
+    (function () {
+      var trigger = templatePickerCloseTriggers[cti];
+      if (!trigger) return;
+      trigger.addEventListener("click", function (ev) {
+        if (ev) ev.preventDefault();
+        closeTemplatePicker();
+      });
+    })();
+  }
+  for (var tpi = 0; tpi < templatePickerItems.length; tpi++) {
+    (function () {
+      var item = templatePickerItems[tpi];
+      if (!item) return;
+      item.addEventListener("click", function (ev) {
+        if (ev) ev.preventDefault();
+        chooseTemplateFromPicker(item);
+      });
+    })();
+  }
+  if (templatePickerSearch) {
+    templatePickerSearch.addEventListener("input", filterTemplatePickerList);
+  }
 
   if (tokenSelect) {
     tokenSelect.addEventListener("change", function () {
@@ -2963,6 +3327,14 @@
       fullPreviewScrollTop = Math.max(0, Number(contextPreviewViewport.scrollTop) || 0);
     });
   }
+  document.addEventListener("keydown", function (ev) {
+    if (!ev) return;
+    if (!templatePickerModal || templatePickerModal.hidden) return;
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeTemplatePicker();
+    }
+  }, true);
   document.addEventListener("keydown", handleHotKeys, true);
 
   syncWorkspaceTextValue();
@@ -2970,6 +3342,8 @@
   if (focusTokenParam) selectTokenByLiteral(focusTokenParam);
   syncDownloadOverrides();
   syncDefaultReplaceValue();
+  updateTemplatePickerSelectionUi();
+  filterTemplatePickerList();
   refreshMissingValuesBanner();
   initializeFormsLeftTab();
   syncCaseListsLink();

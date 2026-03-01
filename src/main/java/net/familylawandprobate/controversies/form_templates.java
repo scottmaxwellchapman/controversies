@@ -50,6 +50,7 @@ public final class form_templates {
     public static final class TemplateRec {
         public final String uuid;
         public final String label;
+        public final String folderPath;
         public final boolean enabled;
         public final String updatedAt;
         public final String fileName;
@@ -58,6 +59,7 @@ public final class form_templates {
 
         public TemplateRec(String uuid,
                            String label,
+                           String folderPath,
                            boolean enabled,
                            String updatedAt,
                            String fileName,
@@ -65,6 +67,7 @@ public final class form_templates {
                            long sizeBytes) {
             this.uuid = safe(uuid);
             this.label = safe(label);
+            this.folderPath = normalizeFolderPathStatic(folderPath);
             this.enabled = enabled;
             this.updatedAt = safe(updatedAt);
             this.fileName = safe(fileName);
@@ -121,8 +124,13 @@ public final class form_templates {
     }
 
     public TemplateRec create(String tenantUuid, String label, String sourceFileName, byte[] bytes) throws Exception {
+        return create(tenantUuid, label, "", sourceFileName, bytes);
+    }
+
+    public TemplateRec create(String tenantUuid, String label, String folderPath, String sourceFileName, byte[] bytes) throws Exception {
         String tu = safeFileToken(tenantUuid);
         String lbl = safe(label).trim();
+        String fp = normalizeFolderPathStatic(folderPath);
         if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
         if (lbl.isBlank()) throw new IllegalArgumentException("Template name is required");
 
@@ -150,9 +158,9 @@ public final class form_templates {
             Files.write(filePath, bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
 
             List<TemplateRec> all = readAllLocked(tu);
-            TemplateRec rec = new TemplateRec(id, lbl, true, now, safeFileName, ext, bytes.length);
+            TemplateRec rec = new TemplateRec(id, lbl, fp, true, now, safeFileName, ext, bytes.length);
             all.add(rec);
-            sortByLabel(all);
+            sortByFolderThenLabel(all);
             writeAllLocked(tu, all);
             return rec;
         } finally {
@@ -161,9 +169,18 @@ public final class form_templates {
     }
 
     public boolean updateMeta(String tenantUuid, String templateUuid, String label) throws Exception {
+        return updateMetaInternal(tenantUuid, templateUuid, label, "", true);
+    }
+
+    public boolean updateMeta(String tenantUuid, String templateUuid, String label, String folderPath) throws Exception {
+        return updateMetaInternal(tenantUuid, templateUuid, label, folderPath, false);
+    }
+
+    private boolean updateMetaInternal(String tenantUuid, String templateUuid, String label, String folderPath, boolean preserveFolderPath) throws Exception {
         String tu = safeFileToken(tenantUuid);
         String id = safe(templateUuid).trim();
         String lbl = safe(label).trim();
+        String fp = normalizeFolderPathStatic(folderPath);
         if (tu.isBlank() || id.isBlank()) throw new IllegalArgumentException("tenantUuid/templateUuid required");
         if (lbl.isBlank()) throw new IllegalArgumentException("Template name is required");
 
@@ -184,6 +201,7 @@ public final class form_templates {
                     out.add(new TemplateRec(
                             id,
                             lbl,
+                            preserveFolderPath ? r.folderPath : fp,
                             true,
                             now,
                             r.fileName,
@@ -197,7 +215,7 @@ public final class form_templates {
             }
             if (!found) return false;
 
-            sortByLabel(out);
+            sortByFolderThenLabel(out);
             writeAllLocked(tu, out);
             return true;
         } finally {
@@ -249,6 +267,7 @@ public final class form_templates {
                     out.add(new TemplateRec(
                             r.uuid,
                             r.label,
+                            r.folderPath,
                             true,
                             now,
                             safeFileName,
@@ -261,7 +280,7 @@ public final class form_templates {
             }
             if (!found) return false;
 
-            sortByLabel(out);
+            sortByFolderThenLabel(out);
             writeAllLocked(tu, out);
             return true;
         } finally {
@@ -378,6 +397,7 @@ public final class form_templates {
 
             String uuid = text(e, "uuid");
             String label = text(e, "label");
+            String folderPath = normalizeFolderPathStatic(text(e, "folder_path"));
             boolean enabled = parseBool(text(e, "enabled"), true);
             String updated = text(e, "updated_at");
             String fileName = text(e, "file_name");
@@ -392,10 +412,10 @@ public final class form_templates {
             if (fileExt.isBlank()) fileExt = "txt";
             if (safe(fileName).trim().isBlank()) fileName = safeFileToken(uuid) + "." + fileExt;
 
-            out.add(new TemplateRec(uuid.trim(), label.trim(), true, updated, fileName, fileExt, size));
+            out.add(new TemplateRec(uuid.trim(), label.trim(), folderPath, true, updated, fileName, fileExt, size));
         }
 
-        sortByLabel(out);
+        sortByFolderThenLabel(out);
         return out;
     }
 
@@ -416,6 +436,7 @@ public final class form_templates {
             sb.append("    <uuid>").append(xmlText(r.uuid)).append("</uuid>\n");
             sb.append("    <enabled>true</enabled>\n");
             sb.append("    <label>").append(xmlText(r.label)).append("</label>\n");
+            sb.append("    <folder_path>").append(xmlText(normalizeFolderPathStatic(r.folderPath))).append("</folder_path>\n");
             sb.append("    <file_name>").append(xmlText(safe(r.fileName))).append("</file_name>\n");
             sb.append("    <file_ext>").append(xmlText(normalizeExtensionStatic(r.fileExt))).append("</file_ext>\n");
             sb.append("    <size_bytes>").append(r.sizeBytes).append("</size_bytes>\n");
@@ -466,11 +487,48 @@ public final class form_templates {
         return v;
     }
 
-    private static void sortByLabel(List<TemplateRec> out) {
+    public String normalizeFolderPath(String raw) {
+        return normalizeFolderPathStatic(raw);
+    }
+
+    private static String normalizeFolderPathStatic(String raw) {
+        String in = safe(raw).trim();
+        if (in.isBlank()) return "";
+
+        String[] pieces = in.replace('\\', '/').split("/");
+        ArrayList<String> cleanPieces = new ArrayList<String>();
+        for (int i = 0; i < pieces.length; i++) {
+            String part = safe(pieces[i]).trim();
+            if (part.isBlank()) continue;
+            part = part.replaceAll("[^A-Za-z0-9._ -]", "_").trim();
+            if (part.isBlank()) continue;
+            if (part.length() > 64) part = part.substring(0, 64).trim();
+            if (!part.isBlank()) cleanPieces.add(part);
+        }
+        if (cleanPieces.isEmpty()) return "";
+
+        String joined = String.join("/", cleanPieces);
+        if (joined.length() > 240) joined = joined.substring(0, 240);
+        while (joined.startsWith("/")) joined = joined.substring(1);
+        while (joined.endsWith("/")) joined = joined.substring(0, joined.length() - 1);
+        return joined;
+    }
+
+    private static void sortByFolderThenLabel(List<TemplateRec> out) {
         if (out == null) return;
         out.sort(new Comparator<TemplateRec>() {
             public int compare(TemplateRec a, TemplateRec b) {
-                return safe(a == null ? "" : a.label).compareToIgnoreCase(safe(b == null ? "" : b.label));
+                String af = safe(a == null ? "" : a.folderPath);
+                String bf = safe(b == null ? "" : b.folderPath);
+                int byFolder = af.compareToIgnoreCase(bf);
+                if (byFolder != 0) return byFolder;
+
+                String al = safe(a == null ? "" : a.label);
+                String bl = safe(b == null ? "" : b.label);
+                int byLabel = al.compareToIgnoreCase(bl);
+                if (byLabel != 0) return byLabel;
+
+                return safe(a == null ? "" : a.uuid).compareToIgnoreCase(safe(b == null ? "" : b.uuid));
             }
         });
     }
