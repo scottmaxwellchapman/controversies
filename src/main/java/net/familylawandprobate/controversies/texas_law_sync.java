@@ -32,10 +32,10 @@ public final class texas_law_sync {
     private static final ZoneId SCHEDULE_ZONE = ZoneId.systemDefault();
     private static final LocalTime DAILY_RUN_TIME = LocalTime.of(6, 45);
 
-    private static final Path RULES_DATA_DIR = Paths.get("texasrulesandstandards_data").toAbsolutePath().normalize();
-    private static final Path RULES_METADATA_FILE = Paths.get("rules-standards-metadata.properties").toAbsolutePath().normalize();
-    private static final Path CODES_DATA_DIR = Paths.get("texascodesstatutes_data").toAbsolutePath().normalize();
-    private static final Path CODES_LOG_FILE = Paths.get("logs", "texascodesstatutes.log").toAbsolutePath().normalize();
+    private static final Path RULES_DATA_DIR = Paths.get("data", "texas_law", "texasrulesandstandards_data").toAbsolutePath().normalize();
+    private static final Path RULES_METADATA_FILE = Paths.get("data", "texas_law", "rules-standards-metadata.properties").toAbsolutePath().normalize();
+    private static final Path CODES_DATA_DIR = Paths.get("data", "texas_law", "texascodesstatutes_data").toAbsolutePath().normalize();
+    private static final Path CODES_LOG_FILE = Paths.get("data", "texas_law", "logs", "texascodesstatutes.log").toAbsolutePath().normalize();
     private static final Path SHARED_STATE_DIR = Paths.get("data", "shared", "texas_law").toAbsolutePath().normalize();
     private static final Path STATUS_FILE = SHARED_STATE_DIR.resolve("texas_law_sync_status.properties");
 

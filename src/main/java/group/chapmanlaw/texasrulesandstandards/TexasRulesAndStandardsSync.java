@@ -102,10 +102,11 @@ public class TexasRulesAndStandardsSync {
             FEDERAL_EVIDENCE_SOURCE_URI,
             FEDERAL_2254_2255_SOURCE_URI
     );
-    private static final Path DATA_DIRECTORY = Path.of("texasrulesandstandards_data");
-    private static final Path METADATA_FILE = Path.of("rules-standards-metadata.properties");
-    private static final Path LEGACY_METADATA_FILE = DATA_DIRECTORY.resolve("rules-standards-metadata.properties");
-    private static final String LOG_FILE_PATTERN = Path.of("rules-standards-%g.log").toString();
+    private static final Path DATA_DIRECTORY = Path.of("data", "texas_law", "texasrulesandstandards_data");
+    private static final Path METADATA_FILE = Path.of("data", "texas_law", "rules-standards-metadata.properties");
+    private static final Path LEGACY_METADATA_FILE = Path.of("texasrulesandstandards_data", "rules-standards-metadata.properties");
+    private static final Path LEGACY_ROOT_METADATA_FILE = Path.of("rules-standards-metadata.properties");
+    private static final String LOG_FILE_PATTERN = Path.of("data", "texas_law", "logs", "rules-standards-%g.log").toString();
     private static final int LOG_FILE_LIMIT_BYTES = 1_048_576;
     private static final int LOG_FILE_ROTATION_COUNT = 5;
     private static final String FEDERAL_SECTION_KEY = "federal-rules";
@@ -445,6 +446,9 @@ public class TexasRulesAndStandardsSync {
         consoleHandler.setFormatter(formatter);
         LOGGER.addHandler(consoleHandler);
 
+        Path logPatternPath = Path.of(LOG_FILE_PATTERN).toAbsolutePath().normalize();
+        Path logDir = logPatternPath.getParent();
+        if (logDir != null) Files.createDirectories(logDir);
         FileHandler fileHandler = new FileHandler(LOG_FILE_PATTERN, LOG_FILE_LIMIT_BYTES, LOG_FILE_ROTATION_COUNT, true);
         fileHandler.setLevel(Level.ALL);
         fileHandler.setFormatter(formatter);
@@ -458,6 +462,9 @@ public class TexasRulesAndStandardsSync {
             if (Files.exists(LEGACY_METADATA_FILE)) {
                 metadataSource = LEGACY_METADATA_FILE;
                 LOGGER.info("Using legacy metadata path: " + LEGACY_METADATA_FILE.toAbsolutePath());
+            } else if (Files.exists(LEGACY_ROOT_METADATA_FILE)) {
+                metadataSource = LEGACY_ROOT_METADATA_FILE;
+                LOGGER.info("Using legacy metadata path: " + LEGACY_ROOT_METADATA_FILE.toAbsolutePath());
             } else {
                 return metadata;
             }
@@ -475,6 +482,8 @@ public class TexasRulesAndStandardsSync {
     }
 
     private static void writeMetadata(Properties metadata) throws IOException {
+        Path parent = METADATA_FILE.toAbsolutePath().normalize().getParent();
+        if (parent != null) Files.createDirectories(parent);
         StringWriter writer = new StringWriter();
         metadata.store(writer, "Texas rules and standards metadata");
         Files.writeString(

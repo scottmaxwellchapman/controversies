@@ -34,6 +34,7 @@ public final class document_image_preview {
     }
 
     private static final int DEFAULT_MAX_PAGES = 6;
+    private static final int MAX_PAGE_TEXT_CHARS = 120_000;
     private static final int PAGE_WIDTH = 1224;   // 8.5in @ 144dpi
     private static final int PAGE_HEIGHT = 1584;  // 11in @ 144dpi
     private static final int MARGIN_LEFT = 110;
@@ -52,12 +53,14 @@ public final class document_image_preview {
         public final int width;
         public final int height;
         public final String base64Png;
+        public final String pageText;
 
-        public PageImage(int pageIndex, int width, int height, String base64Png) {
+        public PageImage(int pageIndex, int width, int height, String base64Png, String pageText) {
             this.pageIndex = Math.max(0, pageIndex);
             this.width = Math.max(1, width);
             this.height = Math.max(1, height);
             this.base64Png = safe(base64Png);
+            this.pageText = safe(pageText);
         }
     }
 
@@ -495,7 +498,8 @@ public final class document_image_preview {
                     st.index,
                     st.image.getWidth(),
                     st.image.getHeight(),
-                    encodePngBase64(st.image)
+                    encodePngBase64(st.image),
+                    truncate(st.text.toString(), MAX_PAGE_TEXT_CHARS)
             ));
             st.close();
         }
@@ -746,5 +750,11 @@ public final class document_image_preview {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static String truncate(String s, int maxChars) {
+        String v = safe(s);
+        if (maxChars <= 0 || v.length() <= maxChars) return v;
+        return v.substring(0, maxChars);
     }
 }

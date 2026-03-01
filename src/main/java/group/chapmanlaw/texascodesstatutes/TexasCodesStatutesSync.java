@@ -57,7 +57,7 @@ public class TexasCodesStatutesSync {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(120);
     private static final Duration POLITE_DOWNLOAD_DELAY = Duration.ofSeconds(3);
     private static final String MARKER_FILE_NAME = ".download_complete.json";
-    private static final String LOG_DIRECTORY_NAME = "logs";
+    private static final String LOG_DIRECTORY_NAME = Path.of("data", "texas_law", "logs").toString();
     private static final String LOG_FILE_NAME = "texascodesstatutes.log";
     private static final String DEFAULT_CONFIG_BASENAME = "texascodesstatutes_config";
     private static final long LOG_ROTATION_BYTES = 10L * 1024L * 1024L;
@@ -862,7 +862,7 @@ public class TexasCodesStatutesSync {
             return new Config(
                     true,
                     TargetType.LOCAL,
-                    Path.of("texascodesstatutes_data"),
+                    Path.of("data", "texas_law", "texascodesstatutes_data"),
                     DEFAULT_METADATA_URI,
                     null,
                     false,
@@ -887,7 +887,7 @@ public class TexasCodesStatutesSync {
         flags.addAll(cliFlags);
 
         TargetType targetType = parseTargetType(options.getOrDefault("target", "local"));
-        Path dataDir = Path.of(options.getOrDefault("data-dir", "texascodesstatutes_data")).normalize();
+        Path dataDir = Path.of(options.getOrDefault("data-dir", Path.of("data", "texas_law", "texascodesstatutes_data").toString())).normalize();
         URI metadataUri = URI.create(options.getOrDefault("metadata-url", DEFAULT_METADATA_URI.toString()));
         String sourceBaseOverride = trimToNull(options.get("source-base"));
         Duration recurringInterval = parseOptionalRecurringInterval(options.get("interval"));
@@ -1353,7 +1353,7 @@ public class TexasCodesStatutesSync {
         System.out.println("Core options:");
         System.out.println("  --target=local|sftp|webdav       Storage target (default: local)");
         System.out.println("  --config=/path/config.properties Load options from a properties file (CLI overrides; default: texascodesstatutes_config[.properties])");
-        System.out.println("  --data-dir=PATH                  Local output directory (default: texascodesstatutes_data)");
+        System.out.println("  --data-dir=PATH                  Local output directory (default: data/texas_law/texascodesstatutes_data)");
         System.out.println("  --metadata-url=URL               Metadata JSON URL");
         System.out.println("  --source-base=URL                Override ZIP source base URL");
         System.out.println("  --interval=VALUE                 Recurring timer interval (seconds or ISO-8601, e.g. 300 or PT5M)");
