@@ -3,6 +3,7 @@
 <%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ include file="security.jspf" %>
 <% if (!require_login()) return; %>
+<% if (!require_permission("tenant_admin")) return; %>
 <%!
   private static String safe(String s) { return s == null ? "" : s; }
   private static String esc(String s) {
@@ -11,8 +12,10 @@
 %>
 <%
   String tenantUuid = safe((String) session.getAttribute("tenant.uuid"));
+  String userUuid = safe((String) session.getAttribute("user.uuid"));
   activity_log logStore = activity_log.defaultStore();
   List<activity_log.LogEntry> entries = logStore.recent(tenantUuid, 200);
+  application.log("[log_viewer] viewed by tenant=" + tenantUuid + ", user=" + userUuid + ", count=" + entries.size());
 %>
 <jsp:include page="header.jsp" />
 <section class="card">

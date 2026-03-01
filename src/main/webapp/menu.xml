@@ -15,6 +15,7 @@
   <item label="Settings">
     <item label="Tenant Fields" href="/tenant_fields.jsp" />
     <item label="Attribute Editor" href="/attribute_editor.jsp" />
+    <item label="Custom Objects" href="/custom_objects.jsp" />
     <item label="Case Attributes" href="/case_attributes.jsp" />
     <item label="Document Attributes" href="/document_attributes.jsp" />
     <item label="Tenant Settings" href="/tenant_settings.jsp" />

@@ -8,6 +8,7 @@
 <%@ include file="security.jspf" %>
 <%
   if (!require_login()) return;
+  if (!require_permission("tenant_admin")) return;
 %>
 
 <%!
@@ -43,6 +44,17 @@
       }
     } catch (Exception ignored) {}
     return "";
+  }
+
+  private static void logInfo(jakarta.servlet.ServletContext app, String message) {
+    if (app == null) return;
+    app.log("[tenant_fields] " + safe(message));
+  }
+
+  private static void logWarn(jakarta.servlet.ServletContext app, String message, Throwable ex) {
+    if (app == null) return;
+    if (ex == null) app.log("[tenant_fields] " + safe(message));
+    else app.log("[tenant_fields] " + safe(message), ex);
   }
 %>
 
@@ -80,10 +92,12 @@
         }
 
         store.write(tenantUuid, in);
+        logInfo(application, "Updated tenant fields for tenant " + tenantUuid + " by user " + safe((String)session.getAttribute("user.uuid")) + "; keys=" + in.size());
         response.sendRedirect(ctx + "/tenant_fields.jsp?saved=1");
         return;
       } catch (Exception ex) {
         error = "Unable to save tenant fields: " + safe(ex.getMessage());
+        logWarn(application, "Failed saving tenant fields for tenant " + tenantUuid + ": " + safe(ex.getMessage()), ex);
       }
     }
   }
@@ -91,7 +105,7 @@
   if ("1".equals(request.getParameter("saved"))) message = "Tenant replacement fields saved.";
 
   LinkedHashMap<String,String> kv = new LinkedHashMap<String,String>();
-  try { kv.putAll(store.read(tenantUuid)); } catch (Exception ignored) {}
+  try { kv.putAll(store.read(tenantUuid)); } catch (Exception ex) { logWarn(application, "Failed reading tenant fields for tenant " + tenantUuid + ": " + safe(ex.getMessage()), ex); }
 
   int rows = Math.max(6, kv.size() + 1);
 %>

@@ -11,6 +11,7 @@
 
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
+<%@ page import="net.familylawandprobate.controversies.custom_objects" %>
 
 <%!
     // -----------------------------
@@ -339,6 +340,38 @@
             userUuid != null && !userUuid.isBlank() &&
             userEmail != null && !userEmail.isBlank();
     boolean navVisible = tenantLoggedIn && userLoggedIn;
+
+    if (navVisible && tenantUuid != null && !tenantUuid.isBlank()) {
+        try {
+            List<custom_objects.ObjectRec> publishedObjects = custom_objects.defaultStore().listPublished(tenantUuid);
+            if (publishedObjects != null && !publishedObjects.isEmpty()) {
+                MenuNode customRoot = new MenuNode("Custom Objects", "");
+                for (int i = 0; i < publishedObjects.size(); i++) {
+                    custom_objects.ObjectRec r = publishedObjects.get(i);
+                    if (r == null) continue;
+                    String objectUuid = safe(r.uuid).trim();
+                    if (objectUuid.isBlank()) continue;
+                    String label = safe(r.pluralLabel).trim();
+                    if (label.isBlank()) label = safe(r.label).trim();
+                    if (label.isBlank()) label = "Object";
+                    String href = "/custom_object_records.jsp?object_uuid=" + URLEncoder.encode(objectUuid, StandardCharsets.UTF_8);
+                    customRoot.children.add(new MenuNode(label, href));
+                }
+
+                if (!customRoot.children.isEmpty()) {
+                    if (menuGroups == null) menuGroups = new ArrayList<MenuGroup>();
+                    MenuGroup topGroup;
+                    if (menuGroups.isEmpty()) {
+                        topGroup = new MenuGroup("");
+                        menuGroups.add(topGroup);
+                    } else {
+                        topGroup = menuGroups.get(0);
+                    }
+                    topGroup.items.add(customRoot);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
 
     String uiThemeDefaultMode = "auto";
     String uiThemeUseLocation = "false";

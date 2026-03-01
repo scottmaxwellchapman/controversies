@@ -23,6 +23,11 @@
   private static final String S_TENANT_UUID = "tenant.uuid";
   private static final String CSRF_SESSION_KEY = "CSRF_TOKEN";
   private static final int MAX_IMPORT_BYTES = 30 * 1024 * 1024;
+  private static final int MAX_ZIP_UPLOAD_BYTES = 60 * 1024 * 1024;
+  private static final int MAX_UPLOAD_PAYLOAD_CHARS = 120 * 1024 * 1024;
+  private static final int MAX_IMPORT_ITEMS = 500;
+  private static final long MAX_TOTAL_IMPORT_BYTES = 120L * 1024L * 1024L;
+  private static final int MAX_ZIP_ENTRIES_PER_ARCHIVE = 500;
 
   private static String safe(String s) { return s == null ? "" : s; }
 
@@ -203,8 +208,12 @@
     ArrayList<UploadBlob> out = new ArrayList<UploadBlob>();
     String raw = safe(payload);
     if (raw.isBlank()) return out;
+    if (raw.length() > MAX_UPLOAD_PAYLOAD_CHARS) {
+      throw new IllegalArgumentException("Upload payload is too large.");
+    }
 
     String[] lines = raw.split("\\r?\\n");
+    long totalDecodedBytes = 0L;
     for (int i = 0; i < lines.length; i++) {
       String line = safe(lines[i]).trim();
       if (line.isBlank()) continue;
@@ -216,6 +225,17 @@
       String relativePath = normalizeRelativePath(decodeBase64Utf8(parts[1]));
       byte[] bytes = decodeBase64(parts[2]);
       if (fileName.isBlank() || bytes.length == 0) continue;
+      if (out.size() >= MAX_IMPORT_ITEMS) {
+        throw new IllegalArgumentException("Too many upload items. Please import fewer files at a time.");
+      }
+      int maxForItem = isZipName(fileName) ? MAX_ZIP_UPLOAD_BYTES : MAX_IMPORT_BYTES;
+      if (bytes.length > maxForItem) {
+        throw new IllegalArgumentException("Upload item is too large: " + fileName);
+      }
+      totalDecodedBytes += bytes.length;
+      if (totalDecodedBytes > MAX_TOTAL_IMPORT_BYTES) {
+        throw new IllegalArgumentException("Total upload size exceeds import limit.");
+      }
 
       if (relativePath.isBlank()) relativePath = fileName;
       out.add(new UploadBlob(fileName, relativePath, bytes));
@@ -284,6 +304,7 @@
 
         int imported = 0;
         int skipped = 0;
+        long totalImportedBytes = 0L;
         String lastTemplateUuid = selectedTemplateUuid;
         String firstFailure = "";
 
@@ -302,9 +323,15 @@
           if (isZipName(uploadFileName)) {
             try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(up.bytes))) {
               ZipEntry entry;
+              int zipEntries = 0;
+              long zipExpandedBytes = 0L;
               while ((entry = zis.getNextEntry()) != null) {
                 String entryPath = "";
                 try {
+                  zipEntries++;
+                  if (zipEntries > MAX_ZIP_ENTRIES_PER_ARCHIVE) {
+                    throw new IllegalArgumentException("Zip contains too many entries.");
+                  }
                   if (entry.isDirectory()) continue;
                   entryPath = normalizeRelativePath(entry.getName());
                   String entryFileName = fileNameOnly(entryPath);
@@ -317,6 +344,14 @@
                   if (entryBytes.length == 0) {
                     skipped++;
                     continue;
+                  }
+                  zipExpandedBytes += entryBytes.length;
+                  if (zipExpandedBytes > MAX_TOTAL_IMPORT_BYTES) {
+                    throw new IllegalArgumentException("Zip expanded size exceeds import limit.");
+                  }
+                  totalImportedBytes += entryBytes.length;
+                  if (totalImportedBytes > MAX_TOTAL_IMPORT_BYTES) {
+                    throw new IllegalArgumentException("Total imported content exceeds limit.");
                   }
 
                   String entryFolder = templateStore.normalizeFolderPath(
@@ -360,6 +395,10 @@
           if (!isImportableTemplateName(uploadFileName)) {
             skipped++;
             continue;
+          }
+          totalImportedBytes += up.bytes.length;
+          if (totalImportedBytes > MAX_TOTAL_IMPORT_BYTES) {
+            throw new IllegalArgumentException("Total imported content exceeds limit.");
           }
 
           try {

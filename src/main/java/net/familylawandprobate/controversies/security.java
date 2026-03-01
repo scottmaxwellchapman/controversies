@@ -7,6 +7,8 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.Locale;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -37,6 +39,7 @@ import org.xml.sax.InputSource;
 public final class security {
 
     private security() {}
+    private static final Logger LOG = Logger.getLogger(security.class.getName());
 
     // Session keys (tenant)
     private static final String S_TENANT_UUID  = "tenant.uuid";
@@ -343,6 +346,7 @@ public final class security {
 
         HttpSession sess = (c.session != null) ? c.session : req.getSession(false);
         if (sess == null) {
+            LOG.fine("require_login denied: missing session; uri=" + safe(req.getRequestURI()) + ", ip=" + safe(req.getRemoteAddr()));
             res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
             return false;
         }
@@ -355,6 +359,7 @@ public final class security {
         String tenantLabel = safe((String) sess.getAttribute(S_TENANT_LABEL)).trim();
 
         if (tenantUuid.isEmpty() || tenantLabel.isEmpty()) {
+            LOG.fine("require_login denied: tenant binding missing in session; sid=" + sid + ", uri=" + safe(req.getRequestURI()));
             cleanupTenant(sess, req, res, tenantUuid, sid);
             res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
             return false;
@@ -372,6 +377,7 @@ public final class security {
         }
 
         if (!tenantBindingMatches(tb, tenantUuid, tenantLabel, clientIp, sid, tenantCookie)) {
+            LOG.warning("require_login denied: tenant binding mismatch; tenant=" + tenantUuid + ", sid=" + sid + ", ip=" + clientIp + ", uri=" + safe(req.getRequestURI()));
             cleanupTenant(sess, req, res, tenantUuid, sid);
             res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
             return false;
@@ -383,6 +389,7 @@ public final class security {
         String roleUuid = safe((String) sess.getAttribute(users_roles.S_ROLE_UUID)).trim();
 
         if (userUuid.isEmpty() || userEmail.isEmpty() || roleUuid.isEmpty()) {
+            LOG.fine("require_login denied: user auth missing in session; tenant=" + tenantUuid + ", sid=" + sid + ", uri=" + safe(req.getRequestURI()));
             cleanupUser(sess, req, res, tenantUuid, userUuid, sid);
             res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
             return false;
@@ -400,6 +407,7 @@ public final class security {
         }
 
         if (!ok) {
+            LOG.warning("require_login denied: user binding mismatch; tenant=" + tenantUuid + ", user=" + userUuid + ", sid=" + sid + ", ip=" + clientIp + ", uri=" + safe(req.getRequestURI()));
             cleanupUser(sess, req, res, tenantUuid, userUuid, sid);
             res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
             return false;
@@ -409,17 +417,20 @@ public final class security {
         try {
             users_roles.UserRec u = ur.getUserByUuid(tenantUuid, userUuid);
             if (u == null || !u.enabled) {
+                LOG.warning("require_login denied: user disabled/missing; tenant=" + tenantUuid + ", user=" + userUuid + ", uri=" + safe(req.getRequestURI()));
                 cleanupUser(sess, req, res, tenantUuid, userUuid, sid);
                 res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
                 return false;
             }
             users_roles.RoleRec r = ur.getRoleByUuid(tenantUuid, roleUuid);
             if (r == null || !r.enabled) {
+                LOG.warning("require_login denied: role disabled/missing; tenant=" + tenantUuid + ", user=" + userUuid + ", role=" + roleUuid + ", uri=" + safe(req.getRequestURI()));
                 cleanupUser(sess, req, res, tenantUuid, userUuid, sid);
                 res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
                 return false;
             }
-        } catch (Exception ignored) {
+        } catch (Exception ex) {
+            LOG.log(Level.WARNING, "require_login denied: auth state validation error for tenant=" + tenantUuid + ", user=" + userUuid + ", uri=" + safe(req.getRequestURI()), ex);
             cleanupUser(sess, req, res, tenantUuid, userUuid, sid);
             res.sendRedirect(ctxPath + "/tenant_login.jsp?next=" + enc(next));
             return false;
@@ -436,6 +447,7 @@ public final class security {
         String k = safe(key).trim();
 
         if (sess == null || k.isEmpty()) {
+            LOG.warning("require_permission denied: missing session/permission key; key=" + k + ", uri=" + safe(c.req.getRequestURI()) + ", ip=" + safe(c.req.getRemoteAddr()));
             c.res.setStatus(403);
             c.res.setContentType("text/plain; charset=UTF-8");
             c.res.getWriter().write("Forbidden");
@@ -444,6 +456,9 @@ public final class security {
 
         if (users_roles.hasPermissionTrue(sess, k)) return true;
 
+        String tenantUuid = safe((String) sess.getAttribute(S_TENANT_UUID)).trim();
+        String userUuid = safe((String) sess.getAttribute(users_roles.S_USER_UUID)).trim();
+        LOG.warning("require_permission denied: key=" + k + ", tenant=" + tenantUuid + ", user=" + userUuid + ", uri=" + safe(c.req.getRequestURI()) + ", ip=" + safe(c.req.getRemoteAddr()));
         c.res.setStatus(403);
         c.res.setContentType("text/plain; charset=UTF-8");
         c.res.getWriter().write("Forbidden");

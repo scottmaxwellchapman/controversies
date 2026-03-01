@@ -133,7 +133,7 @@ if ("POST".equalsIgnoreCase(request.getMethod())) {
       deleteRecursively(uploadDir);
       versions.create(tenantUuid, caseUuid, docUuid, partUuid,
         request.getParameter("version_label"), request.getParameter("source"), request.getParameter("mime_type"),
-        finalSha, String.valueOf(assembledSize), "file://" + outputPath.toString().replace('\\', '/'),
+        finalSha, String.valueOf(assembledSize), outputPath.toUri().toString(),
         request.getParameter("created_by"), request.getParameter("notes"), "1".equals(request.getParameter("make_current")));
       response.sendRedirect(ctx + "/versions.jsp?case_uuid=" + java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) + "&doc_uuid=" + java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) + "&part_uuid=" + java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) + "&uploaded=1");
       return;

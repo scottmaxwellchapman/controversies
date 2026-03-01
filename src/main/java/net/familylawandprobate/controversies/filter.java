@@ -274,6 +274,7 @@ public final class filter implements Filter {
                         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
                         "font-src 'self' https://fonts.gstatic.com data:; " +
                         "script-src 'self' 'unsafe-inline'; " +
+                        "connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com; " +
                         "base-uri 'self'; " +
                         "object-src 'none'; " +
                         "frame-ancestors 'self'");
@@ -307,14 +308,16 @@ public final class filter implements Filter {
         if (uri == null) return true;
 
         String lower = uri.toLowerCase(Locale.ROOT);
+        String slashNorm = lower.replace('\\', '/');
 
         if (lower.contains("\u0000") || lower.contains("%00")) {
             res.sendError(400);
             return false;
         }
 
-        if (lower.contains("/../") || lower.endsWith("/..") ||
-                lower.contains("%2e%2e") || lower.contains("..%2f") || lower.contains("%2f..")) {
+        if (slashNorm.contains("/../") || slashNorm.endsWith("/..") ||
+                lower.contains("%2e%2e") || lower.contains("..%2f") || lower.contains("%2f..") ||
+                lower.contains("%5c..") || lower.contains("..%5c") || lower.contains("%5c%2e%2e") || lower.contains("%2e%2e%5c")) {
             res.sendError(400);
             return false;
         }

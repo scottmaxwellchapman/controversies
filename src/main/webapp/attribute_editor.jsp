@@ -19,7 +19,7 @@
 </section>
 
 <section class="card" style="margin-top:12px;">
-  <div class="grid" style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px;">
+  <div class="grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
     <article class="card" style="padding:14px; margin:0;">
       <h2 style="margin-top:0;">Matter Attributes</h2>
       <p class="muted">
@@ -35,6 +35,14 @@
         Manage custom fields captured on the Documents page, including dropdown options and required settings.
       </p>
       <a class="btn" href="<%= ctx %>/document_attributes.jsp">Edit Document Attributes</a>
+    </article>
+
+    <article class="card" style="padding:14px; margin:0;">
+      <h2 style="margin-top:0;">Custom Object Attributes</h2>
+      <p class="muted">
+        Create tenant-specific objects, publish them to the menu, and configure their attribute schemas.
+      </p>
+      <a class="btn" href="<%= ctx %>/custom_objects.jsp">Manage Custom Objects</a>
     </article>
   </div>
 </section>

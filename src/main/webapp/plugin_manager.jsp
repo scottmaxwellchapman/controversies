@@ -17,6 +17,7 @@
 <%@ include file="security.jspf" %>
 <%
   if (!require_login()) return;
+  if (!require_permission("tenant_admin")) return;
 %>
 
 <%!
@@ -84,6 +85,17 @@
     } catch (Exception ignored) {}
     return "";
   }
+
+  private static void logInfo(jakarta.servlet.ServletContext app, String message) {
+    if (app == null) return;
+    app.log("[plugin_manager] " + safe(message));
+  }
+
+  private static void logWarn(jakarta.servlet.ServletContext app, String message, Throwable ex) {
+    if (app == null) return;
+    if (ex == null) app.log("[plugin_manager] " + safe(message));
+    else app.log("[plugin_manager] " + safe(message), ex);
+  }
 %>
 
 <%
@@ -122,8 +134,10 @@
         }
         writeUtf8(configPath, body);
         message = "Plugin configuration saved.";
+        logInfo(application, "Saved plugins config for tenant " + tenantUuid + " by user " + safe((String)session.getAttribute("user.uuid")));
       } catch (Exception ex) {
         error = "Unable to save plugin configuration: " + safe(ex.getMessage());
+        logWarn(application, "Unable to save plugin configuration for tenant " + tenantUuid + ": " + safe(ex.getMessage()), ex);
       }
     } else if ("clear_plugin_state".equalsIgnoreCase(action)) {
       int deleted = 0;
@@ -138,8 +152,10 @@
           }
         }
         message = "Plugin runtime state cleared (" + deleted + " file" + (deleted == 1 ? "" : "s") + ").";
+        logInfo(application, "Cleared plugin state for tenant " + tenantUuid + " by user " + safe((String)session.getAttribute("user.uuid")) + "; files deleted=" + deleted);
       } catch (Exception ex) {
         error = "Unable to clear plugin runtime state: " + safe(ex.getMessage());
+        logWarn(application, "Unable to clear plugin runtime state for tenant " + tenantUuid + ": " + safe(ex.getMessage()), ex);
       }
     }
   }
@@ -149,6 +165,7 @@
     pluginsConfigText = readUtf8(configPath);
   } catch (Exception ex) {
     if (error == null) error = "Unable to read plugin configuration: " + safe(ex.getMessage());
+    logWarn(application, "Unable to read plugin configuration for tenant " + tenantUuid + ": " + safe(ex.getMessage()), ex);
   }
 
   ArrayList<Path> pluginFiles = new ArrayList<Path>();
@@ -165,6 +182,7 @@
     }
   } catch (Exception ex) {
     if (error == null) error = "Unable to read plugin directory: " + safe(ex.getMessage());
+    logWarn(application, "Unable to list plugin directory for tenant " + tenantUuid + ": " + safe(ex.getMessage()), ex);
   }
   Collections.sort(pluginFiles, new Comparator<Path>() {
     public int compare(Path a, Path b) {

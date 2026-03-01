@@ -5,9 +5,14 @@
 
   String __secUri = request == null ? "" : String.valueOf(request.getRequestURI());
   if (__secUri.endsWith("/tenant_settings.jsp") || __secUri.endsWith("tenant_settings.jsp")
+      || __secUri.endsWith("/tenant_fields.jsp") || __secUri.endsWith("tenant_fields.jsp")
       || __secUri.endsWith("/attribute_editor.jsp") || __secUri.endsWith("attribute_editor.jsp")
       || __secUri.endsWith("/case_attributes.jsp") || __secUri.endsWith("case_attributes.jsp")
-      || __secUri.endsWith("/document_attributes.jsp") || __secUri.endsWith("document_attributes.jsp")) {
+      || __secUri.endsWith("/document_attributes.jsp") || __secUri.endsWith("document_attributes.jsp")
+      || __secUri.endsWith("/custom_objects.jsp") || __secUri.endsWith("custom_objects.jsp")
+      || __secUri.endsWith("/custom_object_attributes.jsp") || __secUri.endsWith("custom_object_attributes.jsp")
+      || __secUri.endsWith("/plugin_manager.jsp") || __secUri.endsWith("plugin_manager.jsp")
+      || __secUri.endsWith("/log_viewer.jsp") || __secUri.endsWith("log_viewer.jsp")) {
     if (!require_permission("tenant_admin")) return;
   }
 %>
