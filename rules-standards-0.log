@@ -369,3 +369,176 @@
 2026-03-01 13:53:48 [INFO] Sync completed.
 2026-03-01 13:53:48 [INFO] Summary: downloaded=0, updated=0, skipped=25, failed=0
 2026-03-01 13:53:48 [INFO] Metadata written to /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/rules-standards-metadata.properties
+2026-03-01 14:02:34 [INFO] Starting Texas rules and standards sync.
+2026-03-01 14:02:34 [INFO] Texas source page: https://www.txcourts.gov/rules-forms/rules-standards/
+2026-03-01 14:02:34 [INFO] Federal source pages configured: 6
+2026-03-01 14:02:34 [INFO] Data directory: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data
+2026-03-01 14:02:34 [INFO] Loaded config entries: 0
+2026-03-01 14:02:34 [INFO] Configured storage engine: local
+2026-03-01 14:02:34 [INFO] Configured previous-version retention: disabled
+2026-03-01 14:02:34 [INFO] Configured combined PDF generation: disabled
+2026-03-01 14:02:34 [INFO] Configured text extraction: disabled
+2026-03-01 14:02:34 [INFO] Configured download webhook: disabled
+2026-03-01 14:02:34 [INFO] Loaded metadata entries: 25
+2026-03-01 14:02:34 [INFO] Fetching source page HTML: https://www.txcourts.gov/rules-forms/rules-standards/
+2026-03-01 14:02:35 [INFO] Fetched source page HTML successfully for https://www.txcourts.gov/rules-forms/rules-standards/ (HTTP 200).
+2026-03-01 14:02:35 [INFO] Extracting links and last amended dates from source page: https://www.txcourts.gov/rules-forms/rules-standards/
+2026-03-01 14:02:35 [INFO] Section 'Statewide Rules' yielded 15 candidate document(s).
+2026-03-01 14:02:35 [INFO] Section 'Statewide Standards' yielded 4 candidate document(s).
+2026-03-01 14:02:35 [INFO] Fetching source page HTML: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-appellate-procedure
+2026-03-01 14:02:35 [INFO] Fetched source page HTML successfully for https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-appellate-procedure (HTTP 200).
+2026-03-01 14:02:35 [INFO] Extracting federal rule-set link from source page: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-appellate-procedure
+2026-03-01 14:02:35 [INFO] Federal source page yielded 1 candidate document: Federal Rules of Appellate Procedure
+2026-03-01 14:02:35 [INFO] Fetching source page HTML: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-bankruptcy-procedure
+2026-03-01 14:02:35 [INFO] Fetched source page HTML successfully for https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-bankruptcy-procedure (HTTP 200).
+2026-03-01 14:02:35 [INFO] Extracting federal rule-set link from source page: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-bankruptcy-procedure
+2026-03-01 14:02:35 [INFO] Federal source page yielded 1 candidate document: Federal Rules of Bankruptcy Procedure
+2026-03-01 14:02:35 [INFO] Fetching source page HTML: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-civil-procedure
+2026-03-01 14:02:35 [INFO] Fetched source page HTML successfully for https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-civil-procedure (HTTP 200).
+2026-03-01 14:02:35 [INFO] Extracting federal rule-set link from source page: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-civil-procedure
+2026-03-01 14:02:35 [INFO] Federal source page yielded 1 candidate document: Federal Rules of Civil Procedure
+2026-03-01 14:02:35 [INFO] Fetching source page HTML: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-criminal-procedure
+2026-03-01 14:02:35 [INFO] Fetched source page HTML successfully for https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-criminal-procedure (HTTP 200).
+2026-03-01 14:02:35 [INFO] Extracting federal rule-set link from source page: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-criminal-procedure
+2026-03-01 14:02:35 [INFO] Federal source page yielded 1 candidate document: Federal Rules of Criminal Procedure
+2026-03-01 14:02:35 [INFO] Fetching source page HTML: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-evidence
+2026-03-01 14:02:36 [INFO] Fetched source page HTML successfully for https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-evidence (HTTP 200).
+2026-03-01 14:02:36 [INFO] Extracting federal rule-set link from source page: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/federal-rules-evidence
+2026-03-01 14:02:36 [INFO] Federal source page yielded 1 candidate document: Federal Rules of Evidence
+2026-03-01 14:02:36 [INFO] Fetching source page HTML: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/rules-governing-section-2254-and-section-2255-proceedings
+2026-03-01 14:02:36 [INFO] Fetched source page HTML successfully for https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/rules-governing-section-2254-and-section-2255-proceedings (HTTP 200).
+2026-03-01 14:02:36 [INFO] Extracting federal rule-set link from source page: https://www.uscourts.gov/forms-rules/current-rules-practice-procedure/rules-governing-section-2254-and-section-2255-proceedings
+2026-03-01 14:02:36 [INFO] Federal source page yielded 1 candidate document: Rules Governing Section 2254 and Section 2255 Proceedings
+2026-03-01 14:02:36 [INFO] Discovered 25 candidate document(s) to track.
+2026-03-01 14:02:36 [INFO] Active storage engine: local
+2026-03-01 14:02:36 [INFO] Storage root: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data
+2026-03-01 14:02:36 [INFO] Evaluating: Texas Rules of Civil Procedure
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1457525/texas-rules-of-civil-procedure-january-1-2026.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: January 1, 2026
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-texas-rules-of-civil-procedure.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Texas Rules of Appellate Procedure
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1461885/texas-rules-of-appellate-procedure.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: January 1, 2026
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-texas-rules-of-appellate-procedure.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Texas Rules of Evidence
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1456691/texas-rules-of-evidence-effective-912025.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: September 1, 2025
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-texas-rules-of-evidence.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Statewide Rules Governing Electronic Filing in Criminal Cases
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1458665/statewide-rules-governing-electronic-filing-in-criminal-cases.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: May 28, 2024
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-statewide-rules-governing-electronic-filing-in-criminal-cases.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Texas Rules of Judicial Administration
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1456650/texas-rules-of-judicial-administration-09012025.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: September 1, 2025
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-texas-rules-of-judicial-administration.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Texas Code of Judicial Conduct
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1461500/texas-code-of-judicial-conduct.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: October 24, 2025
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-texas-code-of-judicial-conduct.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Rules of Judicial Education
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1447901/rules-of-judicial-education.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: November 29, 2023
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-rules-of-judicial-education.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Education Rules on Guardianship, Alternatives to Guardianship, and Supports and Services for Proposed Wards and Wards
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1457554/education-rules-guardianship.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: November 29, 2023
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-education-rules-on-guardianship-alternatives-to-guardianship-and-supports-and-services-for-proposed-wards-and-wards.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Disciplinary Rules for Judges and Judicial Candidates
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1461275/disciplinary-rules-for-judges-and-judicial-candidates.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: September 1, 2025
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-disciplinary-rules-for-judges-and-judicial-candidates.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Judicial Branch Certification Commission Rules
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1461799/jbcc-rules.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: December 19, 2025
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-judicial-branch-certification-commission-rules.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Texas Disciplinary Rules of Professional Conduct
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: March 7, 2025
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-texas-disciplinary-rules-of-professional-conduct.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Texas Rules of Disciplinary Procedure
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1457737/trdp.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: October 1, 2024
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-texas-rules-of-disciplinary-procedure.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Judicial Bypass Rules under Ch. 33 of the Family Code
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1454840/parental-notification-rules.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: September 6, 2022
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-judicial-bypass-rules-under-ch-33-of-the-family-code.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Rules for Magistrates in Inmate Litigation and Litigation Involving Certain Civilly Committed Individuals
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1457572/rules-for-magistrates-in-inmate-litigation-and-litigation-involving-certain-civilly-committed-individuals.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: December 1, 2023
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-rules-for-magistrates-in-inmate-litigation-and-litigation-involving-certain-civilly-committed-individuals.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: How Texas Court Rules Are Made
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1374851/How-Court-Rules-Are-Made.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: Unknown
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/rules-how-texas-court-rules-are-made.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment date and URL unchanged)
+2026-03-01 14:02:36 [INFO] Evaluating: Standards for Appellate Conduct
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1437423/standards-for-appellate-conduct.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: February 1, 1999
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/standards-standards-for-appellate-conduct.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Ethical Guidelines for Mediators
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/514701/Eth-Guideline-Amended-Order.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: June 1, 2011
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/standards-ethical-guidelines-for-mediators.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Uniform Format Manual for Texas Reporters' Records
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/190785/Uniform-Format-Manual-07012010.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: June 28, 2010
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/standards-uniform-format-manual-for-texas-reporters-records.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: JCIT Technology Standards
+2026-03-01 14:02:36 [INFO]   URL: https://www.txcourts.gov/media/1435816/technology-standards.pdf
+2026-03-01 14:02:36 [INFO]   Last amended: July 9, 2025
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/standards-jcit-technology-standards.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Federal Rules of Appellate Procedure
+2026-03-01 14:02:36 [INFO]   URL: https://www.uscourts.gov/file/78321/download
+2026-03-01 14:02:36 [INFO]   Last amended: 2025
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/federal-rules-federal-rules-of-appellate-procedure.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Federal Rules of Bankruptcy Procedure
+2026-03-01 14:02:36 [INFO]   URL: https://www.uscourts.gov/file/78322/download
+2026-03-01 14:02:36 [INFO]   Last amended: 2025
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/federal-rules-federal-rules-of-bankruptcy-procedure.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Federal Rules of Civil Procedure
+2026-03-01 14:02:36 [INFO]   URL: https://www.uscourts.gov/file/78323/download
+2026-03-01 14:02:36 [INFO]   Last amended: 2025
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/federal-rules-federal-rules-of-civil-procedure.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Federal Rules of Criminal Procedure
+2026-03-01 14:02:36 [INFO]   URL: https://www.uscourts.gov/file/78324/download
+2026-03-01 14:02:36 [INFO]   Last amended: 2023
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/federal-rules-federal-rules-of-criminal-procedure.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Federal Rules of Evidence
+2026-03-01 14:02:36 [INFO]   URL: https://www.uscourts.gov/file/78325/download
+2026-03-01 14:02:36 [INFO]   Last amended: 2024
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/federal-rules-federal-rules-of-evidence.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Evaluating: Rules Governing Section 2254 and Section 2255 Proceedings
+2026-03-01 14:02:36 [INFO]   URL: https://www.uscourts.gov/file/27805/download
+2026-03-01 14:02:36 [INFO]   Last amended: 2019
+2026-03-01 14:02:36 [INFO]   Storage target: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texasrulesandstandards_data/federal-rules-rules-governing-section-2254-and-section-2255-proceedings.pdf
+2026-03-01 14:02:36 [INFO]   Action: skip (no amendment change detected)
+2026-03-01 14:02:36 [INFO] Skipping combined PDF generation; combined PDF output is disabled.
+2026-03-01 14:02:36 [INFO] Skipping .txt extraction artifacts; text extraction is disabled.
+2026-03-01 14:02:36 [INFO] Sync completed.
+2026-03-01 14:02:36 [INFO] Summary: downloaded=0, updated=0, skipped=25, failed=0
+2026-03-01 14:02:36 [INFO] Metadata written to /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/rules-standards-metadata.properties

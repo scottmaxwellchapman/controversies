@@ -154,3 +154,86 @@ Sync complete.
     - Government Code (GV): source ZIP contains corrupt chapter file(s): gv.572.docx (run with --allow-partial to keep remaining files)
 Error: Sync completed with 3 failed code(s).
 Embedded Tomcat stopped.
+Logging to /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/logs/texascodesstatutes.log (rotation 10MB)
+Embedded Tomcat started:
+  HTTPS: https://localhost:8443/
+  HTTP (redirects): http://localhost:8080/
+  Keystore: /Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/data/sec/ssl/keystore.p12
+[1/31] The Texas Constitution (CN)
+  skipped (no change detected and local marker verified)
+[2/31] Agriculture Code (AG)
+  failed: source ZIP contains corrupt chapter file(s): ag.12.docx (run with --allow-partial to keep remaining files)
+[3/31] Alcoholic Beverage Code (AL)
+  skipped (no change detected and local marker verified)
+[4/31] Auxiliary Water Laws (WL)
+  skipped (no change detected and local marker verified)
+[5/31] Business & Commerce Code (BC)
+  skipped (no change detected and local marker verified)
+[6/31] Business Organizations Code (BO)
+  skipped (no change detected and local marker verified)
+[7/31] Civil Practice and Remedies Code (CP)
+  skipped (no change detected and local marker verified)
+[8/31] Code of Criminal Procedure (CR)
+  skipped (no change detected and local marker verified)
+[9/31] Education Code (ED)
+  skipped (no change detected and local marker verified)
+[10/31] Election Code (EL)
+  skipped (no change detected and local marker verified)
+[11/31] Estates Code (ES)
+  skipped (no change detected and local marker verified)
+[12/31] Family Code (FA)
+  skipped (no change detected and local marker verified)
+[13/31] Finance Code (FI)
+  failed: source ZIP contains corrupt chapter file(s): fi.345.docx (run with --allow-partial to keep remaining files)
+[14/31] Government Code (GV)
+  failed: source ZIP contains corrupt chapter file(s): gv.572.docx (run with --allow-partial to keep remaining files)
+[15/31] Health and Safety Code (HS)
+  skipped (no change detected and local marker verified)
+[16/31] Human Resources Code (HR)
+  skipped (no change detected and local marker verified)
+[17/31] Insurance Code (IN)
+  skipped (no change detected and local marker verified)
+[18/31] Insurance Code - Not Codified (I1)
+  skipped (no change detected and local marker verified)
+[19/31] Labor Code (LA)
+  skipped (no change detected and local marker verified)
+[20/31] Local Government Code (LG)
+  skipped (no change detected and local marker verified)
+[21/31] Natural Resources Code (NR)
+  skipped (no change detected and local marker verified)
+[22/31] Occupations Code (OC)
+  skipped (no change detected and local marker verified)
+[23/31] Parks and Wildlife Code (PW)
+  skipped (no change detected and local marker verified)
+[24/31] Penal Code (PE)
+  skipped (no change detected and local marker verified)
+[25/31] Property Code (PR)
+  skipped (no change detected and local marker verified)
+[26/31] Special District Local Laws Code (SD)
+  skipped (no change detected and local marker verified)
+[27/31] Tax Code (TX)
+  skipped (no change detected and local marker verified)
+[28/31] Transportation Code (TN)
+  skipped (no change detected and local marker verified)
+[29/31] Utilities Code (UT)
+  skipped (no change detected and local marker verified)
+[30/31] Water Code (WA)
+  skipped (no change detected and local marker verified)
+[31/31] Vernon's Civil Statutes (CV)
+  skipped (no change detected and local marker verified)
+
+Sync complete.
+  Source base: https://tcss.legis.texas.gov/resources
+  Target: local:/Users/scottmaxwellchapman/Library/CloudStorage/OneDrive-ChapmanLawGroup,PLLC/Business/Development/controversies/texascodesstatutes_data
+  Total sets: 31
+  Downloaded: 0
+  Skipped: 28
+  Dry-run: 0
+  Failed: 3
+  Failures:
+    - Agriculture Code (AG): source ZIP contains corrupt chapter file(s): ag.12.docx (run with --allow-partial to keep remaining files)
+    - Finance Code (FI): source ZIP contains corrupt chapter file(s): fi.345.docx (run with --allow-partial to keep remaining files)
+    - Government Code (GV): source ZIP contains corrupt chapter file(s): gv.572.docx (run with --allow-partial to keep remaining files)
+Error: Sync completed with 3 failed code(s).
+ERROR StatusLogger Log4j2 could not find a logging implementation. Please add log4j-core to the classpath. Using SimpleLogger to log to the console...
+Embedded Tomcat stopped.

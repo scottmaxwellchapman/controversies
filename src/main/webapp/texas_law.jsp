@@ -13,6 +13,7 @@
 <%@ page import="java.util.Locale" %>
 <%@ page import="java.util.Properties" %>
 
+<%@ page import="net.familylawandprobate.controversies.texas_law_library" %>
 <%@ page import="net.familylawandprobate.controversies.texas_law_sync" %>
 
 <%@ include file="security.jspf" %>
@@ -133,6 +134,14 @@
       return v;
     }
   }
+
+  private static int intOr(String raw, int fallback) {
+    try {
+      return Integer.parseInt(safe(raw).trim());
+    } catch (Exception ignored) {
+      return fallback;
+    }
+  }
 %>
 
 <%
@@ -170,6 +179,15 @@
     relPath = relativize(root, current);
   }
 
+  String q = safe(request.getParameter("q")).trim();
+  String searchMode = safe(request.getParameter("search_mode")).trim().toLowerCase(Locale.ROOT);
+  if (!"content".equals(searchMode) && !"both".equals(searchMode) && !"filename".equals(searchMode)) searchMode = "filename";
+  boolean includeFileNameSearch = "filename".equals(searchMode) || "both".equals(searchMode);
+  boolean includeContentSearch = "content".equals(searchMode) || "both".equals(searchMode);
+  String extFilter = safe(request.getParameter("ext_filter")).trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+  String pathFilter = safe(request.getParameter("path_filter")).trim();
+  String searchQs = "&q=" + enc(q) + "&search_mode=" + enc(searchMode) + "&ext_filter=" + enc(extFilter) + "&path_filter=" + enc(pathFilter);
+
   String downloadRel = normalizeRelativePath(request.getParameter("download"));
   if (!downloadRel.isBlank()) {
     Path downloadTarget = resolveUnderRoot(root, downloadRel);
@@ -190,6 +208,28 @@
     }
   }
 
+  String viewRel = normalizeRelativePath(request.getParameter("view"));
+  int viewPageParam = intOr(request.getParameter("page"), 0);
+  if (viewPageParam < 0) viewPageParam = 0;
+  texas_law_library.RenderedPage viewedPage = null;
+  Path viewedTarget = null;
+  if (!viewRel.isBlank()) {
+    viewedTarget = resolveUnderRoot(root, viewRel);
+    if (viewedTarget == null || !Files.isRegularFile(viewedTarget)) {
+      error = "Viewer file not found.";
+      viewRel = "";
+    } else if (!texas_law_library.isRenderable(viewedTarget)) {
+      error = "Viewer currently supports PDF and DOCX only.";
+      viewRel = "";
+    } else {
+      try {
+        viewedPage = texas_law_library.renderPage(viewedTarget, viewPageParam);
+      } catch (Exception ex) {
+        error = "Unable to render preview image: " + safe(ex.getMessage());
+      }
+    }
+  }
+
   ArrayList<Path> directories = new ArrayList<Path>();
   ArrayList<Path> files = new ArrayList<Path>();
   try (DirectoryStream<Path> ds = Files.newDirectoryStream(current)) {
@@ -204,6 +244,13 @@
   directories.sort(Comparator.comparing(a -> fileName(a).toLowerCase(Locale.ROOT)));
   files.sort(Comparator.comparing(a -> fileName(a).toLowerCase(Locale.ROOT)));
 
+  ArrayList<texas_law_library.SearchResult> searchResults = new ArrayList<texas_law_library.SearchResult>();
+  if (!q.isBlank()) {
+    searchResults.addAll(
+      texas_law_library.search(root, q, extFilter, pathFilter, includeFileNameSearch, includeContentSearch, 200)
+    );
+  }
+
   Properties status = sync.readStatusSnapshot();
   String running = safe(status.getProperty("running")).trim().toLowerCase(Locale.ROOT);
   String lastStatus = safe(status.getProperty("last_status"));
@@ -216,38 +263,53 @@
 <jsp:include page="header.jsp" />
 
 <style>
-  .tx-law-layout { display:grid; gap:12px; margin-top:10px; }
-  .tx-law-stats { display:grid; gap:10px; grid-template-columns:repeat(4, minmax(0,1fr)); }
-  .tx-law-stat { border:1px solid var(--border); border-radius:12px; background:var(--surface); padding:10px; }
-  .tx-law-stat .label { color:var(--muted); font-size:12px; }
-  .tx-law-stat .value { color:var(--text); font-weight:600; margin-top:4px; word-break:break-word; }
-  .tx-law-chooser { display:flex; gap:8px; flex-wrap:wrap; }
-  .tx-law-chooser .btn.is-active { border-color:var(--accent); box-shadow:var(--focus); }
+  .tx-law-layout { display:grid; gap:10px; margin-top:10px; }
+  .tx-law-head { display:flex; gap:10px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; }
+  .tx-law-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .tx-law-tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tx-law-tabs .btn.is-active { border-color:var(--accent); box-shadow:var(--focus); }
+  .tx-law-status-line { display:flex; flex-wrap:wrap; gap:10px 14px; font-size:13px; color:var(--muted); }
+  .tx-law-status-line strong { color:var(--text); }
+  .tx-law-search { border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:8px 10px; }
+  .tx-law-search summary { cursor:pointer; font-weight:600; color:var(--text); }
+  .tx-law-search-form { margin-top:8px; display:grid; gap:8px; }
+  .tx-law-search-main { display:grid; gap:8px; grid-template-columns:minmax(0, 1fr) auto auto; align-items:end; }
+  .tx-law-search-tools { display:grid; gap:8px; grid-template-columns:repeat(3, minmax(0, 1fr)); }
   .tx-law-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; color:var(--muted); word-break:break-all; }
-  .tx-law-grid { display:grid; gap:12px; grid-template-columns:minmax(0,1fr); }
-  .tx-law-row { display:grid; gap:10px; grid-template-columns:minmax(0, 1fr) auto auto; align-items:center; border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:9px 10px; }
+  .tx-law-grid { display:grid; gap:8px; grid-template-columns:minmax(0,1fr); }
+  .tx-law-row { display:grid; gap:10px; grid-template-columns:minmax(0, 1fr) auto; align-items:center; border:1px solid var(--border); border-radius:9px; background:var(--surface); padding:8px 10px; }
   .tx-law-row .name { font-weight:600; color:var(--text); word-break:break-word; }
-  .tx-law-row .meta { color:var(--muted); font-size:12px; }
+  .tx-law-row .meta { color:var(--muted); font-size:12px; word-break:break-word; }
   .tx-law-empty { border:1px dashed var(--border); border-radius:10px; background:var(--surface); padding:12px; color:var(--muted); }
-  @media (max-width: 1080px) { .tx-law-stats { grid-template-columns:repeat(2, minmax(0,1fr)); } }
+  .tx-law-view-nav { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .tx-law-view-meta { color:var(--muted); font-size:12px; }
+  .tx-law-view-img-wrap { border:1px solid var(--border); border-radius:10px; background:var(--surface-2); padding:8px; overflow:auto; }
+  .tx-law-view-img-wrap img { display:block; width:100%; height:auto; background:#fff; border:1px solid var(--border); border-radius:8px; }
   @media (max-width: 700px) {
-    .tx-law-stats { grid-template-columns:1fr; }
-    .tx-law-row { grid-template-columns:minmax(0,1fr); }
+    .tx-law-search-main { grid-template-columns:minmax(0,1fr); }
+    .tx-law-search-tools { grid-template-columns:1fr; }
+    .tx-law-row { grid-template-columns:minmax(0,1fr); align-items:start; }
   }
 </style>
 
 <div class="tx-law-layout">
   <section class="card">
-    <div class="section-head">
+    <div class="tx-law-head">
       <div>
         <h1 style="margin:0;">Texas Law</h1>
-        <div class="meta">Shared legal material browser for all tenants. Source downloads refresh daily at <strong>6:45 AM</strong>.</div>
+        <div class="meta">Shared material for all tenants. PDF/DOCX files open as PNG pages with navigation.</div>
       </div>
-      <form method="post" action="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>" style="margin:0;">
-        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-        <input type="hidden" name="action" value="run_now" />
-        <button type="submit" class="btn btn-ghost">Run Refresh Now</button>
-      </form>
+      <div class="tx-law-actions">
+        <div class="tx-law-tabs">
+          <a class="btn btn-ghost <%= "rules".equals(library) ? "is-active" : "" %>" href="<%= ctx %>/texas_law.jsp?library=rules<%= searchQs %>">Rules</a>
+          <a class="btn btn-ghost <%= "codes".equals(library) ? "is-active" : "" %>" href="<%= ctx %>/texas_law.jsp?library=codes<%= searchQs %>">Codes</a>
+        </div>
+        <form method="post" action="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %><%= searchQs %>" style="margin:0;">
+          <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+          <input type="hidden" name="action" value="run_now" />
+          <button type="submit" class="btn btn-ghost">Run Refresh Now</button>
+        </form>
+      </div>
     </div>
     <% if (message != null) { %>
       <div class="alert alert-ok" style="margin-top:10px;"><%= esc(message) %></div>
@@ -258,28 +320,14 @@
   </section>
 
   <section class="card">
-    <div class="tx-law-stats">
-      <div class="tx-law-stat">
-        <div class="label">Sync Status</div>
-        <div class="value"><%= "true".equals(running) ? "Running" : (safe(lastStatus).isBlank() ? "Idle" : esc(lastStatus)) %></div>
-      </div>
-      <div class="tx-law-stat">
-        <div class="label">Last Started</div>
-        <div class="value"><%= esc(fmtInstant(status.getProperty("last_started_at"))) %></div>
-      </div>
-      <div class="tx-law-stat">
-        <div class="label">Last Completed</div>
-        <div class="value"><%= esc(fmtInstant(status.getProperty("last_completed_at"))) %></div>
-      </div>
-      <div class="tx-law-stat">
-        <div class="label">Next Scheduled</div>
-        <div class="value"><%= esc(fmtInstant(nextAt)) %></div>
-      </div>
-    </div>
-    <div class="meta" style="margin-top:10px;">
-      Scheduler: <strong><%= esc(scheduleTime.isBlank() ? "06:45" : scheduleTime) %></strong> (<%= esc(scheduleZone.isBlank() ? ZoneId.systemDefault().getId() : scheduleZone) %>).
-      Rules exit code: <code><%= esc(safe(status.getProperty("rules_exit_code")).isBlank() ? "N/A" : safe(status.getProperty("rules_exit_code"))) %></code>.
-      Codes exit code: <code><%= esc(safe(status.getProperty("codes_exit_code")).isBlank() ? "N/A" : safe(status.getProperty("codes_exit_code"))) %></code>.
+    <div class="tx-law-status-line">
+      <span>Status: <strong><%= "true".equals(running) ? "Running" : (safe(lastStatus).isBlank() ? "Idle" : esc(lastStatus)) %></strong></span>
+      <span>Last Started: <strong><%= esc(fmtInstant(status.getProperty("last_started_at"))) %></strong></span>
+      <span>Last Completed: <strong><%= esc(fmtInstant(status.getProperty("last_completed_at"))) %></strong></span>
+      <span>Next Run: <strong><%= esc(fmtInstant(nextAt)) %></strong></span>
+      <span>Schedule: <strong><%= esc(scheduleTime.isBlank() ? "06:45" : scheduleTime) %></strong> (<%= esc(scheduleZone.isBlank() ? ZoneId.systemDefault().getId() : scheduleZone) %>)</span>
+      <span>Rules Exit: <strong><%= esc(safe(status.getProperty("rules_exit_code")).isBlank() ? "N/A" : safe(status.getProperty("rules_exit_code"))) %></strong></span>
+      <span>Codes Exit: <strong><%= esc(safe(status.getProperty("codes_exit_code")).isBlank() ? "N/A" : safe(status.getProperty("codes_exit_code"))) %></strong></span>
     </div>
     <% if (!lastError.isBlank()) { %>
       <div class="alert alert-warn" style="margin-top:10px;">Last error: <%= esc(lastError) %></div>
@@ -291,62 +339,161 @@
   </section>
 
   <section class="card">
-    <div class="tx-law-chooser">
-      <a class="btn btn-ghost <%= "rules".equals(library) ? "is-active" : "" %>" href="<%= ctx %>/texas_law.jsp?library=rules">Rules And Standards</a>
-      <a class="btn btn-ghost <%= "codes".equals(library) ? "is-active" : "" %>" href="<%= ctx %>/texas_law.jsp?library=codes">Codes And Statutes</a>
+    <details class="tx-law-search" <%= !q.isBlank() || !extFilter.isBlank() || !pathFilter.isBlank() || !"filename".equals(searchMode) ? "open" : "" %>>
+      <summary>Search Texas Law (optional)</summary>
+      <form class="tx-law-search-form" method="get" action="<%= ctx %>/texas_law.jsp">
+        <input type="hidden" name="library" value="<%= esc(library) %>" />
+        <input type="hidden" name="path" value="<%= esc(relPath) %>" />
+        <div class="tx-law-search-main">
+          <label style="margin:0;">
+            <span>Search</span>
+            <input type="text" name="q" value="<%= esc(q) %>" placeholder="Type search text" />
+          </label>
+          <button type="submit" class="btn btn-ghost">Search</button>
+          <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>">Clear</a>
+        </div>
+        <div class="tx-law-search-tools">
+          <label style="margin:0;">
+            <span>Mode</span>
+            <select name="search_mode">
+              <option value="filename" <%= "filename".equals(searchMode) ? "selected" : "" %>>Filename</option>
+              <option value="content" <%= "content".equals(searchMode) ? "selected" : "" %>>Content</option>
+              <option value="both" <%= "both".equals(searchMode) ? "selected" : "" %>>Filename + Content</option>
+            </select>
+          </label>
+          <label style="margin:0;">
+            <span>File Type</span>
+            <select name="ext_filter">
+              <option value="" <%= extFilter.isBlank() ? "selected" : "" %>>All</option>
+              <option value="pdf" <%= "pdf".equals(extFilter) ? "selected" : "" %>>PDF</option>
+              <option value="docx" <%= "docx".equals(extFilter) ? "selected" : "" %>>DOCX</option>
+              <option value="txt" <%= "txt".equals(extFilter) ? "selected" : "" %>>TXT</option>
+              <option value="json" <%= "json".equals(extFilter) ? "selected" : "" %>>JSON</option>
+              <option value="xml" <%= "xml".equals(extFilter) ? "selected" : "" %>>XML</option>
+            </select>
+          </label>
+          <label style="margin:0;">
+            <span>Path Contains</span>
+            <input type="text" name="path_filter" value="<%= esc(pathFilter) %>" placeholder="Optional folder/file filter" />
+          </label>
+        </div>
+      </form>
+    </details>
+    <div class="tx-law-path" style="margin-top:8px;">Current: <%= esc(current.toString()) %></div>
+  </section>
+
+  <% if (viewedPage != null && viewedTarget != null && !safe(viewedPage.base64Png).isBlank()) {
+       String viewedRel = relativize(root, viewedTarget);
+       int viewedPageOne = viewedPage.pageIndex + 1;
+       String viewedTotalLabel = viewedPage.totalKnown ? String.valueOf(viewedPage.totalPages) : (viewedPage.totalPages + "+");
+  %>
+  <section class="card">
+    <div class="section-head">
+      <div>
+        <h2 style="margin:0;"><%= esc(fileName(viewedTarget)) %></h2>
+        <div class="tx-law-view-meta">
+          Page <strong><%= viewedPageOne %></strong> of <strong><%= esc(viewedTotalLabel) %></strong>
+          <% if (!safe(viewedPage.engine).isBlank()) { %> | Engine: <%= esc(viewedPage.engine) %><% } %>
+        </div>
+      </div>
+      <div class="tx-law-view-nav">
+        <% if (viewedPage.hasPrev) { %>
+          <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&view=<%= enc(viewedRel) %>&page=<%= viewedPage.pageIndex - 1 %><%= searchQs %>">Previous</a>
+        <% } %>
+        <% if (viewedPage.hasNext) { %>
+          <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&view=<%= enc(viewedRel) %>&page=<%= viewedPage.pageIndex + 1 %><%= searchQs %>">Next</a>
+        <% } %>
+        <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %><%= searchQs %>">Close Viewer</a>
+      </div>
     </div>
-    <div class="tx-law-path" style="margin-top:8px;">
-      Root: <%= esc(root.toString()) %><br />
-      Current: <%= esc(current.toString()) %>
+    <% if (!safe(viewedPage.warning).isBlank()) { %>
+      <div class="alert alert-warn" style="margin-top:8px;"><%= esc(viewedPage.warning) %></div>
+    <% } %>
+    <div class="tx-law-view-img-wrap" style="margin-top:8px;">
+      <img src="data:image/png;base64,<%= esc(viewedPage.base64Png) %>" alt="Document page preview" />
     </div>
   </section>
+  <% } %>
 
   <section class="card">
     <div class="section-head">
       <div>
-        <h2 style="margin:0;"><%= "codes".equals(library) ? "Codes And Statutes Files" : "Rules And Standards Files" %></h2>
-        <div class="meta">Directories first, then files. Click files to open/download.</div>
+        <h2 style="margin:0;"><%= q.isBlank() ? ("codes".equals(library) ? "Codes Files" : "Rules Files") : "Search Results" %></h2>
+        <div class="meta"><%= q.isBlank() ? "Directories first, then files." : ("Query: " + esc(q) + " | Results: " + searchResults.size()) %></div>
       </div>
-      <% if (!current.equals(root)) {
+      <% if (q.isBlank() && !current.equals(root)) {
            Path parent = current.getParent();
            String parentRel = parent == null ? "" : relativize(root, parent);
       %>
-        <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(parentRel) %>">Parent Directory</a>
+        <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(parentRel) %><%= searchQs %>">Parent Directory</a>
       <% } %>
     </div>
 
     <div class="tx-law-grid" style="margin-top:10px;">
-      <% if (directories.isEmpty() && files.isEmpty()) { %>
-        <div class="tx-law-empty">No files found in this folder yet.</div>
-      <% } else { %>
-        <% for (Path d : directories) {
-             if (d == null) continue;
-             String nextRel = relativize(root, d);
-        %>
-          <div class="tx-law-row">
-            <div>
-              <div class="name">Folder: <%= esc(fileName(d)) %></div>
-              <div class="meta">Folder</div>
+      <% if (q.isBlank()) { %>
+        <% if (directories.isEmpty() && files.isEmpty()) { %>
+          <div class="tx-law-empty">No files found in this folder yet.</div>
+        <% } else { %>
+          <% for (Path d : directories) {
+               if (d == null) continue;
+               String nextRel = relativize(root, d);
+          %>
+            <div class="tx-law-row">
+              <div>
+                <div class="name"><%= esc(fileName(d)) %></div>
+                <div class="meta">Folder</div>
+              </div>
+              <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(nextRel) %><%= searchQs %>">Open</a>
             </div>
-            <div class="meta">-</div>
-            <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(nextRel) %>">Open</a>
-          </div>
-        <% } %>
+          <% } %>
 
-        <% for (Path f : files) {
-             if (f == null) continue;
-             long size = 0L;
-             try { size = Files.size(f); } catch (Exception ignored) {}
-             String dlRel = relativize(root, f);
-        %>
-          <div class="tx-law-row">
-            <div>
-              <div class="name"><%= esc(fileName(f)) %></div>
-              <div class="meta"><%= esc(humanSize(size)) %></div>
+          <% for (Path f : files) {
+               if (f == null) continue;
+               long size = 0L;
+               try { size = Files.size(f); } catch (Exception ignored) {}
+               String rel = relativize(root, f);
+               boolean renderable = texas_law_library.isRenderable(f);
+          %>
+            <div class="tx-law-row">
+              <div>
+                <div class="name"><%= esc(fileName(f)) %></div>
+                <div class="meta"><%= esc(humanSize(size)) %> | <%= esc(texas_law_library.extension(f).toUpperCase(Locale.ROOT)) %></div>
+              </div>
+              <% if (renderable) { %>
+                <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&view=<%= enc(rel) %>&page=0<%= searchQs %>">View</a>
+              <% } else { %>
+                <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&download=<%= enc(rel) %><%= searchQs %>">Open</a>
+              <% } %>
             </div>
-            <div class="meta"><%= esc(humanSize(size)) %></div>
-            <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&download=<%= enc(dlRel) %>">Open</a>
-          </div>
+          <% } %>
+        <% } %>
+      <% } else { %>
+        <% if (searchResults.isEmpty()) { %>
+          <div class="tx-law-empty">No matches found.</div>
+        <% } else { %>
+          <% for (texas_law_library.SearchResult sr : searchResults) {
+               if (sr == null) continue;
+               String srRel = safe(sr.relativePath);
+               String srParent = "";
+               int slash = srRel.lastIndexOf('/');
+               if (slash > 0) srParent = srRel.substring(0, slash);
+               boolean renderable = "pdf".equals(safe(sr.ext)) || "docx".equals(safe(sr.ext));
+          %>
+            <div class="tx-law-row">
+              <div>
+                <div class="name"><%= esc(sr.fileName) %></div>
+                <div class="meta"><%= esc(sr.relativePath) %> | <%= esc(humanSize(sr.sizeBytes)) %> | match: <%= esc(sr.matchType) %></div>
+                <% if (!safe(sr.snippet).isBlank()) { %>
+                  <div class="meta" style="margin-top:4px;"><%= esc(sr.snippet) %></div>
+                <% } %>
+              </div>
+              <% if (renderable) { %>
+                <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(srParent) %>&view=<%= enc(srRel) %>&page=0<%= searchQs %>">View</a>
+              <% } else { %>
+                <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(srParent) %>&download=<%= enc(srRel) %><%= searchQs %>">Open</a>
+              <% } %>
+            </div>
+          <% } %>
         <% } %>
       <% } %>
     </div>
