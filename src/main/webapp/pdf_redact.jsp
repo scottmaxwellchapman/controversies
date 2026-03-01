@@ -129,8 +129,8 @@ if ("page_image".equals(action)) {
     return;
   }
   try {
-    int page = intOr(request.getParameter("page"), 0);
-    pdf_redaction_service.RenderedPage rendered = pdf_redaction_service.renderPage(selectedPath, page);
+    int pageIndex = intOr(request.getParameter("page"), 0);
+    pdf_redaction_service.RenderedPage rendered = pdf_redaction_service.renderPage(selectedPath, pageIndex);
     response.setContentType("image/png");
     response.setHeader("Cache-Control", "private, max-age=30");
     try (java.io.OutputStream os = response.getOutputStream()) {
