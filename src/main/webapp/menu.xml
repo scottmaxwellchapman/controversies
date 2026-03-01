@@ -10,6 +10,7 @@
     <item label="Form Assembly" href="/forms.jsp" />
     <item label="Assembled Forms" href="/assembled_forms.jsp" />
     <item label="Template Library" href="/template_library.jsp" />
+    <item label="Template Editor" href="/template_editor.jsp" />
   </item>
 
   <item label="Settings">

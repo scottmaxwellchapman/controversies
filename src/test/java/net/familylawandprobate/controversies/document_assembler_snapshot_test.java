@@ -3,14 +3,19 @@ package net.familylawandprobate.controversies;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
@@ -21,7 +26,15 @@ import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.xwpf.extractor.XWPFWordExtractor;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFFooter;
+import org.apache.poi.xwpf.usermodel.XWPFHeader;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFRun;
+import org.apache.poi.xwpf.model.XWPFHeaderFooterPolicy;
 import org.junit.jupiter.api.Test;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTPageMar;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTR;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTText;
 
 public class document_assembler_snapshot_test {
     private static final String FIXTURE_ROOT = "net/familylawandprobate/controversies/document_assembler/";
@@ -246,6 +259,82 @@ public class document_assembler_snapshot_test {
         assertTrue(extractOdtContentXml(assembled.bytes).contains("Misnamed ODT"));
     }
 
+    @Test
+    void docx_template_tools_apply_header_footer_font_and_margin_changes() throws Exception {
+        document_assembler assembler = new document_assembler();
+        byte[] docx = minimalDocx("Body paragraph");
+
+        byte[] withHeader = assembler.addHeader(docx, "docx", "Firm Header");
+        byte[] withoutHeader = assembler.deleteHeader(withHeader, "docx");
+        byte[] withFooter = assembler.addFooter(withoutHeader, "docx", "Footer Note");
+        byte[] withPagination = assembler.addFooterWithPagination(withFooter, "docx", "Confidential");
+        byte[] withFamily = assembler.normalizeFontFamily(withPagination, "docx", "Courier New");
+        byte[] withSize = assembler.normalizeFontSize(withFamily, "docx", 11);
+        byte[] withMargins = assembler.normalizeMargins(withSize, "docx", 1.25d, 1.0d, 0.75d, 1.5d);
+
+        try (XWPFDocument out = new XWPFDocument(new ByteArrayInputStream(withMargins))) {
+            XWPFHeaderFooterPolicy policy = new XWPFHeaderFooterPolicy(out);
+            XWPFHeader header = policy.getDefaultHeader();
+            if (header != null) {
+                assertTrue(String.valueOf(header.getText()).trim().isEmpty(), "header should be cleared after deleteHeader");
+            }
+
+            XWPFFooter footer = policy.getDefaultFooter();
+            assertNotNull(footer, "footer should exist after addFooterWithPagination");
+            String footerText = String.valueOf(footer.getText());
+            assertTrue(footerText.contains("Confidential"));
+            assertTrue(footerText.contains("Page"));
+
+            boolean sawPageField = false;
+            boolean sawNumPagesField = false;
+            List<XWPFParagraph> footerParagraphs = footer.getParagraphs();
+            for (XWPFParagraph p : footerParagraphs) {
+                if (p == null) continue;
+                sawPageField = sawPageField || paragraphHasFieldInstruction(p, "PAGE");
+                sawNumPagesField = sawNumPagesField || paragraphHasFieldInstruction(p, "NUMPAGES");
+            }
+            assertTrue(sawPageField, "footer should contain PAGE field");
+            assertTrue(sawNumPagesField, "footer should contain NUMPAGES field");
+
+            ArrayList<XWPFRun> runs = new ArrayList<XWPFRun>();
+            for (XWPFParagraph p : out.getParagraphs()) {
+                if (p == null) continue;
+                runs.addAll(p.getRuns());
+            }
+            boolean sawFontFamily = false;
+            boolean sawFontSize = false;
+            for (XWPFRun run : runs) {
+                if (run == null) continue;
+                String txt = String.valueOf(run.text()).trim();
+                if (txt.isBlank()) continue;
+                String family = String.valueOf(run.getFontFamily());
+                if ("Courier New".equalsIgnoreCase(family)) sawFontFamily = true;
+                if (run.getFontSize() == 11) sawFontSize = true;
+            }
+            assertTrue(sawFontFamily, "text runs should be normalized to Courier New");
+            assertTrue(sawFontSize, "text runs should be normalized to 11pt");
+
+            assertNotNull(out.getDocument().getBody());
+            assertNotNull(out.getDocument().getBody().getSectPr());
+            CTPageMar mar = out.getDocument().getBody().getSectPr().getPgMar();
+            assertNotNull(mar, "page margins should be present");
+            assertEquals(BigInteger.valueOf(1800L), mar.getTop());
+            assertEquals(BigInteger.valueOf(1440L), mar.getRight());
+            assertEquals(BigInteger.valueOf(1080L), mar.getBottom());
+            assertEquals(BigInteger.valueOf(2160L), mar.getLeft());
+        }
+    }
+
+    @Test
+    void docx_template_tools_reject_non_docx_formats() {
+        document_assembler assembler = new document_assembler();
+        byte[] plain = "sample".getBytes(StandardCharsets.UTF_8);
+
+        assertThrows(IllegalArgumentException.class, () -> assembler.addHeader(plain, "txt", "Header"));
+        assertThrows(IllegalArgumentException.class, () -> assembler.addFooter(plain, "rtf", "Footer"));
+        assertThrows(IllegalArgumentException.class, () -> assembler.normalizeMargins(plain, "odt", 1.0, 1.0, 1.0, 1.0));
+    }
+
     private static Map<String, String> baseValues() {
         Map<String, String> values = new LinkedHashMap<String, String>();
         values.put("tenant.name", "Acme Tenancy LLC");
@@ -302,6 +391,24 @@ public class document_assembler_snapshot_test {
              WordExtractor extractor = new WordExtractor(doc)) {
             return extractor.getText();
         }
+    }
+
+    private static boolean paragraphHasFieldInstruction(XWPFParagraph paragraph, String fieldCodeNeedle) {
+        if (paragraph == null) return false;
+        String needle = String.valueOf(fieldCodeNeedle == null ? "" : fieldCodeNeedle).trim();
+        if (needle.isBlank()) return false;
+        CTR[] runs = paragraph.getCTP().getRArray();
+        for (int i = 0; i < runs.length; i++) {
+            CTR ctr = runs[i];
+            if (ctr == null) continue;
+            for (int j = 0; j < ctr.sizeOfInstrTextArray(); j++) {
+                CTText t = ctr.getInstrTextArray(j);
+                if (t == null) continue;
+                String v = String.valueOf(t.getStringValue());
+                if (v.toUpperCase().contains(needle.toUpperCase())) return true;
+            }
+        }
+        return false;
     }
 
     private static byte[] minimalRtf(String plainTextWithNewlineMarker) {

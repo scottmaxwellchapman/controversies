@@ -3,6 +3,7 @@ package net.familylawandprobate.controversies;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.StringReader;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -46,6 +47,8 @@ import org.apache.poi.xwpf.usermodel.XWPFTableCell;
 import org.apache.poi.xwpf.usermodel.XWPFTableRow;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTText;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTR;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTPageMar;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTSectPr;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.STFldCharType;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -303,6 +306,27 @@ public final class document_assembler {
         }
     }
 
+    public byte[] addFooter(byte[] templateBytes, String templateExtOrName, String footerText) throws Exception {
+        String ext = normalizeExtension(templateExtOrName);
+        ensureDocxTemplateTools(ext);
+        String text = safe(footerText).trim();
+        if (text.isBlank()) throw new IllegalArgumentException("Footer text is required.");
+        if (templateBytes == null || templateBytes.length == 0) throw new IllegalArgumentException("Template file is empty.");
+
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(templateBytes))) {
+            XWPFHeaderFooterPolicy policy = new XWPFHeaderFooterPolicy(doc);
+            XWPFFooter footer = policy.getDefaultFooter();
+            if (footer == null) footer = policy.createFooter(XWPFHeaderFooterPolicy.DEFAULT);
+            if (footer == null) throw new IllegalStateException("Unable to create footer.");
+
+            footer.clearHeaderFooter();
+            XWPFParagraph p = footer.createParagraph();
+            p.setAlignment(ParagraphAlignment.CENTER);
+            writeMultilineText(p, text);
+            return writeDocx(doc, templateBytes.length);
+        }
+    }
+
     public byte[] addFooterWithPagination(byte[] templateBytes, String templateExtOrName, String footerPrefix) throws Exception {
         String ext = normalizeExtension(templateExtOrName);
         ensureDocxTemplateTools(ext);
@@ -332,6 +356,41 @@ public final class document_assembler {
             mid.setText(" of ");
             appendField(p, "NUMPAGES", "1");
 
+            return writeDocx(doc, templateBytes.length);
+        }
+    }
+
+    public byte[] normalizeMargins(byte[] templateBytes,
+                                   String templateExtOrName,
+                                   double topInches,
+                                   double rightInches,
+                                   double bottomInches,
+                                   double leftInches) throws Exception {
+        String ext = normalizeExtension(templateExtOrName);
+        ensureDocxTemplateTools(ext);
+        if (templateBytes == null || templateBytes.length == 0) throw new IllegalArgumentException("Template file is empty.");
+
+        validateMarginInches(topInches, "Top");
+        validateMarginInches(rightInches, "Right");
+        validateMarginInches(bottomInches, "Bottom");
+        validateMarginInches(leftInches, "Left");
+
+        BigInteger top = twipsFromInches(topInches);
+        BigInteger right = twipsFromInches(rightInches);
+        BigInteger bottom = twipsFromInches(bottomInches);
+        BigInteger left = twipsFromInches(leftInches);
+
+        try (XWPFDocument doc = new XWPFDocument(new ByteArrayInputStream(templateBytes))) {
+            ArrayList<CTSectPr> sections = collectSectionProps(doc);
+            if (sections.isEmpty()) sections.add(ensureBodySectPr(doc));
+            for (CTSectPr sect : sections) {
+                if (sect == null) continue;
+                CTPageMar mar = sect.isSetPgMar() ? sect.getPgMar() : sect.addNewPgMar();
+                mar.setTop(top);
+                mar.setRight(right);
+                mar.setBottom(bottom);
+                mar.setLeft(left);
+            }
             return writeDocx(doc, templateBytes.length);
         }
     }
@@ -2025,6 +2084,43 @@ public final class document_assembler {
             out.write(buf, 0, n);
         }
         return out.toByteArray();
+    }
+
+    private static void validateMarginInches(double value, String label) {
+        if (Double.isNaN(value) || Double.isInfinite(value)) {
+            throw new IllegalArgumentException(label + " margin must be a valid number.");
+        }
+        if (value < 0.0d || value > 3.0d) {
+            throw new IllegalArgumentException(label + " margin must be between 0.0 and 3.0 inches.");
+        }
+    }
+
+    private static BigInteger twipsFromInches(double inches) {
+        long twips = Math.round(inches * 1440.0d);
+        if (twips < 0L) twips = 0L;
+        return BigInteger.valueOf(twips);
+    }
+
+    private static ArrayList<CTSectPr> collectSectionProps(XWPFDocument doc) {
+        ArrayList<CTSectPr> out = new ArrayList<CTSectPr>();
+        if (doc == null) return out;
+
+        CTSectPr body = ensureBodySectPr(doc);
+        if (body != null) out.add(body);
+
+        for (XWPFParagraph p : doc.getParagraphs()) {
+            if (p == null || p.getCTP() == null || !p.getCTP().isSetPPr()) continue;
+            if (!p.getCTP().getPPr().isSetSectPr()) continue;
+            CTSectPr sect = p.getCTP().getPPr().getSectPr();
+            if (sect != null && !out.contains(sect)) out.add(sect);
+        }
+        return out;
+    }
+
+    private static CTSectPr ensureBodySectPr(XWPFDocument doc) {
+        if (doc == null || doc.getDocument() == null || doc.getDocument().getBody() == null) return null;
+        if (doc.getDocument().getBody().isSetSectPr()) return doc.getDocument().getBody().getSectPr();
+        return doc.getDocument().getBody().addNewSectPr();
     }
 
     private static String safe(String s) {

@@ -239,8 +239,6 @@
   List<form_templates.TemplateRec> templates = new ArrayList<form_templates.TemplateRec>();
   try { templates = templateStore.list(tenantUuid); } catch (Exception ignored) {}
 
-  if (selectedTemplateUuid.isBlank() && !templates.isEmpty()) selectedTemplateUuid = safe(templates.get(0).uuid);
-
   matters.MatterRec selectedCase = null;
   try { selectedCase = matterStore.getByUuid(tenantUuid, selectedMatterUuid); } catch (Exception ignored) {}
   if (selectedCase == null && !activeCases.isEmpty()) selectedCase = activeCases.get(0);
@@ -264,11 +262,8 @@
       break;
     }
   }
-  if (selectedTemplate == null && !templates.isEmpty()) {
-    selectedTemplate = templates.get(0);
-    selectedTemplateUuid = safe(selectedTemplate.uuid);
-  }
   String selectedTemplateDisplayPath = selectedTemplate == null ? "" : templateDisplayPath(selectedTemplate);
+  boolean templateLoaded = selectedTemplate != null && !selectedTemplateUuid.isBlank();
 
   LinkedHashMap<String,String> tenantKv = new LinkedHashMap<String,String>();
   try { tenantKv.putAll(tenantStore.read(tenantUuid)); } catch (Exception ignored) {}
@@ -685,6 +680,23 @@
 
   .forms-workbench-wrap {
     margin-top: 4px;
+  }
+
+  .forms-workbench-wrap.is-hidden {
+    display: none;
+  }
+
+  .forms-template-chooser-btn {
+    padding: 4px 9px;
+    font-size: 11px;
+    line-height: 1.2;
+    min-height: 0;
+    opacity: 0.78;
+  }
+
+  .forms-template-chooser-btn:hover,
+  .forms-template-chooser-btn:focus-visible {
+    opacity: 1;
   }
 
   .forms-workbench-split {
@@ -1156,6 +1168,14 @@
         Merge order: <strong>tenant fields</strong> then <strong>case fields</strong>. Case values override same-key tenant values for <code>{{kv.key}}</code>.
       </div>
     </div>
+    <% if (templateLoaded) { %>
+      <a
+        class="btn btn-ghost forms-template-chooser-btn"
+        href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&render_preview=<%= renderPreview ? "1" : "0" %>"
+        title="Choose a different template">
+        Template Chooser
+      </a>
+    <% } %>
   </div>
 
   <% if (message != null) { %>
@@ -1166,8 +1186,8 @@
   <% } %>
 </section>
 
-<% if (!focusMode) { %>
-<section class="card" style="margin-top:12px;">
+<% if (!templateLoaded) { %>
+<section class="card forms-load-pane" style="margin-top:12px;">
   <form class="form" method="get" action="<%= ctx %>/forms.jsp" id="formsSelectionForm">
     <input type="hidden" name="render_preview" value="<%= renderPreview ? "1" : "0" %>" />
 
@@ -1203,6 +1223,7 @@
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="btn btn-ghost" type="button" id="btnOpenTemplatePicker" <%= templates.isEmpty() ? "disabled" : "" %>>Choose Template</button>
           <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Manage Templates</a>
+          <a class="btn btn-ghost" href="<%= ctx %>/template_editor.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Template Editor</a>
         </div>
       </div>
 
@@ -1311,7 +1332,7 @@
     </div>
   </div>
 </section>
-<% } else { %>
+<% } else if (focusMode) { %>
 <section class="card" style="margin-top:12px;">
   <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap;">
     <div>
@@ -1332,7 +1353,7 @@
 </section>
 <% } %>
 
-<div class="forms-workbench-wrap">
+<div class="forms-workbench-wrap <%= templateLoaded ? "" : "is-hidden" %>">
 <div class="forms-workbench-split">
 <aside class="card forms-side-card">
   <div class="forms-side-head">

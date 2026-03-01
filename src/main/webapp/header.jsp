@@ -149,6 +149,8 @@
         g.items.add(new MenuNode("Tenant Fields", "/tenant_fields.jsp"));
         g.items.add(new MenuNode("Form Assembly", "/forms.jsp"));
         g.items.add(new MenuNode("Assembled Forms", "/assembled_forms.jsp"));
+        g.items.add(new MenuNode("Template Library", "/template_library.jsp"));
+        g.items.add(new MenuNode("Template Editor", "/template_editor.jsp"));
         MenuNode help = new MenuNode("Help", "");
         help.children.add(new MenuNode("Help Center", "/help_center.jsp"));
         help.children.add(new MenuNode("Getting Started (Legal Team)", "/help_getting_started.jsp"));
