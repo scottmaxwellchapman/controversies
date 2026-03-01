@@ -24,6 +24,8 @@ public class app {
 
         // Start background queue workers early in process lifecycle.
         notification_emails.defaultStore();
+        texas_law_sync texasLawSync = texas_law_sync.defaultService();
+        texasLawSync.triggerStartupRunIfIdle();
 
         tomcat t = new tomcat();
 

@@ -4,6 +4,7 @@
   <item label="Users &amp; Security" href="/users_roles.jsp" />
   <item label="Cases" href="/cases.jsp" />
   <item label="Documents" href="/documents.jsp" />
+  <item label="Texas Law" href="/texas_law.jsp" />
   <item label="Case Fields" href="/case_fields.jsp" />
 
   <item label="Form Assembler">

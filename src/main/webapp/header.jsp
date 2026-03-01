@@ -146,6 +146,7 @@
         g.items.add(new MenuNode("Home", "/index.jsp"));
         g.items.add(new MenuNode("Users & Security", "/users_roles.jsp"));
         g.items.add(new MenuNode("Cases", "/cases.jsp"));
+        g.items.add(new MenuNode("Texas Law", "/texas_law.jsp"));
         g.items.add(new MenuNode("Tenant Fields", "/tenant_fields.jsp"));
         g.items.add(new MenuNode("Form Assembly", "/forms.jsp"));
         g.items.add(new MenuNode("Assembled Forms", "/assembled_forms.jsp"));
