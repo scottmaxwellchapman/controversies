@@ -23,11 +23,11 @@
 
   <% if (!tenantLoggedInIndex) { %>
     <div class="alert alert-warn" style="margin-top:12px;">
-      Tenant login is required before accessing users, cases, tenant fields, and forms.
+      Sign in is required before accessing users, cases, tenant fields, and forms.
     </div>
   <% } else if (!userLoggedInIndex) { %>
     <div class="alert alert-warn" style="margin-top:12px;">
-      Tenant authenticated. Complete user login to continue.
+      Session is incomplete. Sign in again to continue.
     </div>
   <% } else { %>
     <div class="alert alert-ok" style="margin-top:12px;">

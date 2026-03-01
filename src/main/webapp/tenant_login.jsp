@@ -18,6 +18,7 @@
 <%@ page import="org.w3c.dom.*" %>
 
 <%@ page import="net.familylawandprobate.controversies.tenants" %>
+<%@ page import="net.familylawandprobate.controversies.users_roles" %>
 <%@ page import="net.familylawandprobate.controversies.ip_lists" %>
 <%@ include file="security.jspf" %>
 
@@ -35,14 +36,19 @@
     private static final String S_TENANT_IP    = "tenant.ip";
     private static final String S_TENANT_CB    = "tenant.cookieBind";
 
-    // Cookie binding
+    // User convenience attributes
+    private static final String S_USER_IP  = "user.ip";
+    private static final String S_USER_CB  = "user.cookieBind";
+
+    // Cookie bindings
     private static final String TENANT_BIND_COOKIE = "TENANT_BIND";
+    private static final String USER_BIND_COOKIE   = "USER_BIND";
 
     // CSRF session key (matches filter default)
     private static final String CSRF_SESSION_KEY = "CSRF_TOKEN";
 
     // Brute force tracking (memory) + escalation thresholds
-    private static final String FAILMAP_KEY = "tenantLogin.failMap.v1";
+    private static final String FAILMAP_KEY = "unifiedLogin.failMap.v1";
     private static final long FAIL_WINDOW_MS = 10L * 60L * 1000L; // 10 minutes
 
     private static final SecureRandom RNG = new SecureRandom();
@@ -136,9 +142,10 @@
 
         boolean secure = req.isSecure();
 
-        // Set-Cookie string so we can add SameSite.
         StringBuilder sb = new StringBuilder();
-        sb.append(name).append("=").append(value == null ? "" : value).append("; Path=").append(ctx).append("; Max-Age=").append(maxAgeSeconds);
+        sb.append(name).append("=").append(value == null ? "" : value)
+          .append("; Path=").append(ctx)
+          .append("; Max-Age=").append(maxAgeSeconds);
         sb.append("; HttpOnly");
         if (secure) sb.append("; Secure");
         sb.append("; SameSite=Strict");
@@ -231,15 +238,13 @@
     private static String safeFileToken(String s) {
         s = safe(s).trim();
         if (s.isBlank()) return "unknown";
-        // Keep filenames safe + deterministic
         return s.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
     private static Path bindingPath(String tenantUuid, String sessionId) {
         String tu  = safeFileToken(tenantUuid);
         String sid = safeFileToken(sessionId);
-        return Paths.get("data", "tenants", tu, "bindings",
-                "tenant_binding_" + sid + ".xml").toAbsolutePath();
+        return Paths.get("data", "tenants", tu, "bindings", "tenant_binding_" + sid + ".xml").toAbsolutePath();
     }
 
     private static Path legacyBindingPath(String tenantUuid) {
@@ -275,6 +280,7 @@
         final String ip;
         final String sessionId;
         final String cookie;
+
         Binding(String tenantUuid, String label, String ip, String sessionId, String cookie) {
             this.tenantUuid = safe(tenantUuid);
             this.label = safe(label);
@@ -347,12 +353,10 @@
     }
 
     // Simple safe "next" handling (only allow app-local absolute paths)
-    // NOTE: next is the FINAL destination after user login completes.
     private static String normalizeNext(String next) {
         if (next == null) return "/index.jsp";
         String n = next.trim();
         if (n.isBlank()) return "/index.jsp";
-        // block absolute URLs + scheme-relative redirects
         if (n.contains("://") || n.startsWith("//") || n.contains("\r") || n.contains("\n")) return "/index.jsp";
         if (!n.startsWith("/")) return "/index.jsp";
         return n;
@@ -382,83 +386,133 @@
     String ctx = request.getContextPath();
     if (ctx == null) ctx = "";
 
-    // FINAL destination (after USER login completes)
     String next = normalizeNext(request.getParameter("next"));
-
-    // ALWAYS go to USER login next, carrying next=
-    String userLoginUrl = ctx + "/user_login.jsp?next=" + java.net.URLEncoder.encode(next, StandardCharsets.UTF_8);
+    String redirectTo = ctx + next;
 
     String clientIp = getClientIp(request);
-    String cookieBind = getCookieValue(request, TENANT_BIND_COOKIE);
+    String tenantCookieBind = getCookieValue(request, TENANT_BIND_COOKIE);
+    String userCookieBind = getCookieValue(request, USER_BIND_COOKIE);
 
     String message = null;
     String error = null;
 
-    tenants store = tenants.defaultStore();
+    tenants tenantStore = tenants.defaultStore();
+    users_roles ur = users_roles.defaultStore();
     ip_lists lists = (ip_lists) application.getAttribute("ipLists");
     if (lists == null) {
         lists = ip_lists.defaultStore();
         application.setAttribute("ipLists", lists);
     }
 
-    try { store.ensure(); } catch (Exception ignored) {}
+    try { tenantStore.ensure(); } catch (Exception ignored) {}
     try { lists.ensure(); } catch (Exception ignored) {}
 
     // Build dropdown list: enabled tenants only
     List<tenants.Tenant> enabledTenants = new ArrayList<>();
     try {
-        List<tenants.Tenant> all = store.list();
+        List<tenants.Tenant> all = tenantStore.list();
         for (tenants.Tenant t : all) {
-            if (t != null && t.enabled && t.label != null && !t.label.isBlank()) enabledTenants.add(t);
+            if (t != null
+                    && t.enabled
+                    && t.uuid != null && !t.uuid.isBlank()
+                    && t.label != null && !t.label.isBlank()) {
+                enabledTenants.add(t);
+            }
         }
-        enabledTenants.sort((a,b) -> a.label.compareToIgnoreCase(b.label));
+        enabledTenants.sort((a, b) -> a.label.compareToIgnoreCase(b.label));
     } catch (Exception e) {
         error = "Unable to load tenants: " + e.getMessage();
     }
 
-    // If already authenticated, enforce binding; if ok -> ALWAYS go to user_login.jsp (carrying next)
-    String sessUuid  = (String) session.getAttribute(S_TENANT_UUID);
-    String sessLabel = (String) session.getAttribute(S_TENANT_LABEL);
+    String selectedTenantUuid = safe(request.getParameter("tenantUuid")).trim();
+    if (selectedTenantUuid.isBlank() && enabledTenants.size() == 1) {
+        selectedTenantUuid = safe(enabledTenants.get(0).uuid).trim();
+    }
+    String email = safe(request.getParameter("email")).trim();
 
-    if (sessUuid != null && !sessUuid.isBlank() && sessLabel != null && !sessLabel.isBlank()) {
-        String tu = sessUuid.trim();
-        Path p = bindingPath(tu, session.getId());
+    // If already fully authenticated and bindings are valid, continue to destination.
+    String sessTenantUuid  = safe((String) session.getAttribute(S_TENANT_UUID)).trim();
+    String sessTenantLabel = safe((String) session.getAttribute(S_TENANT_LABEL)).trim();
+    String sessUserUuid    = safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim();
+    String sessRoleUuid    = safe((String) session.getAttribute(users_roles.S_ROLE_UUID)).trim();
+
+    boolean fullSessionLooksPresent = !sessTenantUuid.isBlank()
+            && !sessTenantLabel.isBlank()
+            && !sessUserUuid.isBlank()
+            && !sessRoleUuid.isBlank();
+
+    if (fullSessionLooksPresent) {
+        Path p = bindingPath(sessTenantUuid, session.getId());
         Binding b = readBinding(p);
 
-        // Legacy fallback: if old single file exists and matches, migrate to session file
         if (b == null) {
-            Path legacy = legacyBindingPath(tu);
+            Path legacy = legacyBindingPath(sessTenantUuid);
             Binding lb = readBinding(legacy);
-            if (lb != null && bindingMatches(lb, clientIp, session.getId(), cookieBind)) {
+            if (lb != null && bindingMatches(lb, clientIp, session.getId(), tenantCookieBind)) {
                 b = lb;
                 try { writeBinding(p, lb); } catch (Exception ignored) {}
-                // Optional: keep or remove legacy file after successful migration
-                // deleteQuiet(legacy);
             }
         }
 
-        if (b != null && bindingMatches(b, clientIp, session.getId(), cookieBind)) {
-            response.sendRedirect(userLoginUrl);
-            return;
-        } else {
-            session.removeAttribute(S_TENANT_UUID);
-            session.removeAttribute(S_TENANT_LABEL);
-            session.removeAttribute(S_TENANT_SID);
-            session.removeAttribute(S_TENANT_IP);
-            session.removeAttribute(S_TENANT_CB);
-            deleteCookie(request, response, TENANT_BIND_COOKIE);
+        boolean tenantOk = (b != null && bindingMatches(b, clientIp, session.getId(), tenantCookieBind));
 
-            // remove this session's binding file (if any)
-            deleteQuiet(p);
+        boolean userOk = false;
+        if (tenantOk) {
+            try {
+                userOk = ur.userBindingMatches(sessTenantUuid, sessUserUuid, session.getId(), clientIp, userCookieBind);
+            } catch (Exception ignored) {
+                userOk = false;
+            }
+        }
+
+        if (tenantOk && userOk) {
+            try {
+                users_roles.UserRec u = ur.getUserByUuid(sessTenantUuid, sessUserUuid);
+                users_roles.RoleRec r = ur.getRoleByUuid(sessTenantUuid, sessRoleUuid);
+                if (u != null && u.enabled && r != null && r.enabled) {
+                    response.sendRedirect(redirectTo);
+                    return;
+                }
+            } catch (Exception ignored) {}
         }
     }
 
-    // Handle login POST
-    String selectedLabel = safe(request.getParameter("tenantLabel")).trim();
+    // Clear stale/partial auth state before presenting unified login.
+    boolean hasAnyAuthState = !safe((String) session.getAttribute(S_TENANT_UUID)).trim().isBlank()
+            || !safe((String) session.getAttribute(S_TENANT_LABEL)).trim().isBlank()
+            || !safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim().isBlank()
+            || !safe((String) session.getAttribute(users_roles.S_ROLE_UUID)).trim().isBlank()
+            || !tenantCookieBind.isBlank()
+            || !userCookieBind.isBlank();
 
+    if (hasAnyAuthState) {
+        String clearTenantUuid = safe((String) session.getAttribute(S_TENANT_UUID)).trim();
+        String clearUserUuid = safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim();
+        String clearSessionId = safe(session.getId()).trim();
+
+        session.removeAttribute(S_TENANT_UUID);
+        session.removeAttribute(S_TENANT_LABEL);
+        session.removeAttribute(S_TENANT_SID);
+        session.removeAttribute(S_TENANT_IP);
+        session.removeAttribute(S_TENANT_CB);
+        session.removeAttribute(S_USER_IP);
+        session.removeAttribute(S_USER_CB);
+
+        try { ur.clearSessionAuth(session); } catch (Exception ignored) {}
+        try { deleteCookie(request, response, TENANT_BIND_COOKIE); } catch (Exception ignored) {}
+        try { deleteCookie(request, response, USER_BIND_COOKIE); } catch (Exception ignored) {}
+
+        if (!clearTenantUuid.isBlank()) {
+            try { deleteQuiet(bindingPath(clearTenantUuid, clearSessionId)); } catch (Exception ignored) {}
+        }
+        if (!clearTenantUuid.isBlank() && !clearUserUuid.isBlank() && !clearSessionId.isBlank()) {
+            try { ur.deleteUserBinding(clearTenantUuid, clearUserUuid, clearSessionId); } catch (Exception ignored) {}
+        }
+    }
+
+    // Handle login POST (tenant + email + password in one form)
     if ("POST".equalsIgnoreCase(request.getMethod()) && "login".equalsIgnoreCase(request.getParameter("action"))) {
 
-        // If no enabled tenants, stop early.
         if (enabledTenants.isEmpty()) {
             error = "No enabled tenants are available.";
         } else {
@@ -472,57 +526,103 @@
                     if (ex != null && ex.isPresent()) until = ex.get();
                 } catch (Exception ignored) {}
                 error = "Too many login attempts. Please try again in " + formatRemaining(until) + ".";
-            } else if (selectedLabel.length() < 3) {
+            } else if (selectedTenantUuid.isBlank()) {
                 error = "Please select a tenant.";
+            } else if (email.isBlank() || email.length() < 3) {
+                error = "Email is required.";
             } else {
-                tenants.Tenant found = null;
-
-                // Only allow selecting an ENABLED tenant from our list (prevents tampering)
-                for (tenants.Tenant t : enabledTenants) {
-                    if (t.label != null && t.label.equalsIgnoreCase(selectedLabel)) {
-                        found = t;
-                        break;
-                    }
-                }
-
-                if (found == null) {
-                    int c = noteFailure(application, clientIp);
-                    error = "Invalid tenant selection.";
-                    if (!isLocalhostIp(clientIp)) {
-                        try {
-                            if (c == 5) lists.banTemporary(clientIp, 10 * 60, "tenant_login: 5 failures");
-                            else if (c == 8) lists.banTemporary(clientIp, 30 * 60, "tenant_login: 8 failures");
-                            else if (c >= 12) { lists.banTemporary(clientIp, 2 * 60 * 60, "tenant_login: 12+ failures"); clearFailures(application, clientIp); }
-                        } catch (Exception ignored) {}
-                    }
+                String pwStr = safe(request.getParameter("password"));
+                if (pwStr.isBlank()) {
+                    error = "Password is required.";
                 } else {
-                    // SUCCESS
-                    clearFailures(application, clientIp);
+                    tenants.Tenant found = null;
+                    for (tenants.Tenant t : enabledTenants) {
+                        if (t != null && selectedTenantUuid.equals(t.uuid)) {
+                            found = t;
+                            break;
+                        }
+                    }
 
-                    // rotate cookie binding
-                    String newCookieBind = randomTokenUrlSafe(32);
-                    setHttpOnlyCookie(request, response, TENANT_BIND_COOKIE, newCookieBind, 30 * 24 * 60 * 60); // 30 days
+                    if (found == null) {
+                        int c = noteFailure(application, clientIp);
+                        error = "Invalid tenant, email, or password.";
+                        if (!isLocalhostIp(clientIp)) {
+                            try {
+                                if (c == 5) lists.banTemporary(clientIp, 10 * 60, "login: 5 failures");
+                                else if (c == 8) lists.banTemporary(clientIp, 30 * 60, "login: 8 failures");
+                                else if (c >= 12) {
+                                    lists.banTemporary(clientIp, 2 * 60 * 60, "login: 12+ failures");
+                                    clearFailures(application, clientIp);
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                    } else {
+                        try { ur.ensure(found.uuid); } catch (Exception ignored) {}
 
-                    // rotate session to prevent fixation
-                    try { session.invalidate(); } catch (Exception ignored) {}
-                    HttpSession s2 = request.getSession(true);
+                        users_roles.AuthResult ar = null;
+                        char[] pw = pwStr.toCharArray();
+                        try {
+                            ar = ur.authenticate(found.uuid, email, pw);
+                        } catch (Exception ignored) {
+                            ar = null;
+                        }
 
-                    // store tenant uuid + label in session
-                    s2.setAttribute(S_TENANT_UUID, found.uuid);
-                    s2.setAttribute(S_TENANT_LABEL, found.label);
-                    s2.setAttribute(S_TENANT_SID, s2.getId());
-                    s2.setAttribute(S_TENANT_IP, clientIp);
-                    s2.setAttribute(S_TENANT_CB, newCookieBind);
+                        if (ar == null || ar.user == null || ar.role == null) {
+                            int c = noteFailure(application, clientIp);
+                            error = "Invalid tenant, email, or password.";
+                            if (!isLocalhostIp(clientIp)) {
+                                try {
+                                    if (c == 5) lists.banTemporary(clientIp, 10 * 60, "login: 5 failures");
+                                    else if (c == 8) lists.banTemporary(clientIp, 30 * 60, "login: 8 failures");
+                                    else if (c >= 12) {
+                                        lists.banTemporary(clientIp, 2 * 60 * 60, "login: 12+ failures");
+                                        clearFailures(application, clientIp);
+                                    }
+                                } catch (Exception ignored) {}
+                            }
+                        } else {
+                            clearFailures(application, clientIp);
 
-                    // write binding file (IP + session + cookie) - PER SESSION
-                    try {
-                        Binding b = new Binding(found.uuid, found.label, clientIp, s2.getId(), newCookieBind);
-                        writeBinding(bindingPath(found.uuid, s2.getId()), b);
-                    } catch (Exception ignored) {}
+                            String newTenantBind = randomTokenUrlSafe(32);
+                            String newUserBind = randomTokenUrlSafe(32);
 
-                    // ALWAYS go to user_login.jsp next (carrying next=final destination)
-                    response.sendRedirect(userLoginUrl);
-                    return;
+                            setHttpOnlyCookie(request, response, TENANT_BIND_COOKIE, newTenantBind, 30 * 24 * 60 * 60);
+                            setHttpOnlyCookie(request, response, USER_BIND_COOKIE, newUserBind, 30 * 24 * 60 * 60);
+
+                            try { session.invalidate(); } catch (Exception ignored) {}
+                            HttpSession s2 = request.getSession(true);
+
+                            s2.setAttribute(S_TENANT_UUID, found.uuid);
+                            s2.setAttribute(S_TENANT_LABEL, found.label);
+                            s2.setAttribute(S_TENANT_SID, s2.getId());
+                            s2.setAttribute(S_TENANT_IP, clientIp);
+                            s2.setAttribute(S_TENANT_CB, newTenantBind);
+
+                            ur.bindToSession(s2, ar);
+                            s2.setAttribute(S_USER_IP, clientIp);
+                            s2.setAttribute(S_USER_CB, newUserBind);
+
+                            try {
+                                Binding b = new Binding(found.uuid, found.label, clientIp, s2.getId(), newTenantBind);
+                                writeBinding(bindingPath(found.uuid, s2.getId()), b);
+                            } catch (Exception ignored) {}
+
+                            try {
+                                ur.writeUserBinding(
+                                        found.uuid,
+                                        ar.user.uuid,
+                                        ar.user.emailAddress,
+                                        ar.role.uuid,
+                                        clientIp,
+                                        s2.getId(),
+                                        newUserBind
+                                );
+                            } catch (Exception ignored) {}
+
+                            response.sendRedirect(redirectTo);
+                            return;
+                        }
+                    }
                 }
             }
         }
@@ -531,7 +631,6 @@
     boolean loggedOut = "1".equals(request.getParameter("loggedOut"));
     if (loggedOut && message == null && error == null) message = "You have been logged out.";
 
-    // Make CSRF token render-safe (works on GET and on POST re-render)
     String csrfToken = csrfForRender(request);
 %>
 
@@ -541,8 +640,8 @@
   <section class="card narrow">
     <div class="section-head">
       <div>
-        <h1>Tenant login</h1>
-        <div class="meta">Select an enabled tenant to continue.</div>
+        <h1>Sign in</h1>
+        <div class="meta">Select your tenant, then sign in with your email and password.</div>
       </div>
     </div>
 
@@ -558,7 +657,7 @@
 
     <% if (enabledTenants.isEmpty()) { %>
       <div class="alert alert-warn">
-        No enabled tenants are available. Create/enable a tenant in <strong>Tenants</strong> first.
+        No enabled tenants are available. Create or enable a tenant in <strong>Tenants</strong> first.
       </div>
       <div style="height:12px;"></div>
     <% } %>
@@ -566,23 +665,35 @@
     <form class="form" method="post" action="<%= ctx %>/tenant_login.jsp">
       <input type="hidden" name="action" value="login" />
       <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-      <!-- IMPORTANT: preserve the FINAL destination -->
       <input type="hidden" name="next" value="<%= esc(next) %>" />
 
       <label>
         <span>Tenant</span>
-        <select name="tenantLabel" required <%= enabledTenants.isEmpty() ? "disabled" : "" %>>
-          <option value="" <%= selectedLabel.isBlank() ? "selected" : "" %> disabled>Select a tenant…</option>
+        <select name="tenantUuid" required <%= enabledTenants.isEmpty() ? "disabled" : "" %>>
+          <% if (enabledTenants.size() != 1) { %>
+            <option value="" <%= selectedTenantUuid.isBlank() ? "selected" : "" %> disabled>Select a tenant…</option>
+          <% } %>
           <%
             for (tenants.Tenant t : enabledTenants) {
-                String lbl = (t.label == null) ? "" : t.label;
-                boolean sel = !selectedLabel.isBlank() && lbl.equalsIgnoreCase(selectedLabel);
+                String tUuid = safe(t.uuid).trim();
+                String lbl = safe(t.label).trim();
+                boolean sel = !selectedTenantUuid.isBlank() && tUuid.equals(selectedTenantUuid);
           %>
-            <option value="<%= esc(lbl) %>" <%= sel ? "selected" : "" %>><%= esc(lbl) %></option>
+            <option value="<%= esc(tUuid) %>" <%= sel ? "selected" : "" %>><%= esc(lbl) %></option>
           <%
             }
           %>
         </select>
+      </label>
+
+      <label>
+        <span>Email</span>
+        <input type="text" name="email" value="<%= esc(email) %>" autocomplete="username" required />
+      </label>
+
+      <label>
+        <span>Password</span>
+        <input type="password" name="password" autocomplete="current-password" required />
       </label>
 
       <div class="actions">
@@ -592,7 +703,6 @@
 
       <div class="help">
         Security: attempts are rate-limited (temporary IP bans). Sessions are bound to IP + cookie + session id.
-        After successful tenant login, you will be sent to <code>user_login.jsp</code> (with <code>next</code> preserved).
       </div>
     </form>
   </section>

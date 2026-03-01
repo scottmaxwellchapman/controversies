@@ -266,8 +266,7 @@
 
     String nextEnc = URLEncoder.encode(currentPath, StandardCharsets.UTF_8);
 
-    String tenantLoginHref = ctx + "/tenant_login.jsp?next=" + nextEnc;
-    String userLoginHref   = ctx + "/user_login.jsp?next=" + nextEnc;
+    String loginHref = ctx + "/tenant_login.jsp?next=" + nextEnc;
 
     // Keep one logout endpoint (recommended: make /logout.jsp clear BOTH tenant+user)
     String logoutHref = ctx + "/logout.jsp";
@@ -369,16 +368,8 @@
                 <% } %>
                 <a class="btn btn-ghost btn-sm" href="<%= logoutHref %>">Logout</a>
 
-            <% } else if (tenantLoggedIn) { %>
-                <div class="user-chip" title="Tenant login succeeded; user login required">
-                    <span class="user-chip-label">Step</span>
-                    <span class="user-chip-name">User login required</span>
-                </div>
-                <a class="btn btn-sm" href="<%= userLoginHref %>">User Login</a>
-                <a class="btn btn-ghost btn-sm" href="<%= logoutHref %>">Logout</a>
-
             <% } else { %>
-                <a class="btn btn-sm" href="<%= tenantLoginHref %>">Tenant Login</a>
+                <a class="btn btn-sm" href="<%= loginHref %>">Sign In</a>
             <% } %>
 
         </div>
