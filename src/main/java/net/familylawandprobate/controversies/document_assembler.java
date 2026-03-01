@@ -17,8 +17,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
@@ -53,7 +55,7 @@ import org.xml.sax.InputSource;
 /**
  * document_assembler
  *
- * Performs token replacement for .docx/.doc/.rtf/.txt templates.
+ * Performs token replacement for .docx/.doc/.rtf/.odt/.txt templates.
  * Supported placeholder formats:
  *   {{token_name}}
  *   [Name of defendant]  -> lookup key "name_of_defendant"
@@ -134,6 +136,8 @@ public final class document_assembler {
                 source = extractDocText(templateBytes);
             } else if ("rtf".equals(ext)) {
                 source = extractRtfText(templateBytes);
+            } else if ("odt".equals(ext)) {
+                source = extractOdfText(templateBytes);
             } else {
                 source = extractTxtText(templateBytes);
             }
@@ -175,6 +179,10 @@ public final class document_assembler {
         if ("rtf".equals(ext)) {
             byte[] out = assembleRtf(templateBytes, values);
             return new AssembledFile(out, "rtf", "application/rtf");
+        }
+        if ("odt".equals(ext)) {
+            byte[] out = assembleOdf(templateBytes, values);
+            return new AssembledFile(out, ext, "application/vnd.oasis.opendocument.text");
         }
 
         byte[] out = assembleTxt(templateBytes, values);
@@ -407,6 +415,7 @@ public final class document_assembler {
         String ext = normalizeExtension(extOrName);
         if (!"txt".equals(ext)) return ext;
         if (looksLikeDocxZip(bytes)) return "docx";
+        if (looksLikeOdfZip(bytes)) return "odt";
         if (looksLikeOleDoc(bytes)) return "doc";
         if (looksLikeRtf(bytes)) return "rtf";
         return ext;
@@ -435,6 +444,26 @@ public final class document_assembler {
                 && (bytes[5] & 0xFF) == 0xB1
                 && (bytes[6] & 0xFF) == 0x1A
                 && (bytes[7] & 0xFF) == 0xE1;
+    }
+
+    private static boolean looksLikeOdfZip(byte[] bytes) {
+        if (bytes == null || bytes.length < 4) return false;
+        if ((bytes[0] & 0xFF) != 0x50 || (bytes[1] & 0xFF) != 0x4B) return false;
+        boolean sawContentXml = false;
+        String mime = "";
+        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+            ZipEntry entry;
+            while ((entry = zin.getNextEntry()) != null) {
+                String name = safe(entry.getName()).replace('\\', '/').toLowerCase(Locale.ROOT);
+                if ("content.xml".equals(name)) sawContentXml = true;
+                if ("mimetype".equals(name)) {
+                    mime = new String(readZipEntryBytes(zin), StandardCharsets.UTF_8).trim().toLowerCase(Locale.ROOT);
+                }
+            }
+        } catch (Exception ignored) {}
+        if (!sawContentXml) return false;
+        if (mime.isBlank()) return true;
+        return mime.contains("application/vnd.oasis.opendocument.text");
     }
 
     private static boolean looksLikeRtf(byte[] bytes) {
@@ -691,6 +720,45 @@ public final class document_assembler {
         }
     }
 
+    private static String extractOdfText(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) return "";
+        String contentXml = "";
+        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+            ZipEntry entry;
+            while ((entry = zin.getNextEntry()) != null) {
+                String name = safe(entry.getName()).replace('\\', '/').toLowerCase(Locale.ROOT);
+                if (!"content.xml".equals(name)) continue;
+                contentXml = new String(readZipEntryBytes(zin), StandardCharsets.UTF_8);
+                break;
+            }
+        } catch (Exception ignored) {
+            return "";
+        }
+        if (contentXml.isBlank()) return "";
+        return extractOdfXmlText(contentXml);
+    }
+
+    private static String extractOdfXmlText(String xml) {
+        String src = safe(xml);
+        if (src.isBlank()) return "";
+
+        String out = src
+                .replaceAll("(?is)<text:tab\\b[^>]*/>", "\t")
+                .replaceAll("(?is)<text:line-break\\b[^>]*/>", "\n")
+                .replaceAll("(?is)</text:(p|h)\\s*>", "\n")
+                .replaceAll("(?is)</table:table-cell\\s*>", "\t")
+                .replaceAll("(?is)</table:table-row\\s*>", "\n")
+                .replaceAll("(?is)<[^>]+>", "");
+
+        out = out
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'");
+        return safe(out);
+    }
+
     private static String extractTxtText(byte[] bytes) {
         if (bytes == null || bytes.length == 0) return "";
         return new String(bytes, StandardCharsets.UTF_8);
@@ -721,6 +789,59 @@ public final class document_assembler {
             out = out.replace(token, replacement);
         }
         return out.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static byte[] assembleOdf(byte[] templateBytes, Map<String, String> values) throws Exception {
+        if (templateBytes == null || templateBytes.length == 0) return new byte[0];
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream(Math.max(4096, templateBytes.length + 4096));
+        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(templateBytes));
+             ZipOutputStream zout = new ZipOutputStream(out)) {
+
+            ZipEntry entry;
+            while ((entry = zin.getNextEntry()) != null) {
+                String name = safe(entry.getName());
+                if (name.isBlank()) continue;
+                byte[] data = readZipEntryBytes(zin);
+
+                String normalizedName = name.replace('\\', '/').toLowerCase(Locale.ROOT);
+                if (normalizedName.endsWith(".xml")) {
+                    String xml = new String(data, StandardCharsets.UTF_8);
+                    data = applyOdfXmlReplacements(xml, values).getBytes(StandardCharsets.UTF_8);
+                }
+
+                ZipEntry copy = new ZipEntry(name);
+                if (entry.getTime() > 0L) copy.setTime(entry.getTime());
+                if ("mimetype".equalsIgnoreCase(normalizedName)) {
+                    copy.setMethod(ZipEntry.STORED);
+                    copy.setSize(data.length);
+                    copy.setCompressedSize(data.length);
+                    CRC32 crc = new CRC32();
+                    crc.update(data);
+                    copy.setCrc(crc.getValue());
+                }
+                zout.putNextEntry(copy);
+                if (data.length > 0) zout.write(data);
+                zout.closeEntry();
+            }
+        }
+        return out.toByteArray();
+    }
+
+    private static String applyOdfXmlReplacements(String xml, Map<String, String> values) {
+        String src = safe(xml);
+        if (src.isBlank()) return src;
+        TokenScan scan = scanTokens(src, values);
+
+        String out = src;
+        for (Map.Entry<String, String> e : scan.fullTokenToReplacement.entrySet()) {
+            if (e == null) continue;
+            String token = safe(e.getKey());
+            if (token.isBlank()) continue;
+            String replacement = escapeXmlText(safe(e.getValue()));
+            out = out.replace(token, replacement);
+        }
+        return out;
     }
 
     /**
@@ -1883,6 +2004,27 @@ public final class document_assembler {
         }
 
         return out.toString();
+    }
+
+    private static String escapeXmlText(String value) {
+        String v = safe(value);
+        return v.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&apos;");
+    }
+
+    private static byte[] readZipEntryBytes(ZipInputStream zin) throws Exception {
+        if (zin == null) return new byte[0];
+        byte[] buf = new byte[8192];
+        ByteArrayOutputStream out = new ByteArrayOutputStream(4096);
+        int n;
+        while ((n = zin.read(buf)) >= 0) {
+            if (n == 0) continue;
+            out.write(buf, 0, n);
+        }
+        return out.toByteArray();
     }
 
     private static String safe(String s) {

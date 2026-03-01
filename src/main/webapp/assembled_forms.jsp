@@ -58,6 +58,7 @@
     if (e.equals("docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     if (e.equals("doc")) return "application/msword";
     if (e.equals("rtf")) return "application/rtf";
+    if (e.equals("odt")) return "application/vnd.oasis.opendocument.text";
     if (e.equals("txt")) return "text/plain; charset=UTF-8";
     return "application/octet-stream";
   }

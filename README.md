@@ -6,7 +6,7 @@ It supports:
 - Tenant and user login (with role-based permissions)
 - Case management
 - Tenant-level and case-level replacement fields
-- DOCX/DOC/RTF template assembly
+- DOCX/DOC/RTF/ODT/TXT template assembly
 - Token-driven merge behavior (`{{case.*}}`, `{{tenant.*}}`, `{{kv.*}}`)
 - Activity/log views from inside the UI
 
@@ -17,6 +17,7 @@ It supports:
 - [Prerequisites](#prerequisites)
 - [Getting started (novice-friendly)](#getting-started-novice-friendly)
 - [Daily workflow](#daily-workflow)
+- [Template format support](#template-format-support)
 - [Browser auto-open behavior](#browser-auto-open-behavior)
 - [Running and packaging](#running-and-packaging)
 - [Project layout](#project-layout)
@@ -92,10 +93,35 @@ mvn -version
 3. **Users & Security**: define roles/permissions and users
 4. **Cases**: create matters and case-specific values
 5. **Tenant Fields**: define shared/global tenant values
-6. **Form Assembly**: assemble templates with token replacement
+6. **Form Assembly**: assemble `.docx`, `.doc`, `.rtf`, `.odt`, and `.txt` templates with token replacement
 7. **Assembled Forms / Logs**: inspect output and diagnostics
 
 Main navigation is in `menu.xml` and links these pages from the header.
+
+---
+
+## Template format support
+
+Supported template file types in Form Assembly and Template Library:
+
+- `.docx` (Word Open XML)
+- `.doc` (legacy Word binary)
+- `.rtf` (Rich Text Format)
+- `.odt` (OpenDocument Text)
+- `.txt` (plain text)
+
+Import behavior:
+
+- Direct uploads accept these formats.
+- `.zip` imports are supported when archive contents use the same supported template types.
+- Folder import recursively scans supported files.
+
+Validation and assembly behavior:
+
+- `.docx` uploads are validated as valid DOCX packages.
+- `.odt` uploads are validated as OpenDocument packages containing `content.xml`.
+- The assembler can detect misnamed `.docx`, `.odt`, `.doc`, and `.rtf` payloads even when a wrong extension is supplied.
+- ODT assembly preserves ODT container structure while applying token replacements in XML content.
 
 ---
 
@@ -293,6 +319,11 @@ Expected for local dev self-signed cert. Continue after trusting/accepting for l
 
 ### `keytool not found`
 Use a full JDK (not JRE-only runtime), then re-run startup.
+
+### Unsupported or invalid template uploads
+- If you see `Unsupported template type`, use one of: `.docx`, `.doc`, `.rtf`, `.odt`, or `.txt`.
+- If you see `Invalid DOCX template package`, re-save/export the source file as a valid `.docx`.
+- If you see `Invalid ODT template package`, ensure the file is a real OpenDocument Text file with `content.xml`.
 
 ---
 

@@ -65,7 +65,7 @@
 
     <article class="card" style="padding:14px; margin:0;">
       <h3 style="margin-top:0;">5. Form Assembly</h3>
-      <p class="muted">Assemble DOCX/DOC/RTF templates with style preservation and replace-once/all preview tools.</p>
+      <p class="muted">Assemble DOCX/DOC/RTF/ODT/TXT templates with style preservation and replace-once/all preview tools.</p>
       <a class="btn" href="<%= request.getContextPath() %>/forms.jsp">Open Form Assembly</a>
     </article>
   </div>

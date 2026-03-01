@@ -234,7 +234,8 @@ public final class document_image_preview {
                     warning = "Styled DOCX rendering fallback used plain text extraction.";
                     engine = "Pure Java Text Renderer";
                 }
-            } else if ("doc".equals(previewExt) || "rtf".equals(previewExt) || "txt".equals(previewExt)) {
+            } else if ("doc".equals(previewExt) || "rtf".equals(previewExt) || "odt".equals(previewExt)
+                    || "txt".equals(previewExt)) {
                 document_assembler.PreviewResult plain = assembler.preview(previewBytes, previewExt, new LinkedHashMap<String, String>());
                 segments.add(new document_assembler.StyledSegment(safe(plain == null ? "" : plain.sourceText), ""));
                 warning = "Full fidelity image rendering for " + previewExt.toUpperCase(Locale.ROOT) + " is not available in pure Java mode; using text layout preview.";
@@ -243,7 +244,7 @@ public final class document_image_preview {
                 return new PreviewResult(
                         new ArrayList<PageImage>(),
                         new LinkedHashMap<String, ArrayList<HitRect>>(),
-                        "Image preview is currently supported for DOCX/DOC/RTF templates.",
+                        "Image preview is currently supported for DOCX/DOC/RTF/ODT/TXT templates.",
                         ""
                 );
             }

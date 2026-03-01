@@ -28,6 +28,8 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /**
  * form_templates
@@ -37,7 +39,7 @@ import org.apache.poi.xwpf.usermodel.XWPFDocument;
  *   data/tenants/{tenantUuid}/forms/templates/{templateUuid}.{ext}
  *
  * Supported template file extensions:
- *   docx, doc, rtf, txt
+ *   docx, doc, rtf, odt, txt
  */
 public final class form_templates {
 
@@ -136,7 +138,7 @@ public final class form_templates {
 
         String ext = normalizeExtensionStatic(sourceFileName);
         if (!isSupportedExtension(ext)) {
-            throw new IllegalArgumentException("Unsupported template type. Use .docx, .doc, or .rtf.");
+            throw new IllegalArgumentException("Unsupported template type. Use .docx, .doc, .rtf, .odt, or .txt.");
         }
         if (bytes == null || bytes.length == 0) {
             throw new IllegalArgumentException("Template file is required");
@@ -230,7 +232,7 @@ public final class form_templates {
 
         String ext = normalizeExtensionStatic(sourceFileName);
         if (!isSupportedExtension(ext)) {
-            throw new IllegalArgumentException("Unsupported template type. Use .docx, .doc, or .rtf.");
+            throw new IllegalArgumentException("Unsupported template type. Use .docx, .doc, .rtf, .odt, or .txt.");
         }
         if (bytes == null || bytes.length == 0) {
             throw new IllegalArgumentException("Template file is required");
@@ -351,7 +353,11 @@ public final class form_templates {
 
     public boolean isSupportedExtension(String extOrFileName) {
         String ext = normalizeExtensionStatic(extOrFileName);
-        return "docx".equals(ext) || "doc".equals(ext) || "rtf".equals(ext) || "txt".equals(ext);
+        return "docx".equals(ext)
+                || "doc".equals(ext)
+                || "rtf".equals(ext)
+                || "odt".equals(ext)
+                || "txt".equals(ext);
     }
 
     private static ReentrantReadWriteLock lockFor(String tenantUuid) {
@@ -597,14 +603,40 @@ public final class form_templates {
 
     private static void validateTemplateBytes(String ext, byte[] bytes) {
         String normalized = normalizeExtensionStatic(ext);
-        if (!"docx".equals(normalized)) return;
+        if (!"docx".equals(normalized) && !"odt".equals(normalized)) return;
         if (bytes == null || bytes.length == 0) throw new IllegalArgumentException("Template file is required");
 
-        try (XWPFDocument ignored = new XWPFDocument(new ByteArrayInputStream(bytes))) {
-            // Valid DOCX package.
-        } catch (Exception ex) {
-            throw new IllegalArgumentException("Invalid DOCX template package.");
+        if ("docx".equals(normalized)) {
+            try (XWPFDocument ignored = new XWPFDocument(new ByteArrayInputStream(bytes))) {
+                // Valid DOCX package.
+            } catch (Exception ex) {
+                throw new IllegalArgumentException("Invalid DOCX template package.");
+            }
+            return;
         }
+
+        if (isValidOdtPackage(bytes)) return;
+        throw new IllegalArgumentException("Invalid ODT template package.");
+    }
+
+    private static boolean isValidOdtPackage(byte[] bytes) {
+        if (bytes == null || bytes.length < 4) return false;
+        if ((bytes[0] & 0xFF) != 0x50 || (bytes[1] & 0xFF) != 0x4B) return false;
+
+        boolean sawContentXml = false;
+        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+            ZipEntry entry;
+            while ((entry = zin.getNextEntry()) != null) {
+                String name = safe(entry.getName()).replace('\\', '/').toLowerCase(Locale.ROOT);
+                if ("content.xml".equals(name)) {
+                    sawContentXml = true;
+                    break;
+                }
+            }
+        } catch (Exception ex) {
+            return false;
+        }
+        return sawContentXml;
     }
 
     private static String safeFileToken(String s) {

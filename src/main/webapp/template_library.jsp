@@ -156,7 +156,11 @@
 
   private static boolean isImportableTemplateName(String fileName) {
     String n = safe(fileName).trim().toLowerCase(Locale.ROOT);
-    return n.endsWith(".docx") || n.endsWith(".doc") || n.endsWith(".rtf");
+    return n.endsWith(".docx")
+        || n.endsWith(".doc")
+        || n.endsWith(".rtf")
+        || n.endsWith(".odt")
+        || n.endsWith(".txt");
   }
 
   private static boolean isZipName(String fileName) {
@@ -422,7 +426,7 @@
         }
 
         if (imported <= 0) {
-          String base = "No valid templates were imported. Supported types: .docx, .doc, .rtf, and .zip containing those files.";
+          String base = "No valid templates were imported. Supported types: .docx, .doc, .rtf, .odt, .txt, and .zip containing those files.";
           if (!firstFailure.isBlank()) base = base + " " + firstFailure;
           throw new IllegalArgumentException(base);
         }
@@ -626,12 +630,12 @@
       <input type="text" name="import_root_folder" placeholder="Pleadings/Originals" />
     </label>
     <label>
-      <span>Template Files (.docx, .doc, .rtf, .zip)</span>
-      <input type="file" id="import_upload_files" accept=".docx,.doc,.rtf,.zip" multiple />
+      <span>Template Files (.docx, .doc, .rtf, .odt, .txt, .zip)</span>
+      <input type="file" id="import_upload_files" accept=".docx,.doc,.rtf,.odt,.txt,.zip" multiple />
     </label>
     <label>
       <span>Template Folder (includes subfolders)</span>
-      <input type="file" id="import_upload_folder" accept=".docx,.doc,.rtf,.zip" webkitdirectory directory multiple />
+      <input type="file" id="import_upload_folder" accept=".docx,.doc,.rtf,.odt,.txt,.zip" webkitdirectory directory multiple />
     </label>
     <div class="meta">Select files, folders, or zip archives. Zip archives are extracted server-side.</div>
     <button class="btn" type="submit">Import Templates</button>
@@ -680,7 +684,7 @@
 
       <label>
         <span>Replace File</span>
-        <input type="file" id="replace_upload_file" accept=".docx,.doc,.rtf" required />
+        <input type="file" id="replace_upload_file" accept=".docx,.doc,.rtf,.odt,.txt" required />
       </label>
       <button class="btn btn-ghost" type="submit">Replace File</button>
     </form>

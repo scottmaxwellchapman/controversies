@@ -12,6 +12,10 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.zip.CRC32;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.extractor.WordExtractor;
@@ -204,6 +208,44 @@ public class document_assembler_snapshot_test {
         assertTrue(new String(assembled.bytes, StandardCharsets.UTF_8).contains("Misnamed RTF"));
     }
 
+    @Test
+    void assemble_and_preview_support_odt_templates() throws Exception {
+        document_assembler assembler = new document_assembler();
+        Map<String, String> values = new LinkedHashMap<String, String>();
+        values.put("case.label", "ODT Matter");
+        values.put("tenant.name", "Acme Tenancy LLC");
+
+        byte[] odt = minimalOdt("Case Label: {{case.label}}\\nTenant: {{tenant.name}}");
+        document_assembler.PreviewResult preview = assembler.preview(odt, "odt", values);
+        assertTrue(preview.sourceText.contains("{{case.label}}"));
+        assertTrue(preview.assembledText.contains("Case Label: ODT Matter"));
+        assertTrue(preview.assembledText.contains("Tenant: Acme Tenancy LLC"));
+
+        document_assembler.AssembledFile assembled = assembler.assemble(odt, "odt", values);
+        assertEquals("odt", assembled.extension);
+        assertEquals("application/vnd.oasis.opendocument.text", assembled.contentType);
+
+        String contentXml = extractOdtContentXml(assembled.bytes);
+        assertTrue(contentXml.contains("ODT Matter"));
+        assertTrue(contentXml.contains("Acme Tenancy LLC"));
+        assertFalse(contentXml.contains("{{case.label}}"));
+        assertFalse(contentXml.contains("{{tenant.name}}"));
+    }
+
+    @Test
+    void assemble_detects_odt_payload_when_template_extension_is_txt() throws Exception {
+        document_assembler assembler = new document_assembler();
+        Map<String, String> values = new LinkedHashMap<String, String>();
+        values.put("case.label", "Misnamed ODT");
+
+        byte[] odt = minimalOdt("Case Label: {{case.label}}");
+        document_assembler.AssembledFile assembled = assembler.assemble(odt, "txt", values);
+
+        assertEquals("odt", assembled.extension);
+        assertEquals("application/vnd.oasis.opendocument.text", assembled.contentType);
+        assertTrue(extractOdtContentXml(assembled.bytes).contains("Misnamed ODT"));
+    }
+
     private static Map<String, String> baseValues() {
         Map<String, String> values = new LinkedHashMap<String, String>();
         values.put("tenant.name", "Acme Tenancy LLC");
@@ -288,5 +330,69 @@ public class document_assembler_snapshot_test {
             else out.append(ch);
         }
         return out.toString();
+    }
+
+    private static byte[] minimalOdt(String plainTextWithNewlineMarker) throws Exception {
+        String text = String.valueOf(plainTextWithNewlineMarker == null ? "" : plainTextWithNewlineMarker);
+        String[] lines = text.split("\\\\n", -1);
+
+        StringBuilder body = new StringBuilder(512);
+        for (int i = 0; i < lines.length; i++) {
+            body.append("<text:p>").append(escapeXml(lines[i])).append("</text:p>");
+        }
+        String contentXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                + "<office:document-content "
+                + "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" "
+                + "xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" "
+                + "office:version=\"1.2\">"
+                + "<office:body><office:text>"
+                + body
+                + "</office:text></office:body></office:document-content>";
+
+        byte[] mimeBytes = "application/vnd.oasis.opendocument.text".getBytes(StandardCharsets.UTF_8);
+        byte[] contentBytes = contentXml.getBytes(StandardCharsets.UTF_8);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream(2048);
+        try (out;
+             ZipOutputStream zout = new ZipOutputStream(out)) {
+            ZipEntry mime = new ZipEntry("mimetype");
+            mime.setMethod(ZipEntry.STORED);
+            mime.setSize(mimeBytes.length);
+            mime.setCompressedSize(mimeBytes.length);
+            CRC32 crc = new CRC32();
+            crc.update(mimeBytes);
+            mime.setCrc(crc.getValue());
+            zout.putNextEntry(mime);
+            zout.write(mimeBytes);
+            zout.closeEntry();
+
+            ZipEntry content = new ZipEntry("content.xml");
+            zout.putNextEntry(content);
+            zout.write(contentBytes);
+            zout.closeEntry();
+        }
+
+        return out.toByteArray();
+    }
+
+    private static String extractOdtContentXml(byte[] bytes) throws Exception {
+        try (ZipInputStream zin = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+            ZipEntry entry;
+            while ((entry = zin.getNextEntry()) != null) {
+                if ("content.xml".equalsIgnoreCase(String.valueOf(entry.getName()))) {
+                    return new String(zin.readAllBytes(), StandardCharsets.UTF_8);
+                }
+            }
+        }
+        return "";
+    }
+
+    private static String escapeXml(String value) {
+        String v = String.valueOf(value == null ? "" : value);
+        return v.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&apos;");
     }
 }

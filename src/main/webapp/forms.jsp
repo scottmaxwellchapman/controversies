@@ -1151,7 +1151,7 @@
   <div class="section-head">
     <div>
       <h1 style="margin:0;">Form Assembly</h1>
-      <div class="meta">Assemble legal templates (<code>.docx</code>, <code>.doc</code>, <code>.rtf</code>) using tenant + case replacement values.</div>
+      <div class="meta">Assemble legal templates (<code>.docx</code>, <code>.doc</code>, <code>.rtf</code>, <code>.odt</code>, <code>.txt</code>) using tenant + case replacement values.</div>
       <div class="meta" style="margin-top:4px;">
         Merge order: <strong>tenant fields</strong> then <strong>case fields</strong>. Case values override same-key tenant values for <code>{{kv.key}}</code>.
       </div>
