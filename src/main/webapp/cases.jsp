@@ -4,13 +4,16 @@
 <%@ page import="java.nio.charset.StandardCharsets" %>
 <%@ page import="java.util.ArrayList" %>
 <%@ page import="java.util.HashMap" %>
+<%@ page import="java.util.HashSet" %>
 <%@ page import="java.util.LinkedHashMap" %>
 <%@ page import="java.util.List" %>
 <%@ page import="java.util.Locale" %>
 <%@ page import="java.util.Map" %>
+<%@ page import="java.util.Set" %>
 
-<%@ page import="net.familylawandprobate.controversies.matters" %>
+<%@ page import="net.familylawandprobate.controversies.case_attributes" %>
 <%@ page import="net.familylawandprobate.controversies.case_fields" %>
+<%@ page import="net.familylawandprobate.controversies.matters" %>
 
 <%@ include file="security.jspf" %>
 <%
@@ -55,6 +58,28 @@
     String v = safe(s).trim();
     return v.isBlank() ? safe(fallback) : v;
   }
+
+  private static void logWarn(jakarta.servlet.ServletContext app, String message, Throwable ex) {
+    if (app == null) return;
+    if (ex == null) app.log("[cases] " + safe(message));
+    else app.log("[cases] " + safe(message), ex);
+  }
+
+  private static String shortErr(Throwable ex) {
+    if (ex == null) return "";
+    String m = safe(ex.getMessage()).trim();
+    return m.isBlank() ? ex.getClass().getSimpleName() : m;
+  }
+
+  private static String caseAttrValue(case_attributes.AttributeRec def, matters.MatterRec m, Map<String,String> kv) {
+    if (def == null) return "";
+    String key = safe(def.key).trim();
+    String v = kv == null ? "" : safe(kv.get(key));
+    if (!v.isBlank()) return v;
+    if ("cause_docket_number".equals(key)) return m == null ? "" : safe(m.causeDocketNumber);
+    if ("county".equals(key)) return m == null ? "" : safe(m.county);
+    return "";
+  }
 %>
 
 <%
@@ -69,26 +94,95 @@
 
   matters matterStore = matters.defaultStore();
   case_fields fieldsStore = case_fields.defaultStore();
-  try { matterStore.ensure(tenantUuid); } catch (Exception ignored) {}
+  case_attributes attrsStore = case_attributes.defaultStore();
+
+  try {
+    matterStore.ensure(tenantUuid);
+  } catch (Exception ex) {
+    logWarn(application, "Unable to ensure matter store for tenant " + tenantUuid + ": " + shortErr(ex), ex);
+  }
+  try {
+    attrsStore.ensure(tenantUuid);
+  } catch (Exception ex) {
+    logWarn(application, "Unable to ensure case attribute definitions for tenant " + tenantUuid + ": " + shortErr(ex), ex);
+  }
 
   String csrfToken = csrfForRender(request);
-
   String message = null;
   String error = null;
+
+  List<case_attributes.AttributeRec> allAttrDefs = new ArrayList<case_attributes.AttributeRec>();
+  List<case_attributes.AttributeRec> enabledAttrDefs = new ArrayList<case_attributes.AttributeRec>();
+  try {
+    allAttrDefs = attrsStore.listAll(tenantUuid);
+    enabledAttrDefs = attrsStore.listEnabled(tenantUuid);
+  } catch (Exception ex) {
+    logWarn(application, "Unable to load case attribute definitions for tenant " + tenantUuid + ": " + shortErr(ex), ex);
+    error = "Unable to load case attribute definitions.";
+  }
+
+  LinkedHashMap<String, case_attributes.AttributeRec> defByKey = new LinkedHashMap<String, case_attributes.AttributeRec>();
+  HashSet<String> attrKeySet = new HashSet<String>();
+  for (int i = 0; i < allAttrDefs.size(); i++) {
+    case_attributes.AttributeRec d = allAttrDefs.get(i);
+    if (d == null) continue;
+    String key = attrsStore.normalizeKey(d.key);
+    if (key.isBlank()) continue;
+    defByKey.put(key, d);
+    attrKeySet.add(key);
+  }
 
   if ("POST".equalsIgnoreCase(request.getMethod())) {
     String action = safe(request.getParameter("action")).trim();
 
     if ("create_case".equalsIgnoreCase(action)) {
       String label = safe(request.getParameter("label")).trim();
-      String cause = safe(request.getParameter("cause_docket_number")).trim();
-      String county = safe(request.getParameter("county")).trim();
 
       try {
-        matterStore.create(tenantUuid, label, "", "", "", "", "", cause, county);
+        LinkedHashMap<String, String> attrValues = new LinkedHashMap<String, String>();
+        String[] attrKeys = request.getParameterValues("attr_def_key");
+        String[] attrVals = request.getParameterValues("attr_def_value");
+        int an = Math.max(attrKeys == null ? 0 : attrKeys.length, attrVals == null ? 0 : attrVals.length);
+        for (int i = 0; i < an; i++) {
+          String k = (attrKeys != null && i < attrKeys.length) ? attrsStore.normalizeKey(attrKeys[i]) : "";
+          if (k.isBlank() || !defByKey.containsKey(k)) continue;
+          String v = (attrVals != null && i < attrVals.length) ? safe(attrVals[i]) : "";
+          attrValues.put(k, v);
+        }
+
+        for (int i = 0; i < enabledAttrDefs.size(); i++) {
+          case_attributes.AttributeRec def = enabledAttrDefs.get(i);
+          if (def == null) continue;
+          String key = attrsStore.normalizeKey(def.key);
+          if (key.isBlank()) continue;
+          String val = safe(attrValues.get(key));
+
+          if ("select".equals(def.dataType)) {
+            List<String> opts = attrsStore.optionList(def.options);
+            if (!opts.isEmpty()) {
+              boolean match = false;
+              for (int oi = 0; oi < opts.size(); oi++) {
+                if (safe(opts.get(oi)).equals(val)) { match = true; break; }
+              }
+              if (!match) val = "";
+            }
+          }
+
+          if (def.required && safe(val).trim().isBlank()) {
+            throw new IllegalArgumentException("Required field missing: " + safe(def.label));
+          }
+          attrValues.put(key, val);
+        }
+
+        String cause = safe(attrValues.get("cause_docket_number")).trim();
+        String county = safe(attrValues.get("county")).trim();
+        matters.MatterRec rec = matterStore.create(tenantUuid, label, "", "", "", "", "", cause, county);
+
+        fieldsStore.write(tenantUuid, rec.uuid, attrValues);
         response.sendRedirect(ctx + "/cases.jsp?created=1");
         return;
       } catch (Exception ex) {
+        logWarn(application, "Unable to create case for tenant " + tenantUuid + ": " + shortErr(ex), ex);
         error = "Unable to create case: " + safe(ex.getMessage());
       }
     }
@@ -96,13 +190,77 @@
     if ("save_case".equalsIgnoreCase(action)) {
       String caseUuid = safe(request.getParameter("uuid")).trim();
       String label = safe(request.getParameter("label")).trim();
-      String cause = safe(request.getParameter("cause_docket_number")).trim();
-      String county = safe(request.getParameter("county")).trim();
 
       try {
         matters.MatterRec current = matterStore.getByUuid(tenantUuid, caseUuid);
         if (current == null) throw new IllegalStateException("Case not found.");
 
+        LinkedHashMap<String, String> attrValues = new LinkedHashMap<String, String>();
+        String[] attrKeys = request.getParameterValues("attr_def_key");
+        String[] attrVals = request.getParameterValues("attr_def_value");
+        int an = Math.max(attrKeys == null ? 0 : attrKeys.length, attrVals == null ? 0 : attrVals.length);
+        for (int i = 0; i < an; i++) {
+          String k = (attrKeys != null && i < attrKeys.length) ? attrsStore.normalizeKey(attrKeys[i]) : "";
+          if (k.isBlank() || !defByKey.containsKey(k)) continue;
+          String v = (attrVals != null && i < attrVals.length) ? safe(attrVals[i]) : "";
+          attrValues.put(k, v);
+        }
+
+        for (int i = 0; i < enabledAttrDefs.size(); i++) {
+          case_attributes.AttributeRec def = enabledAttrDefs.get(i);
+          if (def == null) continue;
+          String key = attrsStore.normalizeKey(def.key);
+          if (key.isBlank()) continue;
+          String val = safe(attrValues.get(key));
+
+          if ("select".equals(def.dataType)) {
+            List<String> opts = attrsStore.optionList(def.options);
+            if (!opts.isEmpty()) {
+              boolean match = false;
+              for (int oi = 0; oi < opts.size(); oi++) {
+                if (safe(opts.get(oi)).equals(val)) { match = true; break; }
+              }
+              if (!match) val = "";
+            }
+          }
+
+          if (def.required && safe(val).trim().isBlank()) {
+            throw new IllegalArgumentException("Required field missing: " + safe(def.label));
+          }
+          attrValues.put(key, val);
+        }
+
+        LinkedHashMap<String, String> currentKv = new LinkedHashMap<String, String>();
+        try { currentKv.putAll(fieldsStore.read(tenantUuid, caseUuid)); } catch (Exception ignored) {}
+        for (String k : attrKeySet) {
+          if (k == null || k.isBlank()) continue;
+          if (!attrValues.containsKey(k) && currentKv.containsKey(k)) {
+            attrValues.put(k, safe(currentKv.get(k)));
+          }
+        }
+
+        LinkedHashMap<String,String> extraValues = new LinkedHashMap<String,String>();
+        String[] keys = request.getParameterValues("field_key");
+        String[] vals = request.getParameterValues("field_value");
+        int n = Math.max(keys == null ? 0 : keys.length, vals == null ? 0 : vals.length);
+        for (int i = 0; i < n; i++) {
+          String k = (keys != null && i < keys.length) ? safe(keys[i]) : "";
+          String v = (vals != null && i < vals.length) ? safe(vals[i]) : "";
+          String nk = fieldsStore.normalizeKey(k);
+          if (nk.isBlank()) continue;
+          if (attrKeySet.contains(nk)) continue;
+          extraValues.put(nk, v);
+        }
+
+        LinkedHashMap<String,String> merged = new LinkedHashMap<String,String>();
+        merged.putAll(extraValues);
+        for (String k : attrKeySet) {
+          if (k == null || k.isBlank()) continue;
+          if (attrValues.containsKey(k)) merged.put(k, safe(attrValues.get(k)));
+        }
+
+        String cause = safe(attrValues.get("cause_docket_number")).trim();
+        String county = safe(attrValues.get("county")).trim();
         matterStore.update(
           tenantUuid,
           caseUuid,
@@ -116,20 +274,11 @@
           county
         );
 
-        String[] keys = request.getParameterValues("field_key");
-        String[] vals = request.getParameterValues("field_value");
-        LinkedHashMap<String,String> in = new LinkedHashMap<String,String>();
-        int n = Math.max(keys == null ? 0 : keys.length, vals == null ? 0 : vals.length);
-        for (int i = 0; i < n; i++) {
-          String k = (keys != null && i < keys.length) ? safe(keys[i]) : "";
-          String v = (vals != null && i < vals.length) ? safe(vals[i]) : "";
-          in.put(k, v);
-        }
-        fieldsStore.write(tenantUuid, caseUuid, in);
-
+        fieldsStore.write(tenantUuid, caseUuid, merged);
         response.sendRedirect(ctx + "/cases.jsp?saved=1");
         return;
       } catch (Exception ex) {
+        logWarn(application, "Unable to save case for tenant " + tenantUuid + ": " + shortErr(ex), ex);
         error = "Unable to save case: " + safe(ex.getMessage());
       }
     }
@@ -141,6 +290,7 @@
         response.sendRedirect(ctx + "/cases.jsp?archived=1");
         return;
       } catch (Exception ex) {
+        logWarn(application, "Unable to archive case for tenant " + tenantUuid + ": " + shortErr(ex), ex);
         error = "Unable to archive case: " + safe(ex.getMessage());
       }
     }
@@ -152,6 +302,7 @@
         response.sendRedirect(ctx + "/cases.jsp?restored=1");
         return;
       } catch (Exception ex) {
+        logWarn(application, "Unable to restore case for tenant " + tenantUuid + ": " + shortErr(ex), ex);
         error = "Unable to restore case: " + safe(ex.getMessage());
       }
     }
@@ -167,32 +318,43 @@
   if (show.isBlank()) show = "active";
 
   List<matters.MatterRec> all = new ArrayList<matters.MatterRec>();
-  try { all = matterStore.listAll(tenantUuid); } catch (Exception ignored) {}
-
-  List<matters.MatterRec> filtered = new ArrayList<matters.MatterRec>();
-  for (int i = 0; i < all.size(); i++) {
-    matters.MatterRec m = all.get(i);
-    if (m == null) continue;
-    if ("active".equals(show) && m.trashed) continue;
-    if ("archived".equals(show) && !m.trashed) continue;
-    if (!q.isBlank()) {
-      String h = safe(m.label).toLowerCase(Locale.ROOT) + " "
-        + safe(m.causeDocketNumber).toLowerCase(Locale.ROOT) + " "
-        + safe(m.county).toLowerCase(Locale.ROOT);
-      if (!h.contains(q.toLowerCase(Locale.ROOT))) continue;
-    }
-    filtered.add(m);
+  try {
+    all = matterStore.listAll(tenantUuid);
+  } catch (Exception ex) {
+    logWarn(application, "Unable to list matters for tenant " + tenantUuid + ": " + shortErr(ex), ex);
   }
 
   Map<String, Map<String, String>> fieldCache = new HashMap<String, Map<String, String>>();
-  for (int i = 0; i < filtered.size(); i++) {
-    matters.MatterRec m = filtered.get(i);
+  List<matters.MatterRec> filtered = new ArrayList<matters.MatterRec>();
+  String ql = q.toLowerCase(Locale.ROOT);
+
+  for (int i = 0; i < all.size(); i++) {
+    matters.MatterRec m = all.get(i);
     if (m == null) continue;
+
+    LinkedHashMap<String,String> kv = new LinkedHashMap<String,String>();
     try {
-      fieldCache.put(safe(m.uuid), fieldsStore.read(tenantUuid, m.uuid));
-    } catch (Exception ignored) {
-      fieldCache.put(safe(m.uuid), new LinkedHashMap<String, String>());
+      kv.putAll(fieldsStore.read(tenantUuid, m.uuid));
+    } catch (Exception ex) {
+      logWarn(application, "Unable to read case fields for case " + safe(m.uuid) + ": " + shortErr(ex), ex);
     }
+    fieldCache.put(safe(m.uuid), kv);
+
+    if ("active".equals(show) && m.trashed) continue;
+    if ("archived".equals(show) && !m.trashed) continue;
+
+    if (!q.isBlank()) {
+      StringBuilder hay = new StringBuilder(512);
+      hay.append(safe(m.label)).append(" ")
+         .append(safe(m.causeDocketNumber)).append(" ")
+         .append(safe(m.county)).append(" ");
+      for (Map.Entry<String,String> e : kv.entrySet()) {
+        if (e == null) continue;
+        hay.append(safe(e.getKey())).append(" ").append(safe(e.getValue())).append(" ");
+      }
+      if (!hay.toString().toLowerCase(Locale.ROOT).contains(ql)) continue;
+    }
+    filtered.add(m);
   }
 
   String baseQs =
@@ -206,7 +368,7 @@
   <div class="section-head">
     <div>
       <h1 style="margin:0;">Cases</h1>
-      <div class="meta">Manage case records and the replacement key/value fields used in form assembly.</div>
+      <div class="meta">Manage case records and tenant-defined case attributes used in form assembly.</div>
     </div>
   </div>
 
@@ -224,23 +386,50 @@
     <input type="hidden" name="action" value="create_case" />
     <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
 
-    <div class="grid" style="display:grid; grid-template-columns: 2fr 1fr 1fr auto; gap:12px;">
-      <label>
-        <span>Case Label</span>
-        <input type="text" name="label" required placeholder="Smith v. Jones" />
-      </label>
-      <label>
-        <span>Cause / Docket</span>
-        <input type="text" name="cause_docket_number" placeholder="2026-CV-001234" />
-      </label>
-      <label>
-        <span>County</span>
-        <input type="text" name="county" placeholder="Harris" />
-      </label>
-      <label>
-        <span>&nbsp;</span>
-        <button class="btn" type="submit">Create Case</button>
-      </label>
+    <label>
+      <span>Case Label</span>
+      <input type="text" name="label" required placeholder="Smith v. Jones" />
+    </label>
+
+    <% if (!enabledAttrDefs.isEmpty()) { %>
+      <div class="grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+        <%
+          for (int i = 0; i < enabledAttrDefs.size(); i++) {
+            case_attributes.AttributeRec def = enabledAttrDefs.get(i);
+            if (def == null) continue;
+            String key = attrsStore.normalizeKey(def.key);
+            if (key.isBlank()) continue;
+            String label = safe(def.label);
+            List<String> opts = "select".equals(def.dataType) ? attrsStore.optionList(def.options) : new ArrayList<String>();
+        %>
+          <label>
+            <span><%= esc(label) %><%= def.required ? " *" : "" %></span>
+            <input type="hidden" name="attr_def_key" value="<%= esc(key) %>" />
+            <% if ("textarea".equals(def.dataType)) { %>
+              <textarea name="attr_def_value" rows="2"></textarea>
+            <% } else if ("date".equals(def.dataType)) { %>
+              <input type="date" name="attr_def_value" />
+            <% } else if ("number".equals(def.dataType)) { %>
+              <input type="number" name="attr_def_value" />
+            <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
+              <select name="attr_def_value">
+                <option value=""></option>
+                <% for (int oi = 0; oi < opts.size(); oi++) { String ov = safe(opts.get(oi)); %>
+                  <option value="<%= esc(ov) %>"><%= esc(ov) %></option>
+                <% } %>
+              </select>
+            <% } else { %>
+              <input type="text" name="attr_def_value" />
+            <% } %>
+          </label>
+        <% } %>
+      </div>
+    <% } %>
+
+    <div class="actions" style="display:flex; gap:10px; margin-top:10px;">
+      <button class="btn" type="submit">Create Case</button>
+      <a class="btn btn-ghost" href="<%= ctx %>/attribute_editor.jsp">Attribute Editor</a>
+      <a class="btn btn-ghost" href="<%= ctx %>/case_attributes.jsp">Manage Case Attributes</a>
     </div>
   </form>
 </section>
@@ -251,7 +440,7 @@
     <div class="grid" style="display:grid; grid-template-columns: 3fr 1fr auto auto; gap:12px;">
       <label>
         <span>Search</span>
-        <input type="text" name="q" value="<%= esc(q) %>" placeholder="Case, docket, or county" />
+        <input type="text" name="q" value="<%= esc(q) %>" placeholder="Case label or attribute value" />
       </label>
       <label>
         <span>Status</span>
@@ -281,10 +470,9 @@
       <thead>
         <tr>
           <th>Case</th>
-          <th>Docket</th>
-          <th>County</th>
+          <th>Attributes</th>
           <th>Replacement Keys</th>
-          <th style="width:320px;">Actions</th>
+          <th style="width:360px;">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -292,7 +480,7 @@
         if (filtered.isEmpty()) {
       %>
         <tr>
-          <td colspan="5" class="muted">No cases match your filter.</td>
+          <td colspan="4" class="muted">No cases match your filter.</td>
         </tr>
       <%
         } else {
@@ -305,18 +493,42 @@
 
             Map<String,String> kv = fieldCache.get(id);
             if (kv == null) kv = new LinkedHashMap<String,String>();
-            int rows = Math.max(4, kv.size() + 1);
+
+            LinkedHashMap<String,String> extraKv = new LinkedHashMap<String,String>();
+            for (Map.Entry<String,String> e : kv.entrySet()) {
+              if (e == null) continue;
+              String nk = fieldsStore.normalizeKey(e.getKey());
+              if (nk.isBlank()) continue;
+              if (attrKeySet.contains(nk)) continue;
+              extraKv.put(nk, safe(e.getValue()));
+            }
+            int rows = Math.max(4, extraKv.size() + 1);
       %>
         <tr>
           <td>
             <strong><%= esc(safe(m.label)) %></strong>
-            <div class="muted" style="margin-top:4px;">
-              <%= m.trashed ? "Archived" : "Active" %>
-            </div>
+            <div class="muted" style="margin-top:4px;"><%= m.trashed ? "Archived" : "Active" %></div>
           </td>
-          <td><%= esc(safe(m.causeDocketNumber)) %></td>
-          <td><%= esc(safe(m.county)) %></td>
-          <td><%= kv.size() %></td>
+          <td>
+            <%
+              int shown = 0;
+              for (int di = 0; di < enabledAttrDefs.size(); di++) {
+                case_attributes.AttributeRec def = enabledAttrDefs.get(di);
+                if (def == null) continue;
+                String val = caseAttrValue(def, m, kv);
+                if (safe(val).trim().isBlank()) continue;
+            %>
+              <div><span class="muted"><%= esc(safe(def.label)) %>:</span> <%= esc(val) %></div>
+            <%
+                shown++;
+                if (shown >= 4) break;
+              }
+              if (shown == 0) {
+            %>
+              <span class="muted">No values</span>
+            <% } %>
+          </td>
+          <td><%= extraKv.size() %></td>
           <td>
             <button class="btn btn-ghost" type="button" onclick="toggleEdit('<%= editRowId %>')">Edit</button>
             <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= URLEncoder.encode(id, StandardCharsets.UTF_8) %>&<%= baseQs %>">Assemble Forms</a>
@@ -339,30 +551,55 @@
         </tr>
 
         <tr id="<%= editRowId %>" style="display:none;">
-          <td colspan="5">
+          <td colspan="4">
             <div class="card" style="margin:8px 0; padding:14px; background:rgba(0,0,0,0.02);">
               <form class="form" method="post" action="<%= ctx %>/cases.jsp?<%= baseQs %>">
                 <input type="hidden" name="action" value="save_case" />
                 <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
                 <input type="hidden" name="uuid" value="<%= esc(id) %>" />
 
-                <div class="grid" style="display:grid; grid-template-columns: 2fr 1fr 1fr; gap:12px;">
-                  <label>
-                    <span>Case Label</span>
-                    <input type="text" name="label" value="<%= esc(safe(m.label)) %>" required />
-                  </label>
-                  <label>
-                    <span>Cause / Docket</span>
-                    <input type="text" name="cause_docket_number" value="<%= esc(safe(m.causeDocketNumber)) %>" />
-                  </label>
-                  <label>
-                    <span>County</span>
-                    <input type="text" name="county" value="<%= esc(safe(m.county)) %>" />
-                  </label>
-                </div>
+                <label>
+                  <span>Case Label</span>
+                  <input type="text" name="label" value="<%= esc(safe(m.label)) %>" required />
+                </label>
 
-                <h4 style="margin:14px 0 8px 0;">Replacement Fields</h4>
-                <div class="meta" style="margin-bottom:8px;">Use keys like <code>client_name</code> or <code>hearing_date</code>. Templates reference them as <code>{{kv.client_name}}</code>.</div>
+                <% if (!enabledAttrDefs.isEmpty()) { %>
+                  <div class="grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+                    <%
+                      for (int di = 0; di < enabledAttrDefs.size(); di++) {
+                        case_attributes.AttributeRec def = enabledAttrDefs.get(di);
+                        if (def == null) continue;
+                        String key = attrsStore.normalizeKey(def.key);
+                        if (key.isBlank()) continue;
+                        String val = caseAttrValue(def, m, kv);
+                        List<String> opts = "select".equals(def.dataType) ? attrsStore.optionList(def.options) : new ArrayList<String>();
+                    %>
+                      <label>
+                        <span><%= esc(safe(def.label)) %><%= def.required ? " *" : "" %></span>
+                        <input type="hidden" name="attr_def_key" value="<%= esc(key) %>" />
+                        <% if ("textarea".equals(def.dataType)) { %>
+                          <textarea name="attr_def_value" rows="2"><%= esc(val) %></textarea>
+                        <% } else if ("date".equals(def.dataType)) { %>
+                          <input type="date" name="attr_def_value" value="<%= esc(val) %>" />
+                        <% } else if ("number".equals(def.dataType)) { %>
+                          <input type="number" name="attr_def_value" value="<%= esc(val) %>" />
+                        <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
+                          <select name="attr_def_value">
+                            <option value=""></option>
+                            <% for (int oi = 0; oi < opts.size(); oi++) { String ov = safe(opts.get(oi)); %>
+                              <option value="<%= esc(ov) %>" <%= ov.equals(val) ? "selected" : "" %>><%= esc(ov) %></option>
+                            <% } %>
+                          </select>
+                        <% } else { %>
+                          <input type="text" name="attr_def_value" value="<%= esc(val) %>" />
+                        <% } %>
+                      </label>
+                    <% } %>
+                  </div>
+                <% } %>
+
+                <h4 style="margin:14px 0 8px 0;">Additional Replacement Fields</h4>
+                <div class="meta" style="margin-bottom:8px;">Custom keys (outside configured case attributes). Use keys like <code>client_name</code> referenced as <code>{{kv.client_name}}</code>.</div>
 
                 <div class="table-wrap">
                   <table class="table">
@@ -376,7 +613,7 @@
                     <tbody id="fields_tbl_<%= i %>">
                     <%
                       int idx = 0;
-                      for (Map.Entry<String,String> e : kv.entrySet()) {
+                      for (Map.Entry<String,String> e : extraKv.entrySet()) {
                         if (e == null) continue;
                     %>
                       <tr>

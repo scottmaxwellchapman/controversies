@@ -4,7 +4,10 @@
   sec_bind(request, response, pageContext, session);
 
   String __secUri = request == null ? "" : String.valueOf(request.getRequestURI());
-  if (__secUri.endsWith("/tenant_settings.jsp") || __secUri.endsWith("tenant_settings.jsp")) {
+  if (__secUri.endsWith("/tenant_settings.jsp") || __secUri.endsWith("tenant_settings.jsp")
+      || __secUri.endsWith("/attribute_editor.jsp") || __secUri.endsWith("attribute_editor.jsp")
+      || __secUri.endsWith("/case_attributes.jsp") || __secUri.endsWith("case_attributes.jsp")
+      || __secUri.endsWith("/document_attributes.jsp") || __secUri.endsWith("document_attributes.jsp")) {
     if (!require_permission("tenant_admin")) return;
   }
 %>

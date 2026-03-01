@@ -111,10 +111,15 @@
   putToken(mergeValues, tokenSource, "tenant.label", tenantLabel, "system");
 
   if (selectedCase != null) {
+    String caseCause = safe(caseKv.get("cause_docket_number"));
+    if (caseCause.isBlank()) caseCause = safe(selectedCase.causeDocketNumber);
+    String caseCounty = safe(caseKv.get("county"));
+    if (caseCounty.isBlank()) caseCounty = safe(selectedCase.county);
+
     putToken(mergeValues, tokenSource, "case.uuid", safe(selectedCase.uuid), "system");
     putToken(mergeValues, tokenSource, "case.label", safe(selectedCase.label), "system");
-    putToken(mergeValues, tokenSource, "case.cause_docket_number", safe(selectedCase.causeDocketNumber), "system");
-    putToken(mergeValues, tokenSource, "case.county", safe(selectedCase.county), "system");
+    putToken(mergeValues, tokenSource, "case.cause_docket_number", caseCause, "system");
+    putToken(mergeValues, tokenSource, "case.county", caseCounty, "system");
   }
 
   for (Map.Entry<String,String> e : tenantKv.entrySet()) {

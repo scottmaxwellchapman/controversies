@@ -20,6 +20,8 @@
 <%@ page import="net.familylawandprobate.controversies.tenants" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 <%@ page import="net.familylawandprobate.controversies.ip_lists" %>
+<%@ page import="net.familylawandprobate.controversies.case_attributes" %>
+<%@ page import="net.familylawandprobate.controversies.document_attributes" %>
 <%@ include file="security.jspf" %>
 
 <%
@@ -558,6 +560,8 @@
                         }
                     } else {
                         try { ur.ensure(found.uuid); } catch (Exception ignored) {}
+                        try { case_attributes.defaultStore().ensure(found.uuid); } catch (Exception ex) { application.log("[tenant_login] unable to seed case attributes for tenant " + found.uuid, ex); }
+                        try { document_attributes.defaultStore().ensure(found.uuid); } catch (Exception ex) { application.log("[tenant_login] unable to seed document attributes for tenant " + found.uuid, ex); }
 
                         users_roles.AuthResult ar = null;
                         char[] pw = pwStr.toCharArray();

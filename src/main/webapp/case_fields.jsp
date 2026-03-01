@@ -206,10 +206,14 @@
   <% if (selectedCase == null) { %>
     <div class="muted">Select or create a case first.</div>
   <% } else { %>
+    <%
+      String caseCause = safe(caseKv.get("cause_docket_number"));
+      if (caseCause.isBlank()) caseCause = safe(selectedCase.causeDocketNumber);
+    %>
     <div class="meta" style="margin-bottom:8px;">
       Case: <strong><%= esc(safe(selectedCase.label)) %></strong>
-      <% if (!safe(selectedCase.causeDocketNumber).isBlank()) { %>
-        • <%= esc(safe(selectedCase.causeDocketNumber)) %>
+      <% if (!caseCause.isBlank()) { %>
+        • <%= esc(caseCause) %>
       <% } %>
     </div>
 
