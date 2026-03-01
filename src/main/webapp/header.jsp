@@ -16,17 +16,23 @@
     // -----------------------------
     // Menu XML parsing + safety
     // -----------------------------
-    private static final class MenuItem {
+    private static final class MenuNode {
         final String label;
-        final String href;
-        MenuItem(String label, String href) { this.label = label; this.href = href; }
+        final String href; // optional when acting as a pure submenu label
+        final List<MenuNode> children = new ArrayList<>();
+        MenuNode(String label, String href) {
+            this.label = label;
+            this.href = href;
+        }
     }
 
     private static final class MenuGroup {
         final String label; // empty means "ungrouped"
-        final List<MenuItem> items = new ArrayList<>();
+        final List<MenuNode> items = new ArrayList<>();
         MenuGroup(String label) { this.label = label; }
     }
+
+    private static String safe(String s) { return s == null ? "" : s; }
 
     private static String esc(String s) {
         if (s == null) return "";
@@ -35,6 +41,13 @@
                 .replace(">","&gt;")
                 .replace("\"","&quot;")
                 .replace("'","&#39;");
+    }
+
+    private static String normalizeHref(String href) {
+        String h = safe(href).trim();
+        if (h.isBlank()) return "";
+        if (!h.startsWith("/")) h = "/" + h;
+        return h;
     }
 
     private static DocumentBuilder secureBuilder() throws Exception {
@@ -56,6 +69,40 @@
         return b;
     }
 
+    private static MenuNode parseMenuNode(Element el) {
+        if (el == null) return null;
+        String label = safe(el.getAttribute("label")).trim();
+        String href = normalizeHref(el.getAttribute("href"));
+        MenuNode node = new MenuNode(label, href);
+
+        NodeList children = el.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node n = children.item(i);
+            if (!(n instanceof Element)) continue;
+            Element childEl = (Element) n;
+            if (!"item".equals(childEl.getTagName())) continue;
+            MenuNode child = parseMenuNode(childEl);
+            if (child != null) node.children.add(child);
+        }
+
+        if (node.label.isBlank()) return null;
+        if (node.href.isBlank() && node.children.isEmpty()) return null;
+        return node;
+    }
+
+    private static void parseDirectItems(Element parent, List<MenuNode> out) {
+        if (parent == null || out == null) return;
+        NodeList children = parent.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node n = children.item(i);
+            if (!(n instanceof Element)) continue;
+            Element el = (Element) n;
+            if (!"item".equals(el.getTagName())) continue;
+            MenuNode node = parseMenuNode(el);
+            if (node != null) out.add(node);
+        }
+    }
+
     private static List<MenuGroup> parseMenuXml(InputStream in) throws Exception {
         DocumentBuilder b = secureBuilder();
         Document d = b.parse(in);
@@ -73,24 +120,12 @@
 
             String tag = el.getTagName();
             if ("item".equals(tag)) {
-                String label = el.getAttribute("label");
-                String href  = el.getAttribute("href");
-                if (!label.isBlank() && !href.isBlank()) {
-                    ungrouped.items.add(new MenuItem(label.trim(), href.trim()));
-                }
+                MenuNode node = parseMenuNode(el);
+                if (node != null) ungrouped.items.add(node);
             } else if ("group".equals(tag)) {
-                String glabel = el.getAttribute("label");
-                MenuGroup g = new MenuGroup(glabel == null ? "" : glabel.trim());
-
-                NodeList gi = el.getElementsByTagName("item");
-                for (int j = 0; j < gi.getLength(); j++) {
-                    Element it = (Element) gi.item(j);
-                    String label = it.getAttribute("label");
-                    String href  = it.getAttribute("href");
-                    if (!label.isBlank() && !href.isBlank()) {
-                        g.items.add(new MenuItem(label.trim(), href.trim()));
-                    }
-                }
+                String glabel = safe(el.getAttribute("label")).trim();
+                MenuGroup g = new MenuGroup(glabel);
+                parseDirectItems(el, g.items);
                 if (!g.items.isEmpty()) groups.add(g);
             }
         }
@@ -107,24 +142,93 @@
 
     private static List<MenuGroup> defaultMenu() {
         MenuGroup g = new MenuGroup("");
-        g.items.add(new MenuItem("Home", "/index.jsp"));
-        g.items.add(new MenuItem("Users & Security", "/users_roles.jsp"));
-        g.items.add(new MenuItem("Cases", "/cases.jsp"));
-        g.items.add(new MenuItem("Tenant Fields", "/tenant_fields.jsp"));
-        g.items.add(new MenuItem("Form Assembly", "/forms.jsp"));
-        g.items.add(new MenuItem("Assembled Forms", "/assembled_forms.jsp"));
+        g.items.add(new MenuNode("Home", "/index.jsp"));
+        g.items.add(new MenuNode("Users & Security", "/users_roles.jsp"));
+        g.items.add(new MenuNode("Cases", "/cases.jsp"));
+        g.items.add(new MenuNode("Tenant Fields", "/tenant_fields.jsp"));
+        g.items.add(new MenuNode("Form Assembly", "/forms.jsp"));
+        g.items.add(new MenuNode("Assembled Forms", "/assembled_forms.jsp"));
         return java.util.List.of(g);
     }
 
     private static boolean isActive(String requestUri, String ctx, String href) {
         if (requestUri == null || href == null) return false;
-        String h = href.startsWith("/") ? href : ("/" + href);
+        String h = normalizeHref(href);
+        if (h.isBlank()) return false;
 
         if (ctx != null && !ctx.isBlank()) {
             String target = ctx + h;
             return requestUri.equals(target) || requestUri.endsWith(h);
         }
         return requestUri.equals(h) || requestUri.endsWith(h);
+    }
+
+    private static boolean isHrefActive(String requestUri, String ctx, String activeNav, String href) {
+        String h = normalizeHref(href);
+        if (h.isBlank()) return false;
+        if (activeNav != null && !activeNav.isBlank()) return activeNav.equalsIgnoreCase(h);
+        return isActive(requestUri, ctx, h);
+    }
+
+    private static boolean isNodeActive(String requestUri, String ctx, String activeNav, MenuNode node) {
+        if (node == null) return false;
+        if (isHrefActive(requestUri, ctx, activeNav, node.href)) return true;
+        for (int i = 0; i < node.children.size(); i++) {
+            if (isNodeActive(requestUri, ctx, activeNav, node.children.get(i))) return true;
+        }
+        return false;
+    }
+
+    private static void renderMenuNode(jakarta.servlet.jsp.JspWriter out,
+                                       MenuNode node,
+                                       String requestUri,
+                                       String ctx,
+                                       String activeNav,
+                                       int depth) throws java.io.IOException {
+        if (out == null || node == null) return;
+
+        String label = safe(node.label).trim();
+        String href = normalizeHref(node.href);
+        if (label.isBlank()) return;
+
+        boolean hasChildren = node.children != null && !node.children.isEmpty();
+        boolean selfActive = isHrefActive(requestUri, ctx, activeNav, href);
+        boolean branchActive = isNodeActive(requestUri, ctx, activeNav, node);
+        String depthClass = "depth-" + Math.max(0, depth);
+
+        if (hasChildren) {
+            out.write("<details class=\"dropdown-submenu " + depthClass + "\"" + (branchActive ? " open" : "") + ">");
+            out.write("<summary class=\"dropdown-submenu-trigger\">");
+            if (!href.isBlank()) {
+                String full = safe(ctx) + href;
+                out.write("<a class=\"dropdown-submenu-link " + (selfActive ? "is-active" : "") + "\" role=\"menuitem\" href=\"" + esc(full) + "\" onclick=\"event.stopPropagation();\">");
+                out.write("<span class=\"dropdown-item-label\">" + esc(label) + "</span>");
+                out.write("</a>");
+            } else {
+                out.write("<span class=\"dropdown-submenu-label\">" + esc(label) + "</span>");
+            }
+            out.write("<span class=\"dropdown-submenu-caret\" aria-hidden=\"true\">▸</span>");
+            out.write("</summary>");
+            out.write("<div class=\"dropdown-submenu-items\">");
+            for (int i = 0; i < node.children.size(); i++) {
+                renderMenuNode(out, node.children.get(i), requestUri, ctx, activeNav, depth + 1);
+            }
+            out.write("</div>");
+            out.write("</details>");
+            return;
+        }
+
+        if (href.isBlank()) {
+            out.write("<div class=\"dropdown-item dropdown-item-label-only " + depthClass + "\">");
+            out.write("<span class=\"dropdown-item-label\">" + esc(label) + "</span>");
+            out.write("</div>");
+            return;
+        }
+
+        String full = safe(ctx) + href;
+        out.write("<a class=\"dropdown-item " + depthClass + " " + (selfActive ? "is-active" : "") + "\" role=\"menuitem\" href=\"" + esc(full) + "\">");
+        out.write("<span class=\"dropdown-item-label\">" + esc(label) + "</span>");
+        out.write("</a>");
     }
 
     private static String uiThemeMode(String raw) {
@@ -234,6 +338,7 @@
     boolean userLoggedIn =
             userUuid != null && !userUuid.isBlank() &&
             userEmail != null && !userEmail.isBlank();
+    boolean navVisible = tenantLoggedIn && userLoggedIn;
 
     String uiThemeDefaultMode = "auto";
     String uiThemeUseLocation = "false";
@@ -291,51 +396,43 @@
     <div class="container header-row" style="padding:0.45rem 0; gap:0.75rem;">
         <div class="header-left" style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
 
-            <details class="dropdown nav-dropdown">
-                <summary class="dropdown-trigger btn-sm" aria-label="Open navigation menu">
-                    <span class="dropdown-trigger-label">
-                        <span class="brand-link">Controversies</span>
-                    </span>
-                    <span class="chevron" aria-hidden="true">▾</span>
-                </summary>
+            <% if (navVisible) { %>
+                <details class="dropdown nav-dropdown">
+                    <summary class="dropdown-trigger btn-sm" aria-label="Open navigation menu">
+                        <span class="dropdown-trigger-label">
+                            <span class="brand-link">Controversies</span>
+                        </span>
+                        <span class="chevron" aria-hidden="true">▾</span>
+                    </summary>
 
-                <div class="dropdown-panel" role="menu" aria-label="Site navigation">
-                    <%
-                        for (MenuGroup g : menuGroups) {
-                            boolean showTitle = (g.label != null && !g.label.isBlank());
-                    %>
-                        <div class="dropdown-group">
-                            <% if (showTitle) { %>
-                                <div class="dropdown-title"><%= esc(g.label) %></div>
-                            <% } %>
+                    <div class="dropdown-panel" role="menu" aria-label="Site navigation">
+                        <%
+                            for (MenuGroup g : menuGroups) {
+                                boolean showTitle = (g.label != null && !g.label.isBlank());
+                        %>
+                            <div class="dropdown-group">
+                                <% if (showTitle) { %>
+                                    <div class="dropdown-title"><%= esc(g.label) %></div>
+                                <% } %>
 
-                            <div class="dropdown-items">
-                                <%
-                                    for (MenuItem it : g.items) {
-                                        String href = (it.href == null) ? "" : it.href.trim();
-                                        if (!href.startsWith("/")) href = "/" + href;
-                                        String full = ctx + href;
-
-                                        boolean active =
-                                                (activeNav != null && !activeNav.isBlank())
-                                                        ? activeNav.equalsIgnoreCase(href)
-                                                        : isActive(uri, ctx, href);
-                                %>
-                                    <a class="dropdown-item <%= active ? "is-active" : "" %>"
-                                       role="menuitem"
-                                       href="<%= full %>">
-                                        <span class="dropdown-item-label"><%= esc(it.label) %></span>
-                                    </a>
-                                <%
-                                    }
-                                %>
+                                <div class="dropdown-items">
+                                    <%
+                                        for (MenuNode it : g.items) {
+                                            renderMenuNode(out, it, uri, ctx, activeNav, 0);
+                                    %>
+                                    <%
+                                        }
+                                    %>
+                                </div>
                             </div>
-                        </div>
-                    <%
-                        }
-                    %>
-                </div>
-            </details>
+                        <%
+                            }
+                        %>
+                    </div>
+                </details>
+            <% } else { %>
+                <span class="brand-link" aria-label="Controversies">Controversies</span>
+            <% } %>
 
             <div class="header-ui-controls" aria-label="Display controls">
                 <button type="button" id="uiThemeToggle" class="btn btn-ghost btn-sm header-ui-btn" title="Cycle theme mode: Auto, Dark, Light">
