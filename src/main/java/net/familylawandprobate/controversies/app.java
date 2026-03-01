@@ -22,6 +22,9 @@ public class app {
             return;
         }
 
+        // Start background queue workers early in process lifecycle.
+        notification_emails.defaultStore();
+
         tomcat t = new tomcat();
 
         int httpPort = 8080;

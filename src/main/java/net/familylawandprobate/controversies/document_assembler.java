@@ -707,7 +707,8 @@ public final class document_assembler {
 
     private static byte[] assembleRtf(byte[] templateBytes, Map<String, String> values) {
         String raw = extractTxtText(templateBytes);
-        TokenScan scan = scanTokens(raw, values);
+        String tokenSource = extractRtfTokenText(raw);
+        TokenScan scan = scanTokens(tokenSource, values);
 
         String out = raw;
         for (Map.Entry<String, String> e : scan.fullTokenToReplacement.entrySet()) {
@@ -715,9 +716,76 @@ public final class document_assembler {
             String token = safe(e.getKey());
             if (token.isBlank()) continue;
             String replacement = escapeRtf(safe(e.getValue()));
+            String escapedToken = escapeRtf(token);
+            if (!escapedToken.isBlank()) out = out.replace(escapedToken, replacement);
             out = out.replace(token, replacement);
         }
         return out.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Extracts token-visible text from raw RTF without invoking Swing/AWT parsers.
+     * This keeps assembly stable in headless/server runtimes while still allowing
+     * token scanning against escaped RTF literals such as \{\{token\}\}.
+     */
+    private static String extractRtfTokenText(String rawRtf) {
+        String src = safe(rawRtf);
+        if (src.isBlank()) return "";
+
+        StringBuilder out = new StringBuilder(Math.max(64, src.length()));
+        int i = 0;
+        while (i < src.length()) {
+            char ch = src.charAt(i);
+            if (ch == '{' || ch == '}') {
+                i++;
+                continue;
+            }
+            if (ch != '\\') {
+                out.append(ch);
+                i++;
+                continue;
+            }
+
+            if (i + 1 >= src.length()) break;
+            char next = src.charAt(i + 1);
+
+            if (next == '\\' || next == '{' || next == '}') {
+                out.append(next);
+                i += 2;
+                continue;
+            }
+
+            if (next == '\'') {
+                if (i + 3 < src.length()) {
+                    int hi = Character.digit(src.charAt(i + 2), 16);
+                    int lo = Character.digit(src.charAt(i + 3), 16);
+                    if (hi >= 0 && lo >= 0) out.append((char) ((hi << 4) + lo));
+                    i += 4;
+                    continue;
+                }
+                i += 2;
+                continue;
+            }
+
+            int j = i + 1;
+            if (next == 'u') {
+                j++;
+                if (j < src.length() && src.charAt(j) == '-') j++;
+                while (j < src.length() && Character.isDigit(src.charAt(j))) j++;
+                if (j < src.length() && src.charAt(j) == '?') j++;
+                if (j < src.length() && src.charAt(j) == ' ') j++;
+                i = j;
+                continue;
+            }
+
+            while (j < src.length() && Character.isLetter(src.charAt(j))) j++;
+            if (j < src.length() && src.charAt(j) == '-') j++;
+            while (j < src.length() && Character.isDigit(src.charAt(j))) j++;
+            if (j < src.length() && src.charAt(j) == ' ') j++;
+            i = j;
+        }
+
+        return out.toString();
     }
 
     private static byte[] assembleDoc(byte[] templateBytes, Map<String, String> values) throws Exception {

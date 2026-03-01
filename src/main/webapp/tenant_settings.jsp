@@ -8,6 +8,7 @@
 
 <%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.secret_redactor" %>
+<%@ page import="net.familylawandprobate.controversies.notification_emails" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 
@@ -63,6 +64,16 @@
     try {
       int v = Integer.parseInt(tsSafe(raw).trim());
       if (v < 0 || v > 23) return String.valueOf(fallback);
+      return String.valueOf(v);
+    } catch (Exception ignored) {
+      return String.valueOf(fallback);
+    }
+  }
+
+  private static String tsIntRange(String raw, int fallback, int min, int max) {
+    try {
+      int v = Integer.parseInt(tsSafe(raw).trim());
+      if (v < min || v > max) return String.valueOf(fallback);
       return String.valueOf(v);
     } catch (Exception ignored) {
       return String.valueOf(fallback);
@@ -139,10 +150,15 @@
   String loadedStorageBackend = tsSafe(settings.get("storage_backend")).trim().toLowerCase(Locale.ROOT);
   String loadedStorageStatus = tsSafe(settings.get("storage_connection_status")).trim().toLowerCase(Locale.ROOT);
   String loadedClioStatus = tsSafe(settings.get("clio_connection_status")).trim().toLowerCase(Locale.ROOT);
+  String loadedEmailProvider = tsSafe(settings.get("email_provider")).trim().toLowerCase(Locale.ROOT);
+  String loadedEmailStatus = tsSafe(settings.get("email_connection_status")).trim().toLowerCase(Locale.ROOT);
   if (loadedStorageBackend.isBlank()) setupChecklist.add("Choose and save a storage backend.");
   if (!"ok".equals(loadedStorageStatus)) setupChecklist.add("Run 'Test Storage Connection' until status is OK.");
   if (tsSafe(settings.get("clio_base_url")).isBlank()) setupChecklist.add("Enter Clio Base URL if this tenant uses Clio sync.");
   if (!"ok".equals(loadedClioStatus)) setupChecklist.add("Run 'Test Clio Connection' after credentials are configured.");
+  if (!"disabled".equals(loadedEmailProvider) && !"ok".equals(loadedEmailStatus)) {
+    setupChecklist.add("Run 'Test Email Connection' after email provider credentials are configured.");
+  }
 
   if ("POST".equalsIgnoreCase(request.getMethod())) {
     String action = tsSafe(request.getParameter("action")).trim();
@@ -168,6 +184,33 @@
     String clioOauthCallbackUrl = tsSafe(request.getParameter("clio_oauth_callback_url")).trim();
     String clioPrivateRelayUrl = tsSafe(request.getParameter("clio_private_relay_url")).trim();
 
+    String emailProvider = tsSafe(request.getParameter("email_provider")).trim().toLowerCase(Locale.ROOT);
+    if (!"smtp".equals(emailProvider) && !"microsoft_graph".equals(emailProvider)) emailProvider = "disabled";
+    String emailFromAddress = tsSafe(request.getParameter("email_from_address")).trim();
+    String emailFromName = tsSafe(request.getParameter("email_from_name")).trim();
+    String emailReplyTo = tsSafe(request.getParameter("email_reply_to")).trim();
+    String emailConnectTimeoutMs = tsIntRange(request.getParameter("email_connect_timeout_ms"), 15000, 1000, 120000);
+    String emailReadTimeoutMs = tsIntRange(request.getParameter("email_read_timeout_ms"), 20000, 1000, 180000);
+    String emailQueuePollSeconds = tsIntRange(request.getParameter("email_queue_poll_seconds"), 5, 1, 300);
+    String emailQueueBatchSize = tsIntRange(request.getParameter("email_queue_batch_size"), 10, 1, 200);
+    String emailQueueMaxAttempts = tsIntRange(request.getParameter("email_queue_max_attempts"), 8, 1, 50);
+    String emailQueueBackoffBaseMs = tsIntRange(request.getParameter("email_queue_backoff_base_ms"), 2000, 100, 600000);
+    String emailQueueBackoffMaxMs = tsIntRange(request.getParameter("email_queue_backoff_max_ms"), 300000, 500, 3600000);
+    String emailSmtpHost = tsSafe(request.getParameter("email_smtp_host")).trim();
+    String emailSmtpPort = tsIntRange(request.getParameter("email_smtp_port"), 587, 1, 65535);
+    String emailSmtpUsername = tsSafe(request.getParameter("email_smtp_username")).trim();
+    String emailSmtpPassword = tsSafe(request.getParameter("email_smtp_password")).trim();
+    boolean emailSmtpAuth = tsChecked(request.getParameter("email_smtp_auth"));
+    boolean emailSmtpStartTls = tsChecked(request.getParameter("email_smtp_starttls"));
+    boolean emailSmtpSsl = tsChecked(request.getParameter("email_smtp_ssl"));
+    String emailSmtpHeloDomain = tsSafe(request.getParameter("email_smtp_helo_domain")).trim();
+    String emailGraphTenantId = tsSafe(request.getParameter("email_graph_tenant_id")).trim();
+    String emailGraphClientId = tsSafe(request.getParameter("email_graph_client_id")).trim();
+    String emailGraphClientSecret = tsSafe(request.getParameter("email_graph_client_secret")).trim();
+    String emailGraphSenderUser = tsSafe(request.getParameter("email_graph_sender_user")).trim();
+    String emailGraphScope = tsSafe(request.getParameter("email_graph_scope")).trim();
+    if (emailGraphScope.isBlank()) emailGraphScope = "https://graph.microsoft.com/.default";
+
     boolean featureAdvancedAssembly = tsChecked(request.getParameter("feature_advanced_assembly"));
     boolean featureAsyncSync = tsChecked(request.getParameter("feature_async_sync"));
     String themeModeDefault = tsThemeMode(request.getParameter("theme_mode_default"));
@@ -181,6 +224,8 @@
     boolean saveStorageSecret = tsChecked(request.getParameter("save_storage_secret"));
     boolean saveStorageEncryptionKey = tsChecked(request.getParameter("save_storage_encryption_key"));
     boolean saveClioSecret = tsChecked(request.getParameter("save_clio_secret"));
+    boolean saveEmailSmtpPassword = tsChecked(request.getParameter("save_email_smtp_password"));
+    boolean saveEmailGraphClientSecret = tsChecked(request.getParameter("save_email_graph_client_secret"));
 
     settings.put("storage_backend", storageBackend);
     settings.put("storage_endpoint", storageEndpoint);
@@ -193,6 +238,28 @@
     settings.put("clio_auth_mode", clioAuthMode);
     settings.put("clio_oauth_callback_url", clioOauthCallbackUrl);
     settings.put("clio_private_relay_url", clioPrivateRelayUrl);
+    settings.put("email_provider", emailProvider);
+    settings.put("email_from_address", emailFromAddress);
+    settings.put("email_from_name", emailFromName);
+    settings.put("email_reply_to", emailReplyTo);
+    settings.put("email_connect_timeout_ms", emailConnectTimeoutMs);
+    settings.put("email_read_timeout_ms", emailReadTimeoutMs);
+    settings.put("email_queue_poll_seconds", emailQueuePollSeconds);
+    settings.put("email_queue_batch_size", emailQueueBatchSize);
+    settings.put("email_queue_max_attempts", emailQueueMaxAttempts);
+    settings.put("email_queue_backoff_base_ms", emailQueueBackoffBaseMs);
+    settings.put("email_queue_backoff_max_ms", emailQueueBackoffMaxMs);
+    settings.put("email_smtp_host", emailSmtpHost);
+    settings.put("email_smtp_port", emailSmtpPort);
+    settings.put("email_smtp_username", emailSmtpUsername);
+    settings.put("email_smtp_auth", emailSmtpAuth ? "true" : "false");
+    settings.put("email_smtp_starttls", emailSmtpStartTls ? "true" : "false");
+    settings.put("email_smtp_ssl", emailSmtpSsl ? "true" : "false");
+    settings.put("email_smtp_helo_domain", emailSmtpHeloDomain);
+    settings.put("email_graph_tenant_id", emailGraphTenantId);
+    settings.put("email_graph_client_id", emailGraphClientId);
+    settings.put("email_graph_sender_user", emailGraphSenderUser);
+    settings.put("email_graph_scope", emailGraphScope);
     settings.put("feature_advanced_assembly", featureAdvancedAssembly ? "true" : "false");
     settings.put("feature_async_sync", featureAsyncSync ? "true" : "false");
     settings.put("theme_mode_default", themeModeDefault);
@@ -206,11 +273,15 @@
     if (saveStorageSecret && !storageSecret.isBlank()) settings.put("storage_secret", storageSecret);
     if (saveStorageEncryptionKey && !storageEncryptionKey.isBlank()) settings.put("storage_encryption_key", storageEncryptionKey);
     if (saveClioSecret && !clioClientSecret.isBlank()) settings.put("clio_client_secret", clioClientSecret);
+    if (saveEmailSmtpPassword && !emailSmtpPassword.isBlank()) settings.put("email_smtp_password", emailSmtpPassword);
+    if (saveEmailGraphClientSecret && !emailGraphClientSecret.isBlank()) settings.put("email_graph_client_secret", emailGraphClientSecret);
 
     String effectiveStorageAccessKey = tsSafe(settings.get("storage_access_key")).trim();
     String effectiveStorageSecret = !storageSecret.isBlank() ? storageSecret : tsSafe(settings.get("storage_secret")).trim();
     String effectiveStorageEncryptionKey = !storageEncryptionKey.isBlank() ? storageEncryptionKey : tsSafe(settings.get("storage_encryption_key")).trim();
     String effectiveClioSecret = !clioClientSecret.isBlank() ? clioClientSecret : tsSafe(settings.get("clio_client_secret")).trim();
+    String effectiveEmailSmtpPassword = !emailSmtpPassword.isBlank() ? emailSmtpPassword : tsSafe(settings.get("email_smtp_password")).trim();
+    String effectiveEmailGraphClientSecret = !emailGraphClientSecret.isBlank() ? emailGraphClientSecret : tsSafe(settings.get("email_graph_client_secret")).trim();
 
     if ("test_storage_connection".equalsIgnoreCase(action)) {
       List<String> storageFailures = new ArrayList<String>();
@@ -282,6 +353,27 @@
       details.put("validation_issues", clioFailures.isEmpty() ? "none" : String.join(" | ", clioFailures));
       logs.logVerbose("tenant_settings_clio_test", tenantUuid, userUuid, "", "", details);
 
+    } else if ("test_email_connection".equalsIgnoreCase(action)) {
+      LinkedHashMap<String, String> emailCfg = new LinkedHashMap<String, String>();
+      emailCfg.putAll(settings);
+      if (!effectiveEmailSmtpPassword.isBlank()) emailCfg.put("email_smtp_password", effectiveEmailSmtpPassword);
+      if (!effectiveEmailGraphClientSecret.isBlank()) emailCfg.put("email_graph_client_secret", effectiveEmailGraphClientSecret);
+
+      notification_emails.ValidationResult emailValidation = notification_emails.defaultStore().validateConfiguration(emailCfg);
+      settings.put("email_connection_status", emailValidation.ok ? "ok" : "failed");
+      settings.put("email_connection_checked_at", store.nowIso());
+      if (emailValidation.ok) {
+        message = "Email connection test succeeded for provider: " + tsSafe(settings.get("email_provider")) + ".";
+      } else {
+        message = "Email connection test failed: " + String.join("; ", emailValidation.issues) + ".";
+      }
+      Map<String, String> details = new LinkedHashMap<String, String>();
+      details.put("action", "test_email_connection");
+      details.put("result", emailValidation.ok ? "ok" : "failed");
+      details.put("email_provider", tsSafe(settings.get("email_provider")));
+      details.put("validation_issues", emailValidation.issues.isEmpty() ? "none" : String.join(" | ", emailValidation.issues));
+      logs.logVerbose("tenant_settings_email_test", tenantUuid, userUuid, "", "", details);
+
     } else if ("rotate_storage_secret".equalsIgnoreCase(action)) {
       if (storageSecret.isBlank()) {
         error = "Enter a new storage secret before rotating.";
@@ -335,6 +427,15 @@
         valid = false;
         error = "Provide both theme latitude and longitude, or leave both blank.";
       }
+      LinkedHashMap<String, String> validationEmailCfg = new LinkedHashMap<String, String>();
+      validationEmailCfg.putAll(settings);
+      if (!effectiveEmailSmtpPassword.isBlank()) validationEmailCfg.put("email_smtp_password", effectiveEmailSmtpPassword);
+      if (!effectiveEmailGraphClientSecret.isBlank()) validationEmailCfg.put("email_graph_client_secret", effectiveEmailGraphClientSecret);
+      notification_emails.ValidationResult emailValidation = notification_emails.defaultStore().validateConfiguration(validationEmailCfg);
+      if (!emailValidation.ok) {
+        valid = false;
+        error = "Email provider settings are invalid: " + String.join("; ", emailValidation.issues) + ".";
+      }
 
       if (!valid) {
         logs.logVerbose("tenant_settings_validation_failed", tenantUuid, userUuid, "", "", Map.of("action", action, "error", tsSafe(error)));
@@ -351,6 +452,9 @@
           settings.put("clio_auth_health_checked_at", store.nowIso());
 
           store.write(tenantUuid, settings);
+          if (!"disabled".equalsIgnoreCase(tsSafe(settings.get("email_provider")))) {
+            notification_emails.defaultStore().ensureQueue(tenantUuid);
+          }
 
           Map<String, String> details = new LinkedHashMap<String, String>();
           details.put("storage_backend", tsSafe(settings.get("storage_backend")));
@@ -365,12 +469,20 @@
           details.put("clio_connection_status", tsSafe(settings.get("clio_connection_status")));
           details.put("clio_auth_mode", tsSafe(settings.get("clio_auth_mode")));
           details.put("clio_auth_health_status", tsSafe(settings.get("clio_auth_health_status")));
+          details.put("email_provider", tsSafe(settings.get("email_provider")));
+          details.put("email_connection_status", tsSafe(settings.get("email_connection_status")));
+          details.put("email_queue_batch_size", tsSafe(settings.get("email_queue_batch_size")));
+          details.put("email_queue_max_attempts", tsSafe(settings.get("email_queue_max_attempts")));
           details.put("storage_secret_saved", tsSafe(settings.get("storage_secret")).isBlank() ? "no" : "yes");
           details.put("storage_encryption_key_saved", tsSafe(settings.get("storage_encryption_key")).isBlank() ? "no" : "yes");
           details.put("clio_client_secret_saved", tsSafe(settings.get("clio_client_secret")).isBlank() ? "no" : "yes");
+          details.put("email_smtp_password_saved", tsSafe(settings.get("email_smtp_password")).isBlank() ? "no" : "yes");
+          details.put("email_graph_client_secret_saved", tsSafe(settings.get("email_graph_client_secret")).isBlank() ? "no" : "yes");
           details.put("save_storage_secret_requested", saveStorageSecret ? "true" : "false");
           details.put("save_storage_encryption_key_requested", saveStorageEncryptionKey ? "true" : "false");
           details.put("save_clio_secret_requested", saveClioSecret ? "true" : "false");
+          details.put("save_email_smtp_password_requested", saveEmailSmtpPassword ? "true" : "false");
+          details.put("save_email_graph_client_secret_requested", saveEmailGraphClientSecret ? "true" : "false");
           logs.logVerbose("tenant_settings_changed", tenantUuid, userUuid, "", "", details);
 
           String status = "saved";
@@ -395,6 +507,10 @@
   String maskedClioSecret = tsSafe(settings.get("clio_client_secret")).isBlank() ? "" : "********";
   String maskedStorageEncryptionKey = tsSafe(settings.get("storage_encryption_key")).isBlank() ? "" : "********";
   String maskedStorageAccessKey = tsSafe(settings.get("storage_access_key")).isBlank() ? "" : "********";
+  String maskedEmailSmtpPassword = tsSafe(settings.get("email_smtp_password")).isBlank() ? "" : "********";
+  String maskedEmailGraphClientSecret = tsSafe(settings.get("email_graph_client_secret")).isBlank() ? "" : "********";
+  String emailProviderMode = tsSafe(settings.get("email_provider")).trim().toLowerCase(Locale.ROOT);
+  if (!"smtp".equals(emailProviderMode) && !"microsoft_graph".equals(emailProviderMode)) emailProviderMode = "disabled";
   String clioMode = tsSafe(settings.get("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
   if (!"private".equals(clioMode)) clioMode = "public";
   String themeMode = tsThemeMode(settings.get("theme_mode_default"));
@@ -431,7 +547,7 @@
 
   <section class="card" style="margin-top:12px;">
     <h2 style="margin-top:0;">Setup Guide (Quick + Advanced)</h2>
-    <div class="meta" style="margin-bottom:8px;">For first-time setup: complete Storage, then Clio (if used), test both, then Save Settings. Experienced admins can update only the fields they need and run targeted tests.</div>
+    <div class="meta" style="margin-bottom:8px;">For first-time setup: complete Storage, Clio (if used), and Notification Email (if used), then run each test and Save Settings. Experienced admins can update only the fields they need and run targeted tests.</div>
     <div class="grid grid-2">
       <div>
         <h3 style="margin:0 0 6px 0;">First-time checklist</h3>
@@ -550,6 +666,102 @@
   </section>
 
   <section class="card" style="margin-top:12px;">
+    <h2 style="margin-top:0;">Notification Email (Queue + Transport)</h2>
+    <div class="meta" style="margin-bottom:10px;">Configure tenant-level notification email delivery with SMTP or Microsoft Graph. Technical queue/timeout settings are tenant-admin tunable.</div>
+
+    <div class="grid grid-2">
+      <label>Provider
+        <select name="email_provider">
+          <option value="disabled" <%= "disabled".equals(emailProviderMode) ? "selected" : "" %>>Disabled</option>
+          <option value="smtp" <%= "smtp".equals(emailProviderMode) ? "selected" : "" %>>SMTP</option>
+          <option value="microsoft_graph" <%= "microsoft_graph".equals(emailProviderMode) ? "selected" : "" %>>Microsoft Graph</option>
+        </select>
+      </label>
+      <label>From Address
+        <input type="text" name="email_from_address" value="<%= tsEsc(tsSafe(settings.get("email_from_address"))) %>" placeholder="notifications@example.com" />
+      </label>
+      <label>From Name
+        <input type="text" name="email_from_name" value="<%= tsEsc(tsSafe(settings.get("email_from_name"))) %>" placeholder="Controversies Notifications" />
+      </label>
+      <label>Reply-To
+        <input type="text" name="email_reply_to" value="<%= tsEsc(tsSafe(settings.get("email_reply_to"))) %>" placeholder="support@example.com" />
+      </label>
+      <label>Connect Timeout (ms)
+        <input type="number" min="1000" max="120000" name="email_connect_timeout_ms" value="<%= tsEsc(tsIntRange(settings.get("email_connect_timeout_ms"), 15000, 1000, 120000)) %>" />
+      </label>
+      <label>Read Timeout (ms)
+        <input type="number" min="1000" max="180000" name="email_read_timeout_ms" value="<%= tsEsc(tsIntRange(settings.get("email_read_timeout_ms"), 20000, 1000, 180000)) %>" />
+      </label>
+      <label>Queue Poll Seconds
+        <input type="number" min="1" max="300" name="email_queue_poll_seconds" value="<%= tsEsc(tsIntRange(settings.get("email_queue_poll_seconds"), 5, 1, 300)) %>" />
+      </label>
+      <label>Queue Batch Size
+        <input type="number" min="1" max="200" name="email_queue_batch_size" value="<%= tsEsc(tsIntRange(settings.get("email_queue_batch_size"), 10, 1, 200)) %>" />
+      </label>
+      <label>Queue Max Attempts
+        <input type="number" min="1" max="50" name="email_queue_max_attempts" value="<%= tsEsc(tsIntRange(settings.get("email_queue_max_attempts"), 8, 1, 50)) %>" />
+      </label>
+      <label>Queue Backoff Base (ms)
+        <input type="number" min="100" max="600000" name="email_queue_backoff_base_ms" value="<%= tsEsc(tsIntRange(settings.get("email_queue_backoff_base_ms"), 2000, 100, 600000)) %>" />
+      </label>
+      <label>Queue Backoff Max (ms)
+        <input type="number" min="500" max="3600000" name="email_queue_backoff_max_ms" value="<%= tsEsc(tsIntRange(settings.get("email_queue_backoff_max_ms"), 300000, 500, 3600000)) %>" />
+      </label>
+      <div></div>
+    </div>
+
+    <h3 style="margin-top:14px;">SMTP Settings</h3>
+    <div class="grid grid-2">
+      <label>SMTP Host
+        <input type="text" name="email_smtp_host" value="<%= tsEsc(tsSafe(settings.get("email_smtp_host"))) %>" placeholder="smtp.example.com" />
+      </label>
+      <label>SMTP Port
+        <input type="number" min="1" max="65535" name="email_smtp_port" value="<%= tsEsc(tsIntRange(settings.get("email_smtp_port"), 587, 1, 65535)) %>" />
+      </label>
+      <label>SMTP Username
+        <input type="text" name="email_smtp_username" value="<%= tsEsc(tsSafe(settings.get("email_smtp_username"))) %>" />
+      </label>
+      <label>SMTP Password
+        <input type="password" name="email_smtp_password" value="" placeholder="<%= tsEsc(maskedEmailSmtpPassword) %>" />
+      </label>
+      <label>SMTP HELO Domain (optional)
+        <input type="text" name="email_smtp_helo_domain" value="<%= tsEsc(tsSafe(settings.get("email_smtp_helo_domain"))) %>" />
+      </label>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <label><input type="checkbox" name="email_smtp_auth" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("email_smtp_auth"))) ? "checked" : "" %> /> SMTP Auth</label>
+        <label><input type="checkbox" name="email_smtp_starttls" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("email_smtp_starttls"))) ? "checked" : "" %> /> STARTTLS</label>
+        <label><input type="checkbox" name="email_smtp_ssl" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("email_smtp_ssl"))) ? "checked" : "" %> /> SSL</label>
+      </div>
+    </div>
+
+    <h3 style="margin-top:14px;">Microsoft Graph Settings</h3>
+    <div class="grid grid-2">
+      <label>Tenant ID
+        <input type="text" name="email_graph_tenant_id" value="<%= tsEsc(tsSafe(settings.get("email_graph_tenant_id"))) %>" />
+      </label>
+      <label>Client ID
+        <input type="text" name="email_graph_client_id" value="<%= tsEsc(tsSafe(settings.get("email_graph_client_id"))) %>" />
+      </label>
+      <label>Client Secret
+        <input type="password" name="email_graph_client_secret" value="" placeholder="<%= tsEsc(maskedEmailGraphClientSecret) %>" />
+      </label>
+      <label>Sender User/Mailbox
+        <input type="text" name="email_graph_sender_user" value="<%= tsEsc(tsSafe(settings.get("email_graph_sender_user"))) %>" placeholder="notifications@yourtenant.com" />
+      </label>
+      <label>Scope
+        <input type="text" name="email_graph_scope" value="<%= tsEsc(tsSafe(settings.get("email_graph_scope"))) %>" placeholder="https://graph.microsoft.com/.default" />
+      </label>
+      <div></div>
+    </div>
+
+    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+      <button type="submit" class="btn btn-ghost" name="action" value="test_email_connection">Test Email Connection</button>
+      <label><input type="checkbox" name="save_email_smtp_password" value="1" /> Persist entered SMTP password on Save</label>
+      <label><input type="checkbox" name="save_email_graph_client_secret" value="1" /> Persist entered Graph client secret on Save</label>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px;">
     <h2 style="margin-top:0;">Appearance & Theme</h2>
     <div class="meta" style="margin-bottom:10px;">
       Default tenant theme behavior for all pages. End users can still manually override in the navigation bar.
@@ -604,6 +816,8 @@
       <div>S3 SSE mode: <strong><%= tsEsc(tsSafe(settings.get("storage_s3_sse_mode"))) %></strong></div>
       <div>Clio connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_connection_checked_at")))) %>)</div>
       <div>Clio auth mode health: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_auth_health_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_auth_health_checked_at")))) %>)</div>
+      <div>Email provider: <strong><%= tsEsc(tsSafe(settings.get("email_provider"))) %></strong></div>
+      <div>Email connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("email_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("email_connection_checked_at")))) %>)</div>
       <div>Theme default: <strong><%= tsEsc(themeMode) %></strong> • text size <strong><%= tsEsc(themeTextSize) %></strong></div>
       <div>Theme auto schedule: light <strong><%= tsEsc(themeLightHourSaved) %>:00</strong>, dark <strong><%= tsEsc(themeDarkHourSaved) %>:00</strong></div>
       <div>Sensitive output policy: <strong><%= tsEsc(secret_redactor.redactValue("hidden")) %></strong></div>

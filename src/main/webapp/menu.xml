@@ -24,6 +24,10 @@
   </item>
 
   <item label="Help">
+    <item label="Help Center" href="/help_center.jsp" />
+    <item label="Getting Started (Legal Team)" href="/help_getting_started.jsp" />
+    <item label="Case Workflow Guide" href="/help_case_workflow.jsp" />
+    <item label="Form Assembly Guide" href="/help_form_assembly.jsp" />
     <item label="Token Guide" href="/token_guide.jsp" />
     <item label="Markup Notation" href="/markup_notation.jsp" />
   </item>

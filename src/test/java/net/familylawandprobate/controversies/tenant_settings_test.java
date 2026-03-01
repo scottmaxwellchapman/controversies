@@ -116,6 +116,42 @@ public class tenant_settings_test {
     }
 
     @Test
+    void sanitize_supports_email_provider_and_tunable_settings() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("email_provider", "SMTP");
+        in.put("email_smtp_auth", "yes");
+        in.put("email_smtp_starttls", "true");
+        in.put("email_smtp_ssl", "false");
+        in.put("email_smtp_port", "2525");
+        in.put("email_connect_timeout_ms", "12000");
+        in.put("email_read_timeout_ms", "21000");
+        in.put("email_queue_poll_seconds", "6");
+        in.put("email_queue_batch_size", "15");
+        in.put("email_queue_max_attempts", "12");
+        in.put("email_queue_backoff_base_ms", "4000");
+        in.put("email_queue_backoff_max_ms", "120000");
+        in.put("email_connection_status", "ok");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("smtp", out.get("email_provider"));
+        assertEquals("true", out.get("email_smtp_auth"));
+        assertEquals("true", out.get("email_smtp_starttls"));
+        assertEquals("false", out.get("email_smtp_ssl"));
+        assertEquals("2525", out.get("email_smtp_port"));
+        assertEquals("12000", out.get("email_connect_timeout_ms"));
+        assertEquals("21000", out.get("email_read_timeout_ms"));
+        assertEquals("6", out.get("email_queue_poll_seconds"));
+        assertEquals("15", out.get("email_queue_batch_size"));
+        assertEquals("12", out.get("email_queue_max_attempts"));
+        assertEquals("4000", out.get("email_queue_backoff_base_ms"));
+        assertEquals("120000", out.get("email_queue_backoff_max_ms"));
+        assertEquals("ok", out.get("email_connection_status"));
+    }
+
+    @Test
     void writes_secrets_in_encrypted_blob_separate_from_general_settings() throws Exception {
         Path pepper = Paths.get("data", "sec", "random_pepper.bin").toAbsolutePath();
         Files.createDirectories(pepper.getParent());
@@ -136,6 +172,8 @@ public class tenant_settings_test {
             in.put("storage_s3_sse_mode", "aws_kms");
             in.put("storage_s3_sse_kms_key_id", "kms-key-123");
             in.put("clio_client_secret", "clio-secret");
+            in.put("email_smtp_password", "smtp-secret");
+            in.put("email_graph_client_secret", "graph-secret");
             store.write(tenantUuid, in);
 
             Path settingsPath = Paths.get("data", "tenants", tenantUuid, "settings", "tenant_settings.json").toAbsolutePath();
@@ -146,6 +184,8 @@ public class tenant_settings_test {
 
             assertFalse(settingsJson.contains("storage-secret"));
             assertFalse(settingsJson.contains("clio-secret"));
+            assertFalse(settingsJson.contains("smtp-secret"));
+            assertFalse(settingsJson.contains("graph-secret"));
             assertTrue(secretsJson.contains("ciphertext"));
 
             Map<String, String> roundtrip = store.read(tenantUuid);
@@ -155,6 +195,8 @@ public class tenant_settings_test {
             assertEquals("aws_kms", roundtrip.get("storage_s3_sse_mode"));
             assertEquals("kms-key-123", roundtrip.get("storage_s3_sse_kms_key_id"));
             assertEquals("clio-secret", roundtrip.get("clio_client_secret"));
+            assertEquals("smtp-secret", roundtrip.get("email_smtp_password"));
+            assertEquals("graph-secret", roundtrip.get("email_graph_client_secret"));
         } finally {
             deleteTenantDirQuiet(tenantUuid);
         }

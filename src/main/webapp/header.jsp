@@ -149,6 +149,14 @@
         g.items.add(new MenuNode("Tenant Fields", "/tenant_fields.jsp"));
         g.items.add(new MenuNode("Form Assembly", "/forms.jsp"));
         g.items.add(new MenuNode("Assembled Forms", "/assembled_forms.jsp"));
+        MenuNode help = new MenuNode("Help", "");
+        help.children.add(new MenuNode("Help Center", "/help_center.jsp"));
+        help.children.add(new MenuNode("Getting Started (Legal Team)", "/help_getting_started.jsp"));
+        help.children.add(new MenuNode("Case Workflow Guide", "/help_case_workflow.jsp"));
+        help.children.add(new MenuNode("Form Assembly Guide", "/help_form_assembly.jsp"));
+        help.children.add(new MenuNode("Token Guide", "/token_guide.jsp"));
+        help.children.add(new MenuNode("Markup Notation", "/markup_notation.jsp"));
+        g.items.add(help);
         return java.util.List.of(g);
     }
 

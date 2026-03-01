@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,6 +13,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.xwpf.extractor.XWPFWordExtractor;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.junit.jupiter.api.Test;
@@ -142,6 +145,65 @@ public class document_assembler_snapshot_test {
         }
     }
 
+    @Test
+    void assemble_and_preview_support_doc_templates() throws Exception {
+        document_assembler assembler = new document_assembler();
+        Map<String, String> values = new LinkedHashMap<String, String>();
+        values.put("case.label", "Legacy Matter");
+        values.put("tenant.name", "Acme Tenancy LLC");
+
+        byte[] doc = fixtureBytes("legacy-template.doc");
+        document_assembler.PreviewResult preview = assembler.preview(doc, "doc", values);
+
+        assertTrue(preview.sourceText.contains("{{case.label}}"));
+        assertTrue(preview.sourceText.contains("{{tenant.name}}"));
+        assertTrue(preview.assembledText.contains("Case Label: Legacy Matter"));
+        assertTrue(preview.assembledText.contains("Tenant: Acme Tenancy LLC"));
+
+        document_assembler.AssembledFile assembled = assembler.assemble(doc, "doc", values);
+        assertEquals("doc", assembled.extension);
+        assertEquals("application/msword", assembled.contentType);
+
+        String outText = extractDocText(assembled.bytes);
+        assertTrue(outText.contains("Case Label: Legacy Matter"));
+        assertTrue(outText.contains("Tenant: Acme Tenancy LLC"));
+        assertFalse(outText.contains("{{case.label}}"));
+        assertFalse(outText.contains("{{tenant.name}}"));
+    }
+
+    @Test
+    void assemble_and_preview_support_rtf_templates_with_escaped_tokens() throws Exception {
+        document_assembler assembler = new document_assembler();
+        Map<String, String> values = new LinkedHashMap<String, String>();
+        values.put("case.label", "RTF Matter");
+        values.put("tenant.name", "Acme Tenancy LLC");
+
+        byte[] rtf = minimalRtf("Case Label: {{case.label}}\\nTenant: {{tenant.name}}");
+        document_assembler.AssembledFile assembled = assembler.assemble(rtf, "rtf", values);
+        assertEquals("rtf", assembled.extension);
+        assertEquals("application/rtf", assembled.contentType);
+
+        String outRaw = new String(assembled.bytes, StandardCharsets.UTF_8);
+        assertTrue(outRaw.contains("RTF Matter"));
+        assertTrue(outRaw.contains("Acme Tenancy LLC"));
+        assertFalse(outRaw.contains("\\{\\{case.label\\}\\}"));
+        assertFalse(outRaw.contains("\\{\\{tenant.name\\}\\}"));
+    }
+
+    @Test
+    void assemble_detects_rtf_payload_when_template_extension_is_doc() throws Exception {
+        document_assembler assembler = new document_assembler();
+        Map<String, String> values = new LinkedHashMap<String, String>();
+        values.put("case.label", "Misnamed RTF");
+
+        byte[] rtf = minimalRtf("Case Label: {{case.label}}");
+        document_assembler.AssembledFile assembled = assembler.assemble(rtf, "doc", values);
+
+        assertEquals("rtf", assembled.extension);
+        assertEquals("application/rtf", assembled.contentType);
+        assertTrue(new String(assembled.bytes, StandardCharsets.UTF_8).contains("Misnamed RTF"));
+    }
+
     private static Map<String, String> baseValues() {
         Map<String, String> values = new LinkedHashMap<String, String>();
         values.put("tenant.name", "Acme Tenancy LLC");
@@ -191,5 +253,40 @@ public class document_assembler_snapshot_test {
             doc.write(out);
             return out.toByteArray();
         }
+    }
+
+    private static String extractDocText(byte[] bytes) throws Exception {
+        try (HWPFDocument doc = new HWPFDocument(new ByteArrayInputStream(bytes));
+             WordExtractor extractor = new WordExtractor(doc)) {
+            return extractor.getText();
+        }
+    }
+
+    private static byte[] minimalRtf(String plainTextWithNewlineMarker) {
+        String text = String.valueOf(plainTextWithNewlineMarker == null ? "" : plainTextWithNewlineMarker);
+        String[] lines = text.split("\\\\n", -1);
+        StringBuilder rtf = new StringBuilder(256);
+        rtf.append("{\\rtf1\\ansi\\deff0 {\\fonttbl{\\f0 Times New Roman;}}\\f0\\fs24 ");
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) rtf.append("\\par ");
+            rtf.append(escapeRtfLiteral(lines[i]));
+        }
+        rtf.append("}");
+        return rtf.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static String escapeRtfLiteral(String text) {
+        String v = String.valueOf(text == null ? "" : text);
+        StringBuilder out = new StringBuilder(v.length() + 32);
+        for (int i = 0; i < v.length(); i++) {
+            char ch = v.charAt(i);
+            if (ch == '\\') out.append("\\\\");
+            else if (ch == '{') out.append("\\{");
+            else if (ch == '}') out.append("\\}");
+            else if (ch == '\n') out.append("\\par ");
+            else if (ch == '\r') continue;
+            else out.append(ch);
+        }
+        return out.toString();
     }
 }

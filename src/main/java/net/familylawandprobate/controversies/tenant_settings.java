@@ -65,7 +65,33 @@ public final class tenant_settings {
             "clio_connection_status",
             "clio_connection_checked_at",
             "clio_auth_health_status",
-            "clio_auth_health_checked_at"
+            "clio_auth_health_checked_at",
+            "email_provider",
+            "email_from_address",
+            "email_from_name",
+            "email_reply_to",
+            "email_connect_timeout_ms",
+            "email_read_timeout_ms",
+            "email_queue_poll_seconds",
+            "email_queue_batch_size",
+            "email_queue_max_attempts",
+            "email_queue_backoff_base_ms",
+            "email_queue_backoff_max_ms",
+            "email_connection_status",
+            "email_connection_checked_at",
+            "email_smtp_host",
+            "email_smtp_port",
+            "email_smtp_username",
+            "email_smtp_password",
+            "email_smtp_auth",
+            "email_smtp_starttls",
+            "email_smtp_ssl",
+            "email_smtp_helo_domain",
+            "email_graph_tenant_id",
+            "email_graph_client_id",
+            "email_graph_client_secret",
+            "email_graph_sender_user",
+            "email_graph_scope"
     };
 
     private static final String[] SECRET_KEYS = new String[] {
@@ -74,7 +100,9 @@ public final class tenant_settings {
             "storage_encryption_key",
             "clio_client_secret",
             "clio_access_token",
-            "clio_refresh_token"
+            "clio_refresh_token",
+            "email_smtp_password",
+            "email_graph_client_secret"
     };
 
     public static final class StartupSelfCheckResult {
@@ -256,6 +284,32 @@ public final class tenant_settings {
         d.put("clio_connection_checked_at", "");
         d.put("clio_auth_health_status", "unknown");
         d.put("clio_auth_health_checked_at", "");
+        d.put("email_provider", "disabled");
+        d.put("email_from_address", "");
+        d.put("email_from_name", "");
+        d.put("email_reply_to", "");
+        d.put("email_connect_timeout_ms", "15000");
+        d.put("email_read_timeout_ms", "20000");
+        d.put("email_queue_poll_seconds", "5");
+        d.put("email_queue_batch_size", "10");
+        d.put("email_queue_max_attempts", "8");
+        d.put("email_queue_backoff_base_ms", "2000");
+        d.put("email_queue_backoff_max_ms", "300000");
+        d.put("email_connection_status", "unknown");
+        d.put("email_connection_checked_at", "");
+        d.put("email_smtp_host", "");
+        d.put("email_smtp_port", "587");
+        d.put("email_smtp_username", "");
+        d.put("email_smtp_password", "");
+        d.put("email_smtp_auth", "true");
+        d.put("email_smtp_starttls", "true");
+        d.put("email_smtp_ssl", "false");
+        d.put("email_smtp_helo_domain", "");
+        d.put("email_graph_tenant_id", "");
+        d.put("email_graph_client_id", "");
+        d.put("email_graph_client_secret", "");
+        d.put("email_graph_sender_user", "");
+        d.put("email_graph_scope", "https://graph.microsoft.com/.default");
         return d;
     }
 
@@ -277,8 +331,16 @@ public final class tenant_settings {
         String v = safe(value).trim();
 
         if ("feature_advanced_assembly".equals(key) || "feature_async_sync".equals(key)
-                || "clio_enabled".equals(key) || "theme_use_location".equals(key)) {
+                || "clio_enabled".equals(key) || "theme_use_location".equals(key)
+                || "email_smtp_auth".equals(key) || "email_smtp_starttls".equals(key)
+                || "email_smtp_ssl".equals(key)) {
             return truthy(v) ? "true" : "false";
+        }
+
+        if ("email_provider".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if (!"disabled".equals(mode) && !"smtp".equals(mode) && !"microsoft_graph".equals(mode)) return "disabled";
+            return mode;
         }
 
         if ("theme_mode_default".equals(key)) {
@@ -366,6 +428,60 @@ public final class tenant_settings {
             return s;
         }
 
+        if ("email_connection_status".equals(key)) {
+            String s = v.toLowerCase(Locale.ROOT);
+            if (!"ok".equals(s) && !"failed".equals(s) && !"unknown".equals(s)) return "unknown";
+            return s;
+        }
+
+        if ("email_smtp_port".equals(key)) {
+            int port = parseInt(v, 587);
+            if (port < 1 || port > 65535) return "587";
+            return String.valueOf(port);
+        }
+
+        if ("email_connect_timeout_ms".equals(key)) {
+            int ms = parseInt(v, 15000);
+            if (ms < 1000 || ms > 120000) return "15000";
+            return String.valueOf(ms);
+        }
+
+        if ("email_read_timeout_ms".equals(key)) {
+            int ms = parseInt(v, 20000);
+            if (ms < 1000 || ms > 180000) return "20000";
+            return String.valueOf(ms);
+        }
+
+        if ("email_queue_poll_seconds".equals(key)) {
+            int sec = parseInt(v, 5);
+            if (sec < 1 || sec > 300) return "5";
+            return String.valueOf(sec);
+        }
+
+        if ("email_queue_batch_size".equals(key)) {
+            int n = parseInt(v, 10);
+            if (n < 1 || n > 200) return "10";
+            return String.valueOf(n);
+        }
+
+        if ("email_queue_max_attempts".equals(key)) {
+            int n = parseInt(v, 8);
+            if (n < 1 || n > 50) return "8";
+            return String.valueOf(n);
+        }
+
+        if ("email_queue_backoff_base_ms".equals(key)) {
+            int ms = parseInt(v, 2000);
+            if (ms < 100 || ms > 600000) return "2000";
+            return String.valueOf(ms);
+        }
+
+        if ("email_queue_backoff_max_ms".equals(key)) {
+            int ms = parseInt(v, 300000);
+            if (ms < 500 || ms > 3600000) return "300000";
+            return String.valueOf(ms);
+        }
+
         if (v.length() > 2048) v = v.substring(0, 2048);
         return v;
     }
@@ -403,6 +519,25 @@ public final class tenant_settings {
                     : !safe(cfg.get("clio_private_relay_url")).isBlank();
             if (!(baseReady && secretReady && modeReady)) {
                 failures.add("tenant=" + safeFileToken(tenantUuid) + " clio enabled with invalid credentials");
+            }
+        }
+
+        String emailProvider = safe(cfg.get("email_provider")).trim().toLowerCase(Locale.ROOT);
+        if ("smtp".equals(emailProvider)) {
+            boolean authEnabled = "true".equalsIgnoreCase(safe(cfg.get("email_smtp_auth")));
+            boolean hasHost = !safe(cfg.get("email_smtp_host")).isBlank();
+            int smtpPort = parseInt(safe(cfg.get("email_smtp_port")), 587);
+            boolean hasAuth = !authEnabled || (!safe(cfg.get("email_smtp_username")).isBlank() && !safe(cfg.get("email_smtp_password")).isBlank());
+            if (!(hasHost && smtpPort >= 1 && smtpPort <= 65535 && hasAuth)) {
+                failures.add("tenant=" + safeFileToken(tenantUuid) + " smtp email provider enabled with invalid credentials");
+            }
+        } else if ("microsoft_graph".equals(emailProvider)) {
+            boolean ready = !safe(cfg.get("email_graph_tenant_id")).isBlank()
+                    && !safe(cfg.get("email_graph_client_id")).isBlank()
+                    && !safe(cfg.get("email_graph_client_secret")).isBlank()
+                    && !safe(cfg.get("email_graph_sender_user")).isBlank();
+            if (!ready) {
+                failures.add("tenant=" + safeFileToken(tenantUuid) + " microsoft graph email provider enabled with invalid credentials");
             }
         }
     }
