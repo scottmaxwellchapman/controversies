@@ -86,6 +86,9 @@ public final class filter implements Filter {
 
     // Context attribute names
     private static final String CTX_IPLISTS = "ipLists";
+    private static final String API_TENANT_HEADER = "X-Tenant-UUID";
+    private static final String API_KEY_HEADER = "X-API-Key";
+    private static final String API_SECRET_HEADER = "X-API-Secret";
 
     // --- Access log (rotating XML) ---
     private boolean enableAccessLog = true;
@@ -211,13 +214,24 @@ public final class filter implements Filter {
             // 3) Very light path sanity checks (no body reads; avoids hangs)
             if (!pathLooksSafe(req, wrapped)) return;
 
-            // 4) Block non-browser clients (tools + spiders)
-            if (blockNonBrowserClients && !browserClientAllowed(req, wrapped, clientIp)) return;
+            boolean apiRequest = isApiRequest(req);
 
-            // 5) IP allow/deny via ip_lists (never block localhost)
+            // 4) IP allow/deny via ip_lists (never blocks localhost)
             if (!ipAllowed(req, wrapped, clientIp)) return;
 
-            // 6) CSRF (token-only; no Origin/Referer checks)
+            if (apiRequest) {
+                // API requests are automation-first: no browser heuristic and no CSRF.
+                if (apiAuthRequired(req)) {
+                    if (!apiAuthOk(req, wrapped, clientIp)) return;
+                }
+                chain.doFilter(req, wrapped);
+                return;
+            }
+
+            // 5) Block non-browser clients (tools + spiders) for interactive web UI.
+            if (blockNonBrowserClients && !browserClientAllowed(req, wrapped, clientIp)) return;
+
+            // 6) CSRF (token-only; no origin/referer checks) for web UI state changes.
             if (enableCsrf) {
                 if (!csrfOk(req, wrapped)) return;
             }
@@ -409,6 +423,92 @@ public final class filter implements Filter {
                 || "::1".equals(s)
                 || "0:0:0:0:0:0:0:1".equalsIgnoreCase(s)
                 || s.startsWith("127.");
+    }
+
+    private static String normalizedPath(HttpServletRequest req) {
+        if (req == null) return "";
+        String uri = safe(req.getRequestURI());
+        String ctx = safe(req.getContextPath());
+        String path = uri;
+        if (!ctx.isBlank() && path.startsWith(ctx)) {
+            path = path.substring(ctx.length());
+        }
+        if (path.isBlank()) path = "/";
+        if (!path.startsWith("/")) path = "/" + path;
+        return path;
+    }
+
+    private static boolean isApiRequest(HttpServletRequest req) {
+        return normalizedPath(req).startsWith("/api/");
+    }
+
+    private static boolean apiAuthRequired(HttpServletRequest req) {
+        String path = normalizedPath(req);
+        if (!path.startsWith("/api/")) return false;
+        if ("/api/v1/help".equals(path)) return false;
+        if ("/api/v1/help/readme".equals(path)) return false;
+        if ("/api/v1/ping".equals(path)) return false;
+        if ("/api/v1/capabilities".equals(path)) return false;
+        return true;
+    }
+
+    private boolean apiAuthOk(HttpServletRequest req, HttpServletResponse res, String clientIp) throws IOException {
+        String tenantUuid = safe(req.getHeader(API_TENANT_HEADER)).trim();
+        if (tenantUuid.isBlank()) tenantUuid = safe(req.getParameter("tenant_uuid")).trim();
+        if (tenantUuid.isBlank()) {
+            res.sendError(401, "Missing tenant identifier.");
+            return false;
+        }
+
+        String apiKey = safe(req.getHeader(API_KEY_HEADER)).trim();
+        String apiSecret = safe(req.getHeader(API_SECRET_HEADER)).trim();
+
+        if (apiKey.isBlank() || apiSecret.isBlank()) {
+            String auth = safe(req.getHeader("Authorization")).trim();
+            if (!auth.isBlank()) {
+                String lower = auth.toLowerCase(Locale.ROOT);
+                if (lower.startsWith("bearer ")) {
+                    String token = auth.substring(7).trim();
+                    int idx = token.indexOf(':');
+                    if (idx <= 0) idx = token.indexOf('.');
+                    if (idx > 0 && idx + 1 < token.length()) {
+                        apiKey = token.substring(0, idx).trim();
+                        apiSecret = token.substring(idx + 1).trim();
+                    }
+                } else if (lower.startsWith("basic ")) {
+                    try {
+                        String token = auth.substring(6).trim();
+                        byte[] decoded = Base64.getDecoder().decode(token);
+                        String pair = new String(decoded, StandardCharsets.UTF_8);
+                        int idx = pair.indexOf(':');
+                        if (idx > 0 && idx + 1 < pair.length()) {
+                            apiKey = pair.substring(0, idx).trim();
+                            apiSecret = pair.substring(idx + 1).trim();
+                        }
+                    } catch (Exception ignored) {
+                        // fall through to auth failure
+                    }
+                }
+            }
+        }
+
+        if (apiKey.isBlank() || apiSecret.isBlank()) {
+            res.sendError(401, "Missing API credentials.");
+            return false;
+        }
+
+        api_credentials.VerificationResult verified = api_credentials.defaultStore()
+                .verify(tenantUuid, apiKey, apiSecret, clientIp);
+        if (!verified.ok) {
+            res.sendError(401, "Invalid API credentials.");
+            return false;
+        }
+
+        req.setAttribute(api_servlet.REQ_TENANT_UUID, verified.tenantUuid);
+        req.setAttribute(api_servlet.REQ_CREDENTIAL_ID, verified.credentialId);
+        req.setAttribute(api_servlet.REQ_CREDENTIAL_LABEL, verified.credentialLabel);
+        req.setAttribute(api_servlet.REQ_CREDENTIAL_SCOPE, verified.scope);
+        return true;
     }
 
     // -----------------------------

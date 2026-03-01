@@ -12,6 +12,7 @@
 <%@ page import="net.familylawandprobate.controversies.document_taxonomy" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
+<%@ page import="net.familylawandprobate.controversies.api_credentials" %>
 
 <%@ include file="security.jspf" %>
 
@@ -19,6 +20,9 @@
   private static final String S_TENANT_UUID = "tenant.uuid";
   private static final String S_TENANT_LABEL = "tenant.label";
   private static final String CSRF_SESSION_KEY = "CSRF_TOKEN";
+  private static final String S_API_NEW_KEY = "tenant_settings.api.new_key";
+  private static final String S_API_NEW_SECRET = "tenant_settings.api.new_secret";
+  private static final String S_API_NEW_LABEL = "tenant_settings.api.new_label";
 
   private static String tsSafe(String s) { return s == null ? "" : s; }
 
@@ -138,6 +142,7 @@
   }
 
   tenant_settings store = tenant_settings.defaultStore();
+  api_credentials apiCredentialStore = api_credentials.defaultStore();
   activity_log logs = activity_log.defaultStore();
   document_taxonomy taxonomyStore = document_taxonomy.defaultStore();
 
@@ -164,6 +169,36 @@
 
   if ("POST".equalsIgnoreCase(request.getMethod())) {
     String action = tsSafe(request.getParameter("action")).trim();
+    if ("generate_api_credential".equalsIgnoreCase(action)) {
+      try {
+        String apiLabel = tsSafe(request.getParameter("api_credential_label")).trim();
+        api_credentials.GeneratedCredential generated = apiCredentialStore.create(tenantUuid, apiLabel, userUuid);
+        session.setAttribute(S_API_NEW_KEY, generated.apiKey);
+        session.setAttribute(S_API_NEW_SECRET, generated.apiSecret);
+        session.setAttribute(S_API_NEW_LABEL, generated.credential == null ? "" : tsSafe(generated.credential.label));
+        logs.logVerbose("tenant_settings_api_credential_created", tenantUuid, userUuid, "", "", Map.of("label", apiLabel));
+        response.sendRedirect(ctx + "/tenant_settings.jsp?status=api_credential_created");
+        return;
+      } catch (Exception ex) {
+        error = "Unable to create API credential: " + tsSafe(ex.getMessage());
+      }
+    }
+
+    if ("revoke_api_credential".equalsIgnoreCase(action)) {
+      try {
+        String credentialId = tsSafe(request.getParameter("api_credential_id")).trim();
+        boolean changed = apiCredentialStore.revoke(tenantUuid, credentialId);
+        if (changed) {
+          logs.logVerbose("tenant_settings_api_credential_revoked", tenantUuid, userUuid, "", "", Map.of("credential_id", credentialId));
+          response.sendRedirect(ctx + "/tenant_settings.jsp?status=api_credential_revoked");
+          return;
+        }
+        error = "API credential not found or already revoked.";
+      } catch (Exception ex) {
+        error = "Unable to revoke API credential: " + tsSafe(ex.getMessage());
+      }
+    }
+
     if ("add_taxonomy".equalsIgnoreCase(action)) {
       try {
         taxonomyStore.addValues(
@@ -520,6 +555,17 @@
   if ("rotated_storage".equals(status)) message = "Storage secret rotated and saved.";
   if ("rotated_clio".equals(status)) message = "Clio secret rotated and saved.";
   if ("taxonomy_saved".equals(status)) message = "Taxonomy updated.";
+  if ("api_credential_created".equals(status)) message = "API credential created.";
+  if ("api_credential_revoked".equals(status)) message = "API credential revoked.";
+
+  String newApiKey = tsSafe((String)session.getAttribute(S_API_NEW_KEY)).trim();
+  String newApiSecret = tsSafe((String)session.getAttribute(S_API_NEW_SECRET)).trim();
+  String newApiLabel = tsSafe((String)session.getAttribute(S_API_NEW_LABEL)).trim();
+  if (!newApiKey.isBlank() || !newApiSecret.isBlank()) {
+    session.removeAttribute(S_API_NEW_KEY);
+    session.removeAttribute(S_API_NEW_SECRET);
+    session.removeAttribute(S_API_NEW_LABEL);
+  }
 
   String maskedStorageSecret = tsSafe(settings.get("storage_secret")).isBlank() ? "" : "********";
   String maskedClioSecret = tsSafe(settings.get("clio_client_secret")).isBlank() ? "" : "********";
@@ -537,6 +583,8 @@
   String themeLongitudeSaved = tsSafe(settings.get("theme_longitude")).trim();
   String themeLightHourSaved = tsHour(settings.get("theme_light_start_hour"), 7);
   String themeDarkHourSaved = tsHour(settings.get("theme_dark_start_hour"), 19);
+  List<api_credentials.CredentialRec> apiCredentials = new ArrayList<api_credentials.CredentialRec>();
+  try { apiCredentials = apiCredentialStore.list(tenantUuid); } catch (Exception ignored) {}
   document_taxonomy.Taxonomy tx = new document_taxonomy.Taxonomy();
   try { tx = taxonomyStore.read(tenantUuid); } catch (Exception ignored) {}
 %>
@@ -559,6 +607,14 @@
   <% } %>
   <% if (error != null) { %>
     <div class="alert alert-error" style="margin-top:12px;"><%= tsEsc(error) %></div>
+  <% } %>
+  <% if (!newApiSecret.isBlank()) { %>
+    <div class="alert alert-ok" style="margin-top:12px;">
+      <strong>Store this API secret now.</strong><br />
+      Credential: <code><%= tsEsc(newApiLabel.isBlank() ? "Automation Key" : newApiLabel) %></code><br />
+      Key: <code><%= tsEsc(newApiKey) %></code><br />
+      Secret: <code><%= tsEsc(newApiSecret) %></code>
+    </div>
   <% } %>
 </section>
 
@@ -590,6 +646,7 @@
 
 <form class="form" method="post" action="<%= ctx %>/tenant_settings.jsp">
   <input type="hidden" name="csrfToken" value="<%= tsEsc(csrfToken) %>" />
+  <input type="hidden" name="api_credential_id" value="" />
 
   <section class="card" style="margin-top:12px;">
     <h2 style="margin-top:0;">Setup Guide (Quick + Advanced)</h2>
@@ -850,6 +907,46 @@
       <label><input type="checkbox" name="feature_advanced_assembly" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("feature_advanced_assembly"))) ? "checked" : "" %> /> Enable advanced assembly</label>
       <label><input type="checkbox" name="feature_async_sync" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("feature_async_sync"))) ? "checked" : "" %> /> Enable async sync</label>
     </div>
+  </section>
+
+  <section class="card" style="margin-top:12px;">
+    <h2 style="margin-top:0;">API Credentials</h2>
+    <div class="meta" style="margin-bottom:10px;">
+      Tenant-scoped automation credentials for n8n/OpenClaw. Use headers <code>X-Tenant-UUID</code>, <code>X-API-Key</code>, and <code>X-API-Secret</code>.
+    </div>
+    <div class="actions" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
+      <input type="text" name="api_credential_label" placeholder="Credential label (optional)" style="min-width:260px;" />
+      <button type="submit" class="btn btn-ghost" name="action" value="generate_api_credential">Generate API Credential</button>
+    </div>
+    <% if (apiCredentials == null || apiCredentials.isEmpty()) { %>
+      <div class="meta">No API credentials created yet.</div>
+    <% } else { %>
+      <div style="display:grid; gap:8px;">
+        <% for (api_credentials.CredentialRec cred : apiCredentials) { %>
+          <% if (cred == null) continue; %>
+          <div style="display:grid; gap:8px; grid-template-columns:minmax(0,1fr) auto; align-items:center; border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:var(--surface);">
+            <div>
+              <div><strong><%= tsEsc(tsSafe(cred.label).isBlank() ? "Automation Key" : cred.label) %></strong></div>
+              <div class="meta">ID: <code><%= tsEsc(cred.credentialId) %></code></div>
+              <div class="meta">Scope: <code><%= tsEsc(cred.scope) %></code> • Created: <%= tsEsc(tsRotationLabel(tsSafe(cred.createdAt))) %></div>
+              <div class="meta">Last used: <%= tsEsc(tsRotationLabel(tsSafe(cred.lastUsedAt))) %> <%= tsSafe(cred.lastUsedFromIp).isBlank() ? "" : ("from " + tsEsc(cred.lastUsedFromIp)) %></div>
+              <% if (cred.revoked) { %>
+                <div class="meta" style="color:#9b2c2c;">Revoked</div>
+              <% } %>
+            </div>
+            <div>
+              <% if (!cred.revoked) { %>
+                <button type="submit"
+                        class="btn btn-ghost"
+                        name="action"
+                        value="revoke_api_credential"
+                        onclick="this.form.api_credential_id.value='<%= tsEsc(cred.credentialId) %>';">Revoke</button>
+              <% } %>
+            </div>
+          </div>
+        <% } %>
+      </div>
+    <% } %>
   </section>
 
   <section class="card" style="margin-top:12px;">

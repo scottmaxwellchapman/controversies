@@ -24,6 +24,7 @@ It supports:
 - [Data and security notes](#data-and-security-notes)
 - [Tenant settings guide (first-time and advanced)](#tenant-settings-guide-first-time-and-advanced)
 - [Clio integration by deployment topology](#clio-integration-by-deployment-topology)
+- [API (n8n/OpenClaw)](#api-n8nopenclaw)
 - [Logging and audit visibility](#logging-and-audit-visibility)
 - [Troubleshooting](#troubleshooting)
 - [For experienced users](#for-experienced-users)
@@ -300,6 +301,104 @@ The settings workflow records detailed events for:
 - Successful setting updates
 
 Sensitive values (secrets, tokens, keys, passwords) are automatically redacted in log detail payloads.
+
+---
+
+## API (n8n/OpenClaw)
+
+Controversies exposes a tenant-scoped JSON API under `/api/v1/*` for automation workflows.
+
+### Discovery endpoints (no API credential required)
+
+- `GET /api/v1/help` (JSON help + operation list)
+- `GET /api/v1/help/readme` (plain text/markdown help)
+- `GET /api/v1/ping` (health check)
+- `GET /api/v1/capabilities` (machine-readable operation catalog)
+
+### Authentication
+
+For all non-discovery API endpoints, include:
+
+- `X-Tenant-UUID: <tenant_uuid>`
+- `X-API-Key: <api_key>`
+- `X-API-Secret: <api_secret>`
+
+API credentials are generated/revoked by tenant admins in **Tenant Settings → API Credentials**.
+
+### Endpoint patterns
+
+You can call operations in any of these forms:
+
+- `POST /api/v1/execute` with JSON body:
+  - `{"operation":"matters.list","params":{"include_trashed":false}}`
+- `POST /api/v1/op/matters/list`
+- `POST /api/v1/matters/list`
+
+Operations are normalized as dot notation (for example, `matters.list`).
+
+### Response envelope
+
+Success:
+
+```json
+{
+  "ok": true,
+  "version": "v1",
+  "operation": "matters.list",
+  "tenant_uuid": "...",
+  "result": {}
+}
+```
+
+Error:
+
+```json
+{
+  "ok": false,
+  "error_code": "bad_request",
+  "error": "..."
+}
+```
+
+### cURL example
+
+```bash
+curl -k -X POST "https://localhost:8443/api/v1/execute" \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-UUID: <tenant_uuid>" \
+  -H "X-API-Key: <api_key>" \
+  -H "X-API-Secret: <api_secret>" \
+  -d '{"operation":"matters.list","params":{"include_trashed":false}}'
+```
+
+### Operation coverage
+
+Current API coverage includes:
+
+- Authentication + introspection:
+  - `auth.whoami`, `activity.recent`
+- API credentials:
+  - `api.credentials.list`, `api.credentials.create`, `api.credentials.revoke`
+- Tenant configuration:
+  - `tenant.settings.get`, `tenant.settings.update`, `tenant.fields.get`, `tenant.fields.update`
+- Users, roles, permissions:
+  - `users.*`, `roles.*`, `roles.permission.*`, `roles.permissions.replace`
+- Case/matter workflow:
+  - `matters.*`, `case.attributes.*`, `case.fields.*`, `case.list_items.*`
+- Document workflow:
+  - `document.taxonomy.*`, `document.attributes.*`, `documents.*`, `document.fields.*`, `document.parts.*`, `document.versions.*`
+- Templates + assembly:
+  - `templates.*`, `template.tools.*`, `assembler.preview`, `assembler.assemble`, `assembly.run`, `assembled_forms.*`
+- Custom objects:
+  - `custom_objects.*`, `custom_object_attributes.*`, `custom_object_records.*`
+- Texas law:
+  - `texas_law.status`, `texas_law.sync_now`, `texas_law.list_dir`, `texas_law.search`, `texas_law.render_page`
+
+Use `/api/v1/capabilities` for the authoritative operation list.
+
+### Compatibility policy
+
+When application features are added or changed, corresponding API operations should be added or updated in the same change so automation clients stay aligned.
 
 ---
 

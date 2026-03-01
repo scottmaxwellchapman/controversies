@@ -2,6 +2,7 @@
 package net.familylawandprobate.controversies;
 
 import org.apache.catalina.Context;
+import org.apache.catalina.Wrapper;
 import org.apache.catalina.connector.Connector;
 import org.apache.catalina.startup.Tomcat;
 import org.apache.catalina.webresources.DirResourceSet;
@@ -90,6 +91,7 @@ public class tomcat {
 
         // Register your security filter: net.familylawandprobate.controversies.filter
         registerFilter(ctx);
+        registerApiServlet(ctx);
 
         // HTTPS connector (primary)
         Connector https = createHttpsConnector(this.httpsPort, keystorePath, keystorePassword, keyAlias);
@@ -158,6 +160,12 @@ public class tomcat {
         map.setFilterName("securityFilter");
         map.addURLPattern("/*");
         ctx.addFilterMap(map);
+    }
+
+    private static void registerApiServlet(Context ctx) {
+        Wrapper wrapper = Tomcat.addServlet(ctx, "apiServlet", new api_servlet());
+        wrapper.setLoadOnStartup(1);
+        ctx.addServletMappingDecoded("/api/*", "apiServlet");
     }
 
     private static void assertPortFree(int port, String label) {
