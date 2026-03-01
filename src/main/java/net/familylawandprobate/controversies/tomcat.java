@@ -188,6 +188,7 @@ public class tomcat {
         c.setScheme("http");
         c.setSecure(false);
         c.setRedirectPort(httpsPort);
+        tuneConnector(c);
         return c;
     }
 
@@ -196,6 +197,7 @@ public class tomcat {
         c.setPort(httpsPort);
         c.setScheme("https");
         c.setSecure(true);
+        tuneConnector(c);
 
         @SuppressWarnings("unchecked")
         AbstractHttp11JsseProtocol<?> protocol = (AbstractHttp11JsseProtocol<?>) c.getProtocolHandler();
@@ -219,6 +221,14 @@ public class tomcat {
         protocol.addSslHostConfig(sslHostConfig);
 
         return c;
+    }
+
+    private static void tuneConnector(Connector c) {
+        if (c == null) return;
+        c.setMaxPostSize(-1);
+        c.setProperty("maxHttpFormPostSize", "-1");
+        c.setProperty("maxParameterCount", "200000");
+        c.setProperty("maxSwallowSize", "-1");
     }
 
     // Dev-only: create a self-signed keystore using JDK keytool if missing

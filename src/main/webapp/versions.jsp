@@ -71,9 +71,19 @@ private static void deleteRecursively(Path root) {
       .forEach(p -> { try { Files.deleteIfExists(p); } catch (Exception ignore) {} });
   } catch (Exception ignore) {}
 }
+private static boolean isPdfVersion(part_versions.VersionRec rec) {
+  if (rec == null) return false;
+  String mime = safe(rec.mimeType).trim().toLowerCase(java.util.Locale.ROOT);
+  if (mime.contains("pdf")) return true;
+  String storage = safe(rec.storagePath).trim().toLowerCase(java.util.Locale.ROOT);
+  return storage.endsWith(".pdf") || storage.contains(".pdf?");
+}
 %>
 <%
 String ctx = safe(request.getContextPath());
+response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+response.setHeader("Pragma", "no-cache");
+response.setDateHeader("Expires", 0L);
 String csrfToken = csrfForRender(request);
 String tenantUuid = safe((String)session.getAttribute(S_TENANT_UUID)).trim();
 if (tenantUuid.isBlank()) { response.sendRedirect(ctx + "/tenant_login.jsp"); return; }
@@ -85,13 +95,39 @@ document_parts parts = document_parts.defaultStore();
 String error = null;
 String message = null;
 if ("POST".equalsIgnoreCase(request.getMethod())) {
+  String action = safe(request.getParameter("action")).trim();
+  boolean uploadAction = "upload_chunk_bin".equalsIgnoreCase(action) || "upload_chunk".equalsIgnoreCase(action) || "commit_upload".equalsIgnoreCase(action);
   try {
-    String action = safe(request.getParameter("action")).trim();
     Path partFolder = parts.partFolder(tenantUuid, caseUuid, docUuid, partUuid);
     if (partFolder == null) throw new IllegalArgumentException("Part folder unavailable.");
     Path tempRoot = partFolder.resolve(".upload_staging");
     Files.createDirectories(tempRoot);
-    if ("upload_chunk".equalsIgnoreCase(action)) {
+    if ("upload_chunk_bin".equalsIgnoreCase(action)) {
+      String uploadId = safe(request.getParameter("upload_id")).replaceAll("[^A-Za-z0-9_-]", "");
+      int chunkIndex = intOrDefault(request.getParameter("chunk_index"), -1);
+      int totalChunks = intOrDefault(request.getParameter("total_chunks"), -1);
+      String chunkSha = safe(request.getHeader("X-Chunk-SHA256")).trim().toLowerCase(java.util.Locale.ROOT);
+      if (chunkSha.isBlank()) chunkSha = safe(request.getParameter("chunk_sha256")).trim().toLowerCase(java.util.Locale.ROOT);
+      if (uploadId.isBlank()) throw new IllegalArgumentException("Missing upload id.");
+      if (chunkIndex < 0 || totalChunks <= 0 || totalChunks > MAX_UPLOAD_CHUNKS || chunkIndex >= totalChunks) throw new IllegalArgumentException("Invalid chunk index.");
+      byte[] chunkBytes;
+      try (java.io.InputStream raw = request.getInputStream()) {
+        chunkBytes = raw.readAllBytes();
+      }
+      if (chunkBytes == null || chunkBytes.length == 0) throw new IllegalArgumentException("Chunk payload missing.");
+      String actualChunkSha = sha256(chunkBytes);
+      if (!chunkSha.equals(actualChunkSha)) throw new IllegalArgumentException("Chunk integrity check failed at chunk " + chunkIndex + ".");
+      Path uploadDir = tempRoot.resolve(uploadId);
+      Files.createDirectories(uploadDir);
+      Path chunkPath = uploadDir.resolve("chunk-" + chunkIndex + ".bin");
+      Path redundantChunkPath = uploadDir.resolve("chunk-" + chunkIndex + ".bak");
+      Files.write(chunkPath, chunkBytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+      Files.write(redundantChunkPath, chunkBytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+      response.setContentType("text/plain;charset=UTF-8");
+      out.clearBuffer();
+      out.print("ok");
+      return;
+    } else if ("upload_chunk".equalsIgnoreCase(action)) {
       String uploadId = safe(request.getParameter("upload_id")).replaceAll("[^A-Za-z0-9_-]", "");
       int chunkIndex = intOrDefault(request.getParameter("chunk_index"), -1);
       int totalChunks = intOrDefault(request.getParameter("total_chunks"), -1);
@@ -165,14 +201,31 @@ if ("POST".equalsIgnoreCase(request.getMethod())) {
       response.sendRedirect(ctx + "/versions.jsp?case_uuid=" + java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) + "&doc_uuid=" + java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) + "&part_uuid=" + java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8));
       return;
     }
-  } catch (Exception ex) { error = safe(ex.getMessage()); }
+  } catch (Exception ex) {
+    if (uploadAction) {
+      response.setStatus(400);
+      response.setContentType("text/plain;charset=UTF-8");
+      response.getWriter().write(safe(ex.getMessage()));
+      return;
+    }
+    error = safe(ex.getMessage());
+  }
 }
 if ("1".equals(request.getParameter("uploaded"))) message = "Version file uploaded, verified, and recorded.";
+if ("1".equals(request.getParameter("redacted"))) message = "Redacted PDF saved as a new document part version.";
 List<part_versions.VersionRec> rows = versions.listAll(tenantUuid, caseUuid, docUuid, partUuid);
 document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid);
 %>
 <jsp:include page="header.jsp" />
-<section class="card"><h1 style="margin:0;">Part Versions</h1><div class="meta">Part: <strong><%= esc(part == null ? "" : part.label) %></strong></div></section>
+<section class="card">
+  <div style="display:flex; gap:10px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap;">
+    <div>
+      <h1 style="margin:0;">Part Versions</h1>
+      <div class="meta">Part: <strong><%= esc(part == null ? "" : part.label) %></strong></div>
+    </div>
+    <a class="btn btn-ghost" href="<%= ctx %>/pdf_redact.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>">Redact a PDF Version</a>
+  </div>
+</section>
 <section class="card" style="margin-top:12px;">
 <form class="form" method="post" action="<%= ctx %>/versions.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>">
 <input type="hidden" name="csrfToken" id="csrf_token" value="<%= esc(csrfToken) %>" />
@@ -190,9 +243,9 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
 <% if (!safe(message).isBlank()) { %><div class="alert" style="margin-top:10px;"><%= esc(message) %></div><% } %>
 <% if (!safe(error).isBlank()) { %><div class="alert alert-error" style="margin-top:10px;"><%= esc(error) %></div><% } %>
 </section>
-<section class="card" style="margin-top:12px;"><table class="table"><thead><tr><th>Version</th><th>Source</th><th>MIME</th><th>Checksum</th><th>Created</th><th>Current</th></tr></thead><tbody>
+<section class="card" style="margin-top:12px;"><table class="table"><thead><tr><th>Version</th><th>Source</th><th>MIME</th><th>Checksum</th><th>Created</th><th>Current</th><th></th></tr></thead><tbody>
 <% for (part_versions.VersionRec r : rows) { %>
-<tr><td><%= esc(r.versionLabel) %></td><td><%= esc(r.source) %></td><td><%= esc(r.mimeType) %></td><td><%= esc(r.checksum) %></td><td><%= esc(r.createdAt) %></td><td><%= r.current ? "Yes" : "" %></td></tr>
+<tr><td><%= esc(r.versionLabel) %></td><td><%= esc(r.source) %></td><td><%= esc(r.mimeType) %></td><td><%= esc(r.checksum) %></td><td><%= esc(r.createdAt) %></td><td><%= r.current ? "Yes" : "" %></td><td><% if (isPdfVersion(r)) { %><a class="btn btn-ghost" href="<%= ctx %>/pdf_redact.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>&source_version_uuid=<%= java.net.URLEncoder.encode(safe(r.uuid), java.nio.charset.StandardCharsets.UTF_8) %>">Redact</a><% } %></td></tr>
 <% } %>
 </tbody></table></section>
 <script>
@@ -207,7 +260,7 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
   var uploadFileNameInput = document.getElementById("upload_file_name");
   var fileShaInput = document.getElementById("file_sha256");
   var csrfTokenInput = document.getElementById("csrf_token");
-  var CHUNK_SIZE = 192 * 1024;
+  var CHUNK_SIZE = 128 * 1024;
 
   function setStatus(msg) { if (statusEl) statusEl.textContent = msg; }
   function toHex(buffer) {
@@ -239,6 +292,12 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
       actionInput.value = "create_metadata";
       return;
     }
+    if (!csrfTokenInput || !csrfTokenInput.value) {
+      ev.preventDefault();
+      setStatus("Upload blocked: CSRF token missing. Reload page.");
+      alert("Upload blocked. CSRF token missing. Reload the page and try again.");
+      return;
+    }
     ev.preventDefault();
     try {
       var uploadId = (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10)).replace(/[^a-z0-9_-]/gi, "");
@@ -250,22 +309,29 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
         var end = Math.min(file.size, start + CHUNK_SIZE);
         var chunk = file.slice(start, end);
         var chunkSha = await sha256Hex(chunk);
-        var chunkB64 = await chunkToBase64(chunk);
-        var body = new URLSearchParams();
-        body.set("action", "upload_chunk");
-        body.set("upload_id", uploadId);
-        body.set("chunk_index", String(i));
-        body.set("total_chunks", String(totalChunks));
-        body.set("chunk_sha256", chunkSha);
-        body.set("chunk_b64", chunkB64);
-        if (csrfTokenInput && csrfTokenInput.value) body.set("csrfToken", csrfTokenInput.value);
+        var chunkBytes = await chunk.arrayBuffer();
+        var uploadUrl = form.action
+          + "&action=upload_chunk_bin"
+          + "&upload_id=" + encodeURIComponent(uploadId)
+          + "&chunk_index=" + encodeURIComponent(String(i))
+          + "&total_chunks=" + encodeURIComponent(String(totalChunks));
         setStatus("Uploading chunk " + (i + 1) + " / " + totalChunks + "...");
-        var resp = await fetch(form.action, {
+        var resp = await fetch(uploadUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-          body: body.toString()
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "X-CSRF-Token": csrfTokenInput.value,
+            "X-Chunk-SHA256": chunkSha
+          },
+          body: chunkBytes
         });
-        if (!resp.ok) throw new Error("Chunk upload failed at " + (i + 1) + ".");
+        if (!resp.ok) {
+          var errText = "";
+          try { errText = (await resp.text() || "").trim(); } catch (ignore) {}
+          var prefix = "Chunk upload failed at " + (i + 1) + " (HTTP " + resp.status + ").";
+          throw new Error(errText ? (prefix + " " + errText) : prefix);
+        }
       }
 
       actionInput.value = "commit_upload";

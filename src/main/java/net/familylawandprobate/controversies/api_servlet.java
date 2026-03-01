@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 
 /**
  * Tenant-scoped JSON API for automation clients.
@@ -1010,6 +1011,131 @@ public final class api_servlet extends HttpServlet {
                 return out;
             }
 
+            case "document.versions.render_page": {
+                String matterUuid = str(params, "matter_uuid");
+                String docUuid = str(params, "doc_uuid");
+                String partUuid = str(params, "part_uuid");
+                String sourceVersionUuid = str(params, "source_version_uuid");
+                int page = intVal(params, "page", 0);
+
+                List<part_versions.VersionRec> rows = part_versions.defaultStore().listAll(
+                        tenantUuid,
+                        matterUuid,
+                        docUuid,
+                        partUuid
+                );
+                part_versions.VersionRec source = findPartVersion(rows, sourceVersionUuid);
+                if (source == null) throw new IllegalArgumentException("Source version not found.");
+                if (!pdf_redaction_service.isPdfVersion(source)) {
+                    throw new IllegalArgumentException("Source version is not a PDF.");
+                }
+
+                Path sourcePath = pdf_redaction_service.resolveStoragePath(source.storagePath);
+                if (sourcePath == null || !Files.isRegularFile(sourcePath)) {
+                    throw new IllegalArgumentException("Source PDF file not found.");
+                }
+
+                pdf_redaction_service.RenderedPage rendered = pdf_redaction_service.renderPage(sourcePath, page);
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("source_version", versionMap(source));
+                out.put("page_index", rendered.pageIndex);
+                out.put("page_number", rendered.pageIndex + 1);
+                out.put("total_pages", rendered.totalPages);
+                out.put("has_prev", rendered.pageIndex > 0);
+                out.put("has_next", rendered.pageIndex + 1 < rendered.totalPages);
+                out.put("image_width_px", rendered.imageWidthPx);
+                out.put("image_height_px", rendered.imageHeightPx);
+                out.put("image_png_base64", encodeBase64(rendered.pngBytes));
+                return out;
+            }
+
+            case "document.versions.redact": {
+                String matterUuid = str(params, "matter_uuid");
+                String docUuid = str(params, "doc_uuid");
+                String partUuid = str(params, "part_uuid");
+                String sourceVersionUuid = str(params, "source_version_uuid");
+
+                List<part_versions.VersionRec> rows = part_versions.defaultStore().listAll(
+                        tenantUuid,
+                        matterUuid,
+                        docUuid,
+                        partUuid
+                );
+                part_versions.VersionRec source = findPartVersion(rows, sourceVersionUuid);
+                if (source == null) throw new IllegalArgumentException("Source version not found.");
+                if (!pdf_redaction_service.isPdfVersion(source)) {
+                    throw new IllegalArgumentException("Source version is not a PDF.");
+                }
+
+                Path sourcePath = pdf_redaction_service.resolveStoragePath(source.storagePath);
+                if (sourcePath == null || !Files.isRegularFile(sourcePath)) {
+                    throw new IllegalArgumentException("Source PDF file not found.");
+                }
+
+                List<pdf_redaction_service.RedactionRectNorm> normalized = pdf_redaction_service.parseNormalizedObjects(params.get("redactions"));
+                if (normalized.isEmpty()) {
+                    normalized = pdf_redaction_service.parseNormalizedPayload(str(params, "redactions_payload"));
+                }
+                if (normalized.isEmpty()) {
+                    throw new IllegalArgumentException("At least one redaction rectangle is required.");
+                }
+
+                List<pdf_redaction_service.RedactionRectPt> rects = pdf_redaction_service.toPageCoordinates(sourcePath, normalized);
+                if (rects.isEmpty()) {
+                    throw new IllegalArgumentException("No valid redaction rectangles after page coordinate conversion.");
+                }
+
+                Path partFolder = document_parts.defaultStore().partFolder(tenantUuid, matterUuid, docUuid, partUuid);
+                if (partFolder == null) throw new IllegalArgumentException("Part folder unavailable.");
+                Path outputDir = partFolder.resolve("version_files");
+                Files.createDirectories(outputDir);
+
+                String sourceFileName = sourcePath.getFileName() == null ? "document.pdf" : sourcePath.getFileName().toString();
+                String outputName = pdf_redaction_service.suggestRedactedFileName(sourceFileName);
+                String outputVersionUuid = UUID.randomUUID().toString();
+                Path outputPath = outputDir.resolve(outputVersionUuid + "__" + outputName);
+
+                pdf_redaction_service.RedactionRun run = pdf_redaction_service.redact(sourcePath, outputPath, rects);
+                long outputBytes = Files.size(outputPath);
+                String outputSha = pdf_redaction_service.sha256(outputPath);
+
+                String versionLabel = str(params, "version_label");
+                if (versionLabel.isBlank()) {
+                    String base = safe(source.versionLabel).trim();
+                    if (base.isBlank()) base = "PDF";
+                    versionLabel = base + " (Redacted)";
+                }
+                String notes = str(params, "notes");
+                if (!run.usedPdfRedactor) {
+                    String fallback = "Rendered with PDFBox fallback redaction overlay.";
+                    notes = notes.isBlank() ? fallback : (notes + " " + fallback);
+                }
+
+                part_versions.VersionRec created = part_versions.defaultStore().create(
+                        tenantUuid,
+                        matterUuid,
+                        docUuid,
+                        partUuid,
+                        versionLabel,
+                        "redacted",
+                        "application/pdf",
+                        outputSha,
+                        String.valueOf(outputBytes),
+                        outputPath.toUri().toString(),
+                        str(params, "created_by"),
+                        notes,
+                        boolVal(params, "make_current", true)
+                );
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("version", versionMap(created));
+                out.put("source_version_uuid", sourceVersionUuid);
+                out.put("used_pdfredactor", run.usedPdfRedactor);
+                out.put("redaction_count", run.appliedRectCount);
+                return out;
+            }
+
             case "templates.list": {
                 List<form_templates.TemplateRec> rows = form_templates.defaultStore().list(tenantUuid);
                 ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
@@ -1881,6 +2007,8 @@ public final class api_servlet extends HttpServlet {
         ops.put("document.parts.restore", "Restore document part");
         ops.put("document.versions.list", "List part versions");
         ops.put("document.versions.create", "Create part version metadata");
+        ops.put("document.versions.render_page", "Render source PDF version page as PNG base64");
+        ops.put("document.versions.redact", "Redact source PDF version and create new redacted version");
 
         ops.put("templates.list", "List templates");
         ops.put("templates.get", "Get template metadata");
@@ -1976,6 +2104,7 @@ curl -k -X POST "%s/execute" \\
 - Users, roles, permissions
 - Matters/cases + fields + list datasets
 - Document taxonomy, attributes, documents, parts, versions
+- PDF version rendering and redaction
 - Templates, template tools, assembly, assembled forms
 - Custom objects, attributes, records
 - Texas law sync/browse/search/render
@@ -2148,6 +2277,17 @@ When features are added or changed in the application, matching API operations s
         out.put("updated_at", r.updatedAt);
         out.put("values", new LinkedHashMap<String, String>(r.values));
         return out;
+    }
+
+    private static part_versions.VersionRec findPartVersion(List<part_versions.VersionRec> rows, String versionUuid) {
+        if (rows == null || rows.isEmpty()) return null;
+        String wanted = safe(versionUuid).trim();
+        if (wanted.isBlank()) return null;
+        for (part_versions.VersionRec r : rows) {
+            if (r == null) continue;
+            if (wanted.equals(safe(r.uuid).trim())) return r;
+        }
+        return null;
     }
 
     private static String normalizeLibrary(String raw) {

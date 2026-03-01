@@ -387,6 +387,7 @@ Current API coverage includes:
   - `matters.*`, `case.attributes.*`, `case.fields.*`, `case.list_items.*`
 - Document workflow:
   - `document.taxonomy.*`, `document.attributes.*`, `documents.*`, `document.fields.*`, `document.parts.*`, `document.versions.*`
+  - `document.versions.render_page`, `document.versions.redact` (PDF version preview/redaction)
 - Templates + assembly:
   - `templates.*`, `template.tools.*`, `assembler.preview`, `assembler.assemble`, `assembly.run`, `assembled_forms.*`
 - Custom objects:
@@ -395,6 +396,19 @@ Current API coverage includes:
   - `texas_law.status`, `texas_law.sync_now`, `texas_law.list_dir`, `texas_law.search`, `texas_law.render_page`
 
 Use `/api/v1/capabilities` for the authoritative operation list.
+
+### PDF redaction operations
+
+These operations support automation around the interactive PDF redaction feature.
+
+- `document.versions.render_page`
+  - Inputs: `matter_uuid`, `doc_uuid`, `part_uuid`, `source_version_uuid`, `page` (0-based)
+  - Output: PNG page bytes (`image_png_base64`) plus pagination metadata
+- `document.versions.redact`
+  - Inputs: `matter_uuid`, `doc_uuid`, `part_uuid`, `source_version_uuid`, plus redactions either as:
+    - `redactions` JSON array of objects with `page`/`x_norm`/`y_norm`/`width_norm`/`height_norm`, or
+    - `redactions_payload` string (`page,x,y,w,h;...`)
+  - Output: newly created redacted `version` metadata and redaction engine details
 
 ### Compatibility policy
 
