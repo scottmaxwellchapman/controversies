@@ -92,6 +92,7 @@ public class tomcat {
         // Register your security filter: net.familylawandprobate.controversies.filter
         registerFilter(ctx);
         registerApiServlet(ctx);
+        registerVersionUploadServlet(ctx);
 
         // HTTPS connector (primary)
         Connector https = createHttpsConnector(this.httpsPort, keystorePath, keystorePassword, keyAlias);
@@ -168,6 +169,12 @@ public class tomcat {
         ctx.addServletMappingDecoded("/api/*", "apiServlet");
     }
 
+    private static void registerVersionUploadServlet(Context ctx) {
+        Wrapper wrapper = Tomcat.addServlet(ctx, "versionUploadServlet", new version_upload_servlet());
+        wrapper.setLoadOnStartup(1);
+        ctx.addServletMappingDecoded("/versions_upload", "versionUploadServlet");
+    }
+
     private static void assertPortFree(int port, String label) {
         if (port <= 0) return;
         try (ServerSocket ss = new ServerSocket()) {
@@ -229,6 +236,9 @@ public class tomcat {
         c.setProperty("maxHttpFormPostSize", "-1");
         c.setProperty("maxParameterCount", "200000");
         c.setProperty("maxSwallowSize", "-1");
+        c.setProperty("maxHttpHeaderSize", "65536");
+        c.setProperty("relaxedPathChars", "\"<>[\\]^`{|}");
+        c.setProperty("relaxedQueryChars", "\"<>[\\]^`{|}");
     }
 
     // Dev-only: create a self-signed keystore using JDK keytool if missing

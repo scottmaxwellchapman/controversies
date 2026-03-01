@@ -260,6 +260,11 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
   var uploadFileNameInput = document.getElementById("upload_file_name");
   var fileShaInput = document.getElementById("file_sha256");
   var csrfTokenInput = document.getElementById("csrf_token");
+  var appContext = "<%= esc(ctx) %>";
+  var caseUuid = "<%= esc(caseUuid) %>";
+  var docUuid = "<%= esc(docUuid) %>";
+  var partUuid = "<%= esc(partUuid) %>";
+  var uploadTransportVersion = "version-upload-servlet-v1";
   var CHUNK_SIZE = 128 * 1024;
 
   function setStatus(msg) { if (statusEl) statusEl.textContent = msg; }
@@ -273,17 +278,40 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
     var digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
     return toHex(digest);
   }
-  function chunkToBase64(chunk) {
-    return new Promise(function(resolve, reject) {
-      var reader = new FileReader();
-      reader.onload = function() {
-        var v = String(reader.result || "");
-        var idx = v.indexOf(",");
-        resolve(idx >= 0 ? v.substring(idx + 1) : v);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(chunk);
+  setStatus("No file selected. Transport: " + uploadTransportVersion + ".");
+
+  async function parseUploadResponse(resp) {
+    var text = "";
+    try { text = await resp.text(); } catch (ignore) {}
+    var payload = null;
+    if (text) {
+      try { payload = JSON.parse(text); } catch (ignore2) {}
+    }
+    return { text: text, json: payload };
+  }
+
+  async function assertUploadEndpoint() {
+    var pingResp = await fetch(appContext + "/versions_upload", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "X-CSRF-Token": csrfTokenInput.value
+      },
+      body: "action=diag"
     });
+    if (!pingResp.ok) {
+      var parsed = await parseUploadResponse(pingResp);
+      var msg = "Upload endpoint check failed (HTTP " + pingResp.status + ").";
+      if (parsed.json && parsed.json.message) msg += " " + parsed.json.message;
+      else if (parsed.text) msg += " " + parsed.text.trim();
+      throw new Error(msg);
+    }
+    var json = {};
+    try { json = await pingResp.json(); } catch (ignore) {}
+    if (!json || !json.ok) {
+      throw new Error("Upload endpoint diagnostics failed.");
+    }
   }
 
   form.addEventListener("submit", async function (ev) {
@@ -300,8 +328,11 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
     }
     ev.preventDefault();
     try {
+      setStatus("Checking upload endpoint...");
+      await assertUploadEndpoint();
       var uploadId = (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10)).replace(/[^a-z0-9_-]/gi, "");
       var totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      if (totalChunks <= 0) throw new Error("Selected file is empty.");
       setStatus("Hashing file...");
       var fileSha = await sha256Hex(file);
       for (var i = 0; i < totalChunks; i++) {
@@ -310,11 +341,7 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
         var chunk = file.slice(start, end);
         var chunkSha = await sha256Hex(chunk);
         var chunkBytes = await chunk.arrayBuffer();
-        var uploadUrl = form.action
-          + "&action=upload_chunk_bin"
-          + "&upload_id=" + encodeURIComponent(uploadId)
-          + "&chunk_index=" + encodeURIComponent(String(i))
-          + "&total_chunks=" + encodeURIComponent(String(totalChunks));
+        var uploadUrl = appContext + "/versions_upload";
         setStatus("Uploading chunk " + (i + 1) + " / " + totalChunks + "...");
         var resp = await fetch(uploadUrl, {
           method: "POST",
@@ -322,30 +349,89 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
           headers: {
             "Content-Type": "application/octet-stream",
             "X-CSRF-Token": csrfTokenInput.value,
+            "X-Upload-Action": "chunk",
+            "X-Case-UUID": caseUuid,
+            "X-Doc-UUID": docUuid,
+            "X-Part-UUID": partUuid,
+            "X-Upload-Id": uploadId,
+            "X-Chunk-Index": String(i),
+            "X-Total-Chunks": String(totalChunks),
             "X-Chunk-SHA256": chunkSha
           },
           body: chunkBytes
         });
         if (!resp.ok) {
+          var parsed = await parseUploadResponse(resp);
           var errText = "";
-          try { errText = (await resp.text() || "").trim(); } catch (ignore) {}
+          if (parsed.json && parsed.json.message) {
+            errText = String(parsed.json.message);
+            if (parsed.json.request_id) errText += " [request_id=" + parsed.json.request_id + "]";
+          } else {
+            errText = (parsed.text || "").trim();
+          }
           var prefix = "Chunk upload failed at " + (i + 1) + " (HTTP " + resp.status + ").";
           throw new Error(errText ? (prefix + " " + errText) : prefix);
         }
       }
 
-      actionInput.value = "commit_upload";
-      uploadIdInput.value = uploadId;
-      totalChunksInput.value = String(totalChunks);
-      uploadFileNameInput.value = file.name || "version.bin";
-      fileShaInput.value = fileSha;
       form.elements["checksum"].value = fileSha;
       form.elements["file_size_bytes"].value = String(file.size);
       form.elements["storage_path"].value = "pending://assembled";
       if (!form.elements["source"].value) form.elements["source"].value = "uploaded";
       if (!form.elements["mime_type"].value) form.elements["mime_type"].value = file.type || "application/octet-stream";
       setStatus("Upload complete. Finalizing...");
-      form.submit();
+
+      var commitParams = new URLSearchParams();
+      commitParams.set("action", "commit");
+      commitParams.set("case_uuid", caseUuid);
+      commitParams.set("doc_uuid", docUuid);
+      commitParams.set("part_uuid", partUuid);
+      commitParams.set("upload_id", uploadId);
+      commitParams.set("total_chunks", String(totalChunks));
+      commitParams.set("upload_file_name", file.name || "version.bin");
+      commitParams.set("file_sha256", fileSha);
+      commitParams.set("file_size_bytes", String(file.size));
+      commitParams.set("version_label", form.elements["version_label"].value || "");
+      commitParams.set("source", form.elements["source"].value || "");
+      commitParams.set("mime_type", form.elements["mime_type"].value || "");
+      commitParams.set("created_by", form.elements["created_by"].value || "");
+      commitParams.set("notes", form.elements["notes"].value || "");
+      commitParams.set("make_current", form.elements["make_current"] && form.elements["make_current"].checked ? "1" : "0");
+
+      var commitResp = await fetch(appContext + "/versions_upload", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          "X-CSRF-Token": csrfTokenInput.value
+        },
+        body: commitParams.toString()
+      });
+      if (!commitResp.ok) {
+        var commitParsed = await parseUploadResponse(commitResp);
+        var commitText = "";
+        if (commitParsed.json && commitParsed.json.message) {
+          commitText = String(commitParsed.json.message);
+          if (commitParsed.json.request_id) commitText += " [request_id=" + commitParsed.json.request_id + "]";
+        } else {
+          commitText = (commitParsed.text || "").trim();
+        }
+        throw new Error("Commit failed (HTTP " + commitResp.status + "). " + commitText);
+      }
+
+      var commitJson = {};
+      try { commitJson = await commitResp.json(); } catch (ignore3) {}
+      if (!commitJson || !commitJson.ok) {
+        var msg = commitJson && commitJson.message ? String(commitJson.message) : "Commit response invalid.";
+        if (commitJson && commitJson.request_id) msg += " [request_id=" + commitJson.request_id + "]";
+        throw new Error(msg);
+      }
+      var redirect = commitJson.redirect || "";
+      if (redirect) {
+        window.location.assign(redirect);
+      } else {
+        window.location.reload();
+      }
     } catch (err) {
       setStatus("Upload failed: " + (err && err.message ? err.message : "unknown error"));
       alert("Version file upload failed. " + (err && err.message ? err.message : ""));
