@@ -56,11 +56,11 @@ public final class document_cli {
     }
 
     private static void partCreate(String[] args) throws Exception {
-        if (args.length < 7) {
-            System.out.println("part-create <tenantUuid> <matterUuid> <docUuid> <label> <category(lead|attachment)> <status>");
+        if (args.length < 6) {
+            System.out.println("part-create <tenantUuid> <matterUuid> <docUuid> <label> <category(lead|attachment)>");
             return;
         }
-        document_parts.PartRec rec = document_parts.defaultStore().create(args[1], args[2], args[3], args[4], args[5], args[6], "", "", "", "");
+        document_parts.PartRec rec = document_parts.defaultStore().create(args[1], args[2], args[3], args[4], args[5], "", "", "", "");
         System.out.println(rec.uuid);
     }
 

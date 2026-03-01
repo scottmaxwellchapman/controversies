@@ -139,15 +139,6 @@
     caseUuid = safe(request.getParameter("case_uuid")).trim();
 
     try {
-      if ("add_taxonomy".equals(action)) {
-        taxonomyStore.addValues(tenantUuid,
-          java.util.Arrays.asList(safe(request.getParameter("category"))),
-          java.util.Arrays.asList(safe(request.getParameter("subcategory"))),
-          java.util.Arrays.asList(safe(request.getParameter("status"))));
-        response.sendRedirect(ctx + "/documents.jsp?case_uuid=" + enc(caseUuid) + "&tax_saved=1");
-        return;
-      }
-
       if ("create_document".equals(action)) {
         LinkedHashMap<String, String> attrValues = new LinkedHashMap<String, String>();
         String[] attrKeys = request.getParameterValues("attr_def_key");
@@ -284,7 +275,6 @@
   }
 
   if ("1".equals(request.getParameter("saved"))) message = "Document updated.";
-  if ("1".equals(request.getParameter("tax_saved"))) message = "Taxonomy updated.";
 
   if (!caseUuid.isBlank()) {
     try { docStore.ensure(tenantUuid, caseUuid); } catch (Exception ex) { logWarn(application, "Unable to ensure document store for case " + caseUuid + ": " + shortErr(ex), ex); }
@@ -337,25 +327,11 @@
   <div class="actions" style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
     <a class="btn btn-ghost" href="<%= ctx %>/attribute_editor.jsp">Attribute Editor</a>
     <a class="btn btn-ghost" href="<%= ctx %>/document_attributes.jsp">Manage Document Attributes</a>
+    <a class="btn btn-ghost" href="<%= ctx %>/tenant_settings.jsp#document-taxonomy">Manage Taxonomy</a>
   </div>
 
   <% if (message != null) { %><div class="alert alert-ok" style="margin-top:10px;"><%= esc(message) %></div><% } %>
   <% if (error != null) { %><div class="alert alert-error" style="margin-top:10px;"><%= esc(error) %></div><% } %>
-</section>
-
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Manage Taxonomy</h2>
-  <form method="post" class="form" action="<%= ctx %>/documents.jsp">
-    <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-    <input type="hidden" name="action" value="add_taxonomy" />
-    <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
-    <div class="grid grid-3">
-      <label><span>Category</span><input type="text" name="category"/></label>
-      <label><span>Subcategory</span><input type="text" name="subcategory"/></label>
-      <label><span>Status</span><input type="text" name="status"/></label>
-    </div>
-    <button class="btn" type="submit">Save Taxonomy Values</button>
-  </form>
 </section>
 
 <section class="card" style="margin-top:12px;">

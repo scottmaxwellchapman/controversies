@@ -50,7 +50,7 @@ if ("POST".equalsIgnoreCase(request.getMethod())) {
   String action = safe(request.getParameter("action")).trim();
   try {
     if ("create_part".equals(action)) {
-      parts.create(tenantUuid, caseUuid, docUuid, request.getParameter("label"), request.getParameter("part_category"), request.getParameter("status"), request.getParameter("sequence"), request.getParameter("confidentiality"), request.getParameter("author"), request.getParameter("notes"));
+      parts.create(tenantUuid, caseUuid, docUuid, request.getParameter("label"), request.getParameter("part_category"), request.getParameter("sequence"), request.getParameter("confidentiality"), request.getParameter("author"), request.getParameter("notes"));
       response.sendRedirect(ctx + "/parts.jsp?case_uuid=" + java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) + "&doc_uuid=" + java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8));
       return;
     }
@@ -81,7 +81,6 @@ if (hasActiveLead && "lead".equals(requestedCategory)) requestedCategory = "atta
       <option value="attachment" <%= "attachment".equals(requestedCategory) ? "selected" : "" %>>Attachment</option>
     </select>
   </div>
-  <div><label>Status</label><input type="text" name="status" placeholder="draft/final/executed"/></div>
 </div>
 <div class="grid grid-3"><div><label>Sequence</label><input type="text" name="sequence" placeholder="1.0"/></div><div><label>Confidentiality</label><input type="text" name="confidentiality" placeholder="public/confidential/sealed"/></div><div><label>Author</label><input type="text" name="author" /></div></div>
 <div><label>Notes</label><input type="text" name="notes" /></div>
@@ -94,9 +93,9 @@ if (hasActiveLead && "lead".equals(requestedCategory)) requestedCategory = "atta
 </form>
 <% if (!safe(error).isBlank()) { %><div class="alert alert-error" style="margin-top:10px;"><%= esc(error) %></div><% } %>
 </section>
-<section class="card" style="margin-top:12px;"><table class="table"><thead><tr><th>Label</th><th>Category</th><th>Status</th><th>Seq</th><th>Updated</th><th></th></tr></thead><tbody>
+<section class="card" style="margin-top:12px;"><table class="table"><thead><tr><th>Label</th><th>Category</th><th>Seq</th><th>Updated</th><th></th></tr></thead><tbody>
 <% for (document_parts.PartRec r : rows) { if (r.trashed) continue; %>
-<tr><td><%= esc(r.label) %></td><td><%= esc(categoryLabel(r.partType)) %></td><td><%= esc(r.status) %></td><td><%= esc(r.sequence) %></td><td><%= esc(r.updatedAt) %></td><td><a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(r.uuid, java.nio.charset.StandardCharsets.UTF_8) %>">Versions</a></td></tr>
+<tr><td><%= esc(r.label) %></td><td><%= esc(categoryLabel(r.partType)) %></td><td><%= esc(r.sequence) %></td><td><%= esc(r.updatedAt) %></td><td><a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(r.uuid, java.nio.charset.StandardCharsets.UTF_8) %>">Versions</a></td></tr>
 <% } %>
 </tbody></table></section>
 <jsp:include page="footer.jsp" />

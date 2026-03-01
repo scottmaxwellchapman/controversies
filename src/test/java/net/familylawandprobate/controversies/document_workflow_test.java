@@ -38,7 +38,7 @@ public class document_workflow_test {
         assertEquals(1, docs.listAll(tenant, matter).size());
 
         document_parts parts = document_parts.defaultStore();
-        document_parts.PartRec part = parts.create(tenant, matter, doc.uuid, "Argument", "section", "draft", "1", "confidential", "Atty", "");
+        document_parts.PartRec part = parts.create(tenant, matter, doc.uuid, "Argument", "attachment", "1", "confidential", "Atty", "");
         assertEquals(1, parts.listAll(tenant, matter, doc.uuid).size());
 
         part_versions versions = part_versions.defaultStore();

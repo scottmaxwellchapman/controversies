@@ -9,6 +9,7 @@
 <%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.secret_redactor" %>
 <%@ page import="net.familylawandprobate.controversies.notification_emails" %>
+<%@ page import="net.familylawandprobate.controversies.document_taxonomy" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 
@@ -138,6 +139,7 @@
 
   tenant_settings store = tenant_settings.defaultStore();
   activity_log logs = activity_log.defaultStore();
+  document_taxonomy taxonomyStore = document_taxonomy.defaultStore();
 
   String csrfToken = csrfForRender(request);
   String message = null;
@@ -162,6 +164,21 @@
 
   if ("POST".equalsIgnoreCase(request.getMethod())) {
     String action = tsSafe(request.getParameter("action")).trim();
+    if ("add_taxonomy".equalsIgnoreCase(action)) {
+      try {
+        taxonomyStore.addValues(
+          tenantUuid,
+          java.util.Arrays.asList(tsSafe(request.getParameter("taxonomy_category"))),
+          java.util.Arrays.asList(tsSafe(request.getParameter("taxonomy_subcategory"))),
+          java.util.Arrays.asList(tsSafe(request.getParameter("taxonomy_status")))
+        );
+        logs.logVerbose("tenant_settings_taxonomy_updated", tenantUuid, userUuid, "", "", Map.of("action", "add_taxonomy"));
+        response.sendRedirect(ctx + "/tenant_settings.jsp?status=taxonomy_saved");
+        return;
+      } catch (Exception ex) {
+        error = "Unable to update taxonomy: " + tsSafe(ex.getMessage());
+      }
+    }
 
     String storageBackend = tsSafe(request.getParameter("storage_backend")).trim();
     if (storageBackend.isBlank()) storageBackend = "local";
@@ -502,6 +519,7 @@
   if ("saved".equals(status)) message = "Tenant settings saved.";
   if ("rotated_storage".equals(status)) message = "Storage secret rotated and saved.";
   if ("rotated_clio".equals(status)) message = "Clio secret rotated and saved.";
+  if ("taxonomy_saved".equals(status)) message = "Taxonomy updated.";
 
   String maskedStorageSecret = tsSafe(settings.get("storage_secret")).isBlank() ? "" : "********";
   String maskedClioSecret = tsSafe(settings.get("clio_client_secret")).isBlank() ? "" : "********";
@@ -519,6 +537,8 @@
   String themeLongitudeSaved = tsSafe(settings.get("theme_longitude")).trim();
   String themeLightHourSaved = tsHour(settings.get("theme_light_start_hour"), 7);
   String themeDarkHourSaved = tsHour(settings.get("theme_dark_start_hour"), 19);
+  document_taxonomy.Taxonomy tx = new document_taxonomy.Taxonomy();
+  try { tx = taxonomyStore.read(tenantUuid); } catch (Exception ignored) {}
 %>
 
 <jsp:include page="header.jsp" />
@@ -540,6 +560,32 @@
   <% if (error != null) { %>
     <div class="alert alert-error" style="margin-top:12px;"><%= tsEsc(error) %></div>
   <% } %>
+</section>
+
+<section class="card" style="margin-top:12px;" id="document-taxonomy">
+  <h2 style="margin-top:0;">Manage Document Taxonomy</h2>
+  <div class="meta" style="margin-bottom:10px;">These values drive Category/Subcategory/Status options on the Documents page.</div>
+  <form class="form" method="post" action="<%= ctx %>/tenant_settings.jsp">
+    <input type="hidden" name="csrfToken" value="<%= tsEsc(csrfToken) %>" />
+    <input type="hidden" name="action" value="add_taxonomy" />
+    <div class="grid grid-3">
+      <label>Category
+        <input type="text" name="taxonomy_category" />
+      </label>
+      <label>Subcategory
+        <input type="text" name="taxonomy_subcategory" />
+      </label>
+      <label>Status
+        <input type="text" name="taxonomy_status" />
+      </label>
+    </div>
+    <button type="submit" class="btn btn-ghost">Save Taxonomy Values</button>
+  </form>
+  <div class="meta" style="margin-top:10px;">
+    Categories: <%= tx.categories == null || tx.categories.isEmpty() ? "None" : tsEsc(String.join(", ", tx.categories)) %><br />
+    Subcategories: <%= tx.subcategories == null || tx.subcategories.isEmpty() ? "None" : tsEsc(String.join(", ", tx.subcategories)) %><br />
+    Statuses: <%= tx.statuses == null || tx.statuses.isEmpty() ? "None" : tsEsc(String.join(", ", tx.statuses)) %>
+  </div>
 </section>
 
 <form class="form" method="post" action="<%= ctx %>/tenant_settings.jsp">

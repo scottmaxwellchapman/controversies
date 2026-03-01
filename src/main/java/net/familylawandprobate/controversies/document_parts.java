@@ -22,7 +22,6 @@ public final class document_parts {
         public String uuid;
         public String label;
         public String partType;
-        public String status;
         public String sequence;
         public String confidentiality;
         public String author;
@@ -52,7 +51,7 @@ public final class document_parts {
     }
 
     public PartRec create(String tenantUuid, String matterUuid, String docUuid, String label, String partType,
-                          String status, String sequence, String confidentiality, String author, String notes) throws Exception {
+                          String sequence, String confidentiality, String author, String notes) throws Exception {
         if (document_workflow_support.safe(label).trim().isBlank()) throw new IllegalArgumentException("label required");
         List<PartRec> all = listAll(tenantUuid, matterUuid, docUuid);
         String category = canonicalCategory(partType);
@@ -63,7 +62,6 @@ public final class document_parts {
         rec.uuid = UUID.randomUUID().toString();
         rec.label = document_workflow_support.safe(label).trim();
         rec.partType = category;
-        rec.status = document_workflow_support.normalizeToken(status);
         rec.sequence = document_workflow_support.safe(sequence).trim();
         rec.confidentiality = document_workflow_support.safe(confidentiality).trim();
         rec.author = document_workflow_support.safe(author).trim();
@@ -122,7 +120,6 @@ public final class document_parts {
         rec.uuid = document_workflow_support.text(e, "uuid");
         rec.label = document_workflow_support.text(e, "label");
         rec.partType = canonicalCategory(document_workflow_support.text(e, "part_type"));
-        rec.status = document_workflow_support.text(e, "status");
         rec.sequence = document_workflow_support.text(e, "sequence");
         rec.confidentiality = document_workflow_support.text(e, "confidentiality");
         rec.author = document_workflow_support.text(e, "author");
@@ -143,7 +140,6 @@ public final class document_parts {
             writeTag(sb, "uuid", rec.uuid);
             writeTag(sb, "label", rec.label);
             writeTag(sb, "part_type", canonicalCategory(rec.partType));
-            writeTag(sb, "status", rec.status);
             writeTag(sb, "sequence", rec.sequence);
             writeTag(sb, "confidentiality", rec.confidentiality);
             writeTag(sb, "author", rec.author);
