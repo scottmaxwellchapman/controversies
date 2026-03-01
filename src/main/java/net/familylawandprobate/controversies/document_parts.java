@@ -15,6 +15,9 @@ import org.w3c.dom.NodeList;
 
 public final class document_parts {
 
+    private static final String CATEGORY_LEAD = "lead";
+    private static final String CATEGORY_ATTACHMENT = "attachment";
+
     public static final class PartRec {
         public String uuid;
         public String label;
@@ -52,10 +55,14 @@ public final class document_parts {
                           String status, String sequence, String confidentiality, String author, String notes) throws Exception {
         if (document_workflow_support.safe(label).trim().isBlank()) throw new IllegalArgumentException("label required");
         List<PartRec> all = listAll(tenantUuid, matterUuid, docUuid);
+        String category = canonicalCategory(partType);
+        if (CATEGORY_LEAD.equals(category) && hasActiveLead(all, null)) {
+            throw new IllegalArgumentException("Only one Lead part is allowed per document.");
+        }
         PartRec rec = new PartRec();
         rec.uuid = UUID.randomUUID().toString();
         rec.label = document_workflow_support.safe(label).trim();
-        rec.partType = document_workflow_support.normalizeToken(partType);
+        rec.partType = category;
         rec.status = document_workflow_support.normalizeToken(status);
         rec.sequence = document_workflow_support.safe(sequence).trim();
         rec.confidentiality = document_workflow_support.safe(confidentiality).trim();
@@ -72,6 +79,19 @@ public final class document_parts {
 
     public boolean setTrashed(String tenantUuid, String matterUuid, String docUuid, String partUuid, boolean trashed) throws Exception {
         List<PartRec> all = listAll(tenantUuid, matterUuid, docUuid);
+        if (!trashed) {
+            PartRec target = null;
+            for (PartRec rec : all) {
+                if (document_workflow_support.safe(partUuid).trim().equals(document_workflow_support.safe(rec.uuid).trim())) {
+                    target = rec;
+                    break;
+                }
+            }
+            if (target != null && CATEGORY_LEAD.equals(canonicalCategory(target.partType)) && hasActiveLead(all, target.uuid)) {
+                throw new IllegalArgumentException("Only one Lead part is allowed per document.");
+            }
+        }
+
         boolean changed = false;
         for (PartRec rec : all) {
             if (!document_workflow_support.safe(partUuid).trim().equals(document_workflow_support.safe(rec.uuid).trim())) continue;
@@ -101,7 +121,7 @@ public final class document_parts {
         PartRec rec = new PartRec();
         rec.uuid = document_workflow_support.text(e, "uuid");
         rec.label = document_workflow_support.text(e, "label");
-        rec.partType = document_workflow_support.text(e, "part_type");
+        rec.partType = canonicalCategory(document_workflow_support.text(e, "part_type"));
         rec.status = document_workflow_support.text(e, "status");
         rec.sequence = document_workflow_support.text(e, "sequence");
         rec.confidentiality = document_workflow_support.text(e, "confidentiality");
@@ -122,7 +142,7 @@ public final class document_parts {
             sb.append("  <part>\n");
             writeTag(sb, "uuid", rec.uuid);
             writeTag(sb, "label", rec.label);
-            writeTag(sb, "part_type", rec.partType);
+            writeTag(sb, "part_type", canonicalCategory(rec.partType));
             writeTag(sb, "status", rec.status);
             writeTag(sb, "sequence", rec.sequence);
             writeTag(sb, "confidentiality", rec.confidentiality);
@@ -148,5 +168,24 @@ public final class document_parts {
         Path docFolder = docs.documentFolder(tenantUuid, matterUuid, docUuid);
         if (docFolder == null) return null;
         return docFolder.resolve("parts.xml");
+    }
+
+    private static String canonicalCategory(String raw) {
+        String v = document_workflow_support.normalizeToken(raw);
+        if (CATEGORY_LEAD.equals(v)) return CATEGORY_LEAD;
+        return CATEGORY_ATTACHMENT;
+    }
+
+    private static boolean hasActiveLead(List<PartRec> all, String exceptPartUuid) {
+        if (all == null || all.isEmpty()) return false;
+        String except = document_workflow_support.safe(exceptPartUuid).trim();
+        for (PartRec rec : all) {
+            if (rec == null) continue;
+            if (rec.trashed) continue;
+            String uuid = document_workflow_support.safe(rec.uuid).trim();
+            if (!except.isBlank() && except.equals(uuid)) continue;
+            if (CATEGORY_LEAD.equals(canonicalCategory(rec.partType))) return true;
+        }
+        return false;
     }
 }

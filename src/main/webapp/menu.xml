@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <menu>
   <item label="Home" href="/index.jsp" />
-  <item label="Users &amp; Security" href="/users_roles.jsp" />
   <item label="Cases" href="/cases.jsp" />
   <item label="Documents" href="/documents.jsp" />
   <item label="Texas Law" href="/texas_law.jsp" />
   <item label="Case Fields" href="/case_fields.jsp" />
 
   <item label="Form Assembler">
-    <item label="Form Assembly" href="/forms.jsp" />
-    <item label="Assembled Forms" href="/assembled_forms.jsp" />
+    <item label="Assemble a Form" href="/forms.jsp" />
+    <item label="View the Assembled Forms" href="/assembled_forms.jsp" />
     <item label="Template Library" href="/template_library.jsp" />
     <item label="Template Editor" href="/template_editor.jsp" />
   </item>
 
   <item label="Settings">
+    <item label="Users &amp; Security" href="/users_roles.jsp" />
     <item label="Tenant Fields" href="/tenant_fields.jsp" />
     <item label="Attribute Editor" href="/attribute_editor.jsp" />
     <item label="Custom Objects" href="/custom_objects.jsp" />

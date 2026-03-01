@@ -14,9 +14,28 @@
 <% if (!require_login()) return; %>
 <%!
 private static final String S_TENANT_UUID = "tenant.uuid";
+private static final String CSRF_SESSION_KEY = "CSRF_TOKEN";
 private static final int MAX_UPLOAD_CHUNKS = 12000;
 private static String safe(String s){ return s == null ? "" : s; }
 private static String esc(String s){ return safe(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&#39;"); }
+private static String csrfForRender(jakarta.servlet.http.HttpServletRequest req) {
+  Object a = req.getAttribute("csrfToken");
+  if (a instanceof String) {
+    String s = (String) a;
+    if (s != null && !s.trim().isEmpty()) return s;
+  }
+  try {
+    jakarta.servlet.http.HttpSession sess = req.getSession(false);
+    if (sess != null) {
+      Object t = sess.getAttribute(CSRF_SESSION_KEY);
+      if (t instanceof String) {
+        String cs = (String) t;
+        if (cs != null && !cs.trim().isEmpty()) return cs;
+      }
+    }
+  } catch (Exception ignored) {}
+  return "";
+}
 private static String onlyDigits(String s){ return safe(s).replaceAll("[^0-9]", ""); }
 private static int intOrDefault(String s, int d){ try { return Integer.parseInt(safe(s).trim()); } catch (Exception ex) { return d; } }
 private static String safeFileName(String s){
@@ -55,6 +74,7 @@ private static void deleteRecursively(Path root) {
 %>
 <%
 String ctx = safe(request.getContextPath());
+String csrfToken = csrfForRender(request);
 String tenantUuid = safe((String)session.getAttribute(S_TENANT_UUID)).trim();
 if (tenantUuid.isBlank()) { response.sendRedirect(ctx + "/tenant_login.jsp"); return; }
 String caseUuid = safe(request.getParameter("case_uuid")).trim();
@@ -155,6 +175,7 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
 <section class="card"><h1 style="margin:0;">Part Versions</h1><div class="meta">Part: <strong><%= esc(part == null ? "" : part.label) %></strong></div></section>
 <section class="card" style="margin-top:12px;">
 <form class="form" method="post" action="<%= ctx %>/versions.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>">
+<input type="hidden" name="csrfToken" id="csrf_token" value="<%= esc(csrfToken) %>" />
 <input type="hidden" name="action" id="version_form_action" value="create_metadata" />
 <input type="hidden" name="upload_id" id="upload_id" value="" />
 <input type="hidden" name="total_chunks" id="total_chunks" value="" />
@@ -185,6 +206,7 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
   var totalChunksInput = document.getElementById("total_chunks");
   var uploadFileNameInput = document.getElementById("upload_file_name");
   var fileShaInput = document.getElementById("file_sha256");
+  var csrfTokenInput = document.getElementById("csrf_token");
   var CHUNK_SIZE = 192 * 1024;
 
   function setStatus(msg) { if (statusEl) statusEl.textContent = msg; }
@@ -236,6 +258,7 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
         body.set("total_chunks", String(totalChunks));
         body.set("chunk_sha256", chunkSha);
         body.set("chunk_b64", chunkB64);
+        if (csrfTokenInput && csrfTokenInput.value) body.set("csrfToken", csrfTokenInput.value);
         setStatus("Uploading chunk " + (i + 1) + " / " + totalChunks + "...");
         var resp = await fetch(form.action, {
           method: "POST",
