@@ -10,6 +10,7 @@
 <%@ page import="java.util.UUID" %>
 <%@ page import="net.familylawandprobate.controversies.part_versions" %>
 <%@ page import="net.familylawandprobate.controversies.document_parts" %>
+<%@ page import="net.familylawandprobate.controversies.pdf_version_background_jobs" %>
 <%@ include file="security.jspf" %>
 <% if (!require_login()) return; %>
 <%!
@@ -102,7 +103,25 @@ if ("POST".equalsIgnoreCase(request.getMethod())) {
     if (partFolder == null) throw new IllegalArgumentException("Part folder unavailable.");
     Path tempRoot = partFolder.resolve(".upload_staging");
     Files.createDirectories(tempRoot);
-    if ("upload_chunk_bin".equalsIgnoreCase(action)) {
+    if ("queue_ocr".equalsIgnoreCase(action)) {
+      String sourceVersionUuid = safe(request.getParameter("source_version_uuid")).trim();
+      String createdBy = safe((String)session.getAttribute("user.email")).trim();
+      if (createdBy.isBlank()) createdBy = safe((String)session.getAttribute("user.uuid")).trim();
+      String jobId = pdf_version_background_jobs.defaultService().enqueueOcr(
+        tenantUuid, caseUuid, docUuid, partUuid, sourceVersionUuid, createdBy
+      );
+      response.sendRedirect(ctx + "/versions.jsp?case_uuid=" + java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) + "&doc_uuid=" + java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) + "&part_uuid=" + java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) + "&ocr_queued=1&job_id=" + java.net.URLEncoder.encode(jobId, java.nio.charset.StandardCharsets.UTF_8));
+      return;
+    } else if ("queue_flat".equalsIgnoreCase(action)) {
+      String sourceVersionUuid = safe(request.getParameter("source_version_uuid")).trim();
+      String createdBy = safe((String)session.getAttribute("user.email")).trim();
+      if (createdBy.isBlank()) createdBy = safe((String)session.getAttribute("user.uuid")).trim();
+      String jobId = pdf_version_background_jobs.defaultService().enqueueFlatten(
+        tenantUuid, caseUuid, docUuid, partUuid, sourceVersionUuid, createdBy
+      );
+      response.sendRedirect(ctx + "/versions.jsp?case_uuid=" + java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) + "&doc_uuid=" + java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) + "&part_uuid=" + java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) + "&flat_queued=1&job_id=" + java.net.URLEncoder.encode(jobId, java.nio.charset.StandardCharsets.UTF_8));
+      return;
+    } else if ("upload_chunk_bin".equalsIgnoreCase(action)) {
       String uploadId = safe(request.getParameter("upload_id")).replaceAll("[^A-Za-z0-9_-]", "");
       int chunkIndex = intOrDefault(request.getParameter("chunk_index"), -1);
       int totalChunks = intOrDefault(request.getParameter("total_chunks"), -1);
@@ -213,8 +232,12 @@ if ("POST".equalsIgnoreCase(request.getMethod())) {
 }
 if ("1".equals(request.getParameter("uploaded"))) message = "Version file uploaded, verified, and recorded.";
 if ("1".equals(request.getParameter("redacted"))) message = "Redacted PDF saved as a new document part version.";
+if ("1".equals(request.getParameter("ocr_queued"))) message = "OCR job queued in background.";
+if ("1".equals(request.getParameter("flat_queued"))) message = "Flatten job queued in background.";
 List<part_versions.VersionRec> rows = versions.listAll(tenantUuid, caseUuid, docUuid, partUuid);
 document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid);
+boolean pdfsandwichAvailable = false;
+try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfSandwichAvailable(); } catch (Exception ignored) {}
 %>
 <jsp:include page="header.jsp" />
 <section class="card">
@@ -222,6 +245,9 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
     <div>
       <h1 style="margin:0;">Part Versions</h1>
       <div class="meta">Part: <strong><%= esc(part == null ? "" : part.label) %></strong></div>
+      <% if (!pdfsandwichAvailable) { %>
+      <div class="meta">OCR unavailable: <code>pdfsandwich</code> was not found on this server.</div>
+      <% } %>
     </div>
     <a class="btn btn-ghost" href="<%= ctx %>/pdf_redact.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>">Redact a PDF Version</a>
   </div>
@@ -243,9 +269,33 @@ document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid)
 <% if (!safe(message).isBlank()) { %><div class="alert" style="margin-top:10px;"><%= esc(message) %></div><% } %>
 <% if (!safe(error).isBlank()) { %><div class="alert alert-error" style="margin-top:10px;"><%= esc(error) %></div><% } %>
 </section>
-<section class="card" style="margin-top:12px;"><table class="table"><thead><tr><th>Version</th><th>Source</th><th>MIME</th><th>Checksum</th><th>Created</th><th>Current</th><th></th></tr></thead><tbody>
+<section class="card" style="margin-top:12px;"><table class="table"><thead><tr><th>Version</th><th>Source</th><th>MIME</th><th>Checksum</th><th>Created</th><th>Current</th><th>Actions</th></tr></thead><tbody>
 <% for (part_versions.VersionRec r : rows) { %>
-<tr><td><%= esc(r.versionLabel) %></td><td><%= esc(r.source) %></td><td><%= esc(r.mimeType) %></td><td><%= esc(r.checksum) %></td><td><%= esc(r.createdAt) %></td><td><%= r.current ? "Yes" : "" %></td><td><% if (isPdfVersion(r)) { %><a class="btn btn-ghost" href="<%= ctx %>/pdf_redact.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>&source_version_uuid=<%= java.net.URLEncoder.encode(safe(r.uuid), java.nio.charset.StandardCharsets.UTF_8) %>">Redact</a><% } %></td></tr>
+<tr>
+  <td><%= esc(r.versionLabel) %></td>
+  <td><%= esc(r.source) %></td>
+  <td><%= esc(r.mimeType) %></td>
+  <td><%= esc(r.checksum) %></td>
+  <td><%= esc(r.createdAt) %></td>
+  <td><%= r.current ? "Yes" : "" %></td>
+  <td>
+    <% if (isPdfVersion(r)) { %>
+      <a class="btn btn-ghost" href="<%= ctx %>/pdf_redact.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>&source_version_uuid=<%= java.net.URLEncoder.encode(safe(r.uuid), java.nio.charset.StandardCharsets.UTF_8) %>">Redact</a>
+      <form method="post" action="<%= ctx %>/versions.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>" style="display:inline;">
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="action" value="queue_ocr" />
+        <input type="hidden" name="source_version_uuid" value="<%= esc(safe(r.uuid)) %>" />
+        <button class="btn btn-ghost" type="submit" <%= pdfsandwichAvailable ? "" : "disabled title=\"pdfsandwich not found on server\"" %>>OCR</button>
+      </form>
+      <form method="post" action="<%= ctx %>/versions.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>" style="display:inline;">
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="action" value="queue_flat" />
+        <input type="hidden" name="source_version_uuid" value="<%= esc(safe(r.uuid)) %>" />
+        <button class="btn btn-ghost" type="submit">FLAT</button>
+      </form>
+    <% } %>
+  </td>
+</tr>
 <% } %>
 </tbody></table></section>
 <script>

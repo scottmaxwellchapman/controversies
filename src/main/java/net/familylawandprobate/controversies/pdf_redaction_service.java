@@ -293,6 +293,51 @@ public final class pdf_redaction_service {
         return new RedactionRun(usedPdfRedactor, rects.size());
     }
 
+    public static void flattenToImagePdf(Path inputPdf, Path outputPdf) throws Exception {
+        Path input = requirePdf(inputPdf);
+        if (outputPdf == null) throw new IllegalArgumentException("Output path required.");
+        Path output = outputPdf.toAbsolutePath().normalize();
+        Files.createDirectories(output.getParent());
+
+        try (PDDocument source = PDDocument.load(input.toFile());
+             PDDocument flattened = new PDDocument()) {
+            int pages = Math.max(0, source.getNumberOfPages());
+            if (pages <= 0) throw new IllegalArgumentException("PDF has no pages.");
+            PDFRenderer renderer = new PDFRenderer(source);
+
+            for (int pageIndex = 0; pageIndex < pages; pageIndex++) {
+                BufferedImage rendered = renderer.renderImageWithDPI(pageIndex, RASTER_REDACTION_DPI, ImageType.RGB);
+                float pageWidthPt = (float) (rendered.getWidth() * 72d / RASTER_REDACTION_DPI);
+                float pageHeightPt = (float) (rendered.getHeight() * 72d / RASTER_REDACTION_DPI);
+                if (pageWidthPt <= 0f || pageHeightPt <= 0f) {
+                    rendered.flush();
+                    continue;
+                }
+
+                PDPage outPage = new PDPage(new PDRectangle(pageWidthPt, pageHeightPt));
+                flattened.addPage(outPage);
+
+                PDImageXObject pageImage = LosslessFactory.createFromImage(flattened, rendered);
+                try (PDPageContentStream cs = new PDPageContentStream(
+                        flattened,
+                        outPage,
+                        PDPageContentStream.AppendMode.OVERWRITE,
+                        false,
+                        false
+                )) {
+                    cs.drawImage(pageImage, 0f, 0f, pageWidthPt, pageHeightPt);
+                }
+                rendered.flush();
+            }
+
+            flattened.save(output.toFile());
+        }
+
+        if (!Files.exists(output) || Files.size(output) <= 0L) {
+            throw new IllegalStateException("Flattened PDF output was not created.");
+        }
+    }
+
     public static String sha256(Path p) throws Exception {
         MessageDigest md = MessageDigest.getInstance("SHA-256");
         try (java.io.InputStream in = Files.newInputStream(p)) {

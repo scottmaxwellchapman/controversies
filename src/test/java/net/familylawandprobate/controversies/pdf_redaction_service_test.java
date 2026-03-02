@@ -128,6 +128,25 @@ public class pdf_redaction_service_test {
         }
     }
 
+    @Test
+    void flattens_pdf_to_image_only_pdf() throws Exception {
+        Path work = Files.createTempDirectory("pdf-redaction-service-flatten-");
+        try {
+            Path source = work.resolve("source.pdf");
+            createPdf(source, 1);
+
+            Path output = work.resolve("source_flattened.pdf");
+            pdf_redaction_service.flattenToImagePdf(source, output);
+            assertTrue(Files.exists(output));
+            assertTrue(Files.size(output) > 0L);
+
+            String extracted = extractText(output);
+            assertTrue(extracted.trim().isEmpty(), "Flattened output should not retain extractable source text.");
+        } finally {
+            deleteRecursively(work);
+        }
+    }
+
     private static void createPdf(Path target, int pages) throws Exception {
         try (PDDocument doc = new PDDocument()) {
             for (int i = 0; i < pages; i++) {
