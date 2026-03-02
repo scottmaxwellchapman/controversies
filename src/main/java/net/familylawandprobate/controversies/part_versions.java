@@ -52,6 +52,10 @@ public final class part_versions {
                              String source, String mimeType, String checksum, String fileSizeBytes,
                              String storagePath, String createdBy, String notes, boolean makeCurrent) throws Exception {
         if (document_workflow_support.safe(versionLabel).trim().isBlank()) throw new IllegalArgumentException("version label required");
+        Path resolvedStoragePath = pdf_redaction_service.resolveStoragePath(storagePath);
+        if (resolvedStoragePath != null) {
+            pdf_redaction_service.requirePathWithinTenant(resolvedStoragePath, tenantUuid, "Storage path");
+        }
         List<VersionRec> all = listAll(tenantUuid, matterUuid, docUuid, partUuid);
         if (makeCurrent) {
             for (VersionRec rec : all) rec.current = false;

@@ -2,6 +2,7 @@ package net.familylawandprobate.controversies;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -44,5 +45,35 @@ public class document_workflow_test {
         part_versions versions = part_versions.defaultStore();
         versions.create(tenant, matter, doc.uuid, part.uuid, "v1", "generated", "application/pdf", "abc", "100", "vault://x", "Atty", "", true);
         assertEquals(1, versions.listAll(tenant, matter, doc.uuid, part.uuid).size());
+    }
+
+    @Test
+    void rejects_local_version_storage_paths_outside_tenant_root() throws Exception {
+        String tenant = "tenant-doc-test";
+        String matter = "matter-002";
+
+        documents docs = documents.defaultStore();
+        documents.DocumentRec doc = docs.create(tenant, matter, "Guardrail Doc", "pleading", "motion", "draft", "Attorney", "work_product", "", "", "");
+        document_parts parts = document_parts.defaultStore();
+        document_parts.PartRec part = parts.create(tenant, matter, doc.uuid, "Main", "lead", "1", "", "Atty", "");
+
+        Path outside = Paths.get("data", "sec", "outside-tenant.pdf").toAbsolutePath();
+        part_versions versions = part_versions.defaultStore();
+        assertThrows(IllegalArgumentException.class, () ->
+                versions.create(
+                        tenant,
+                        matter,
+                        doc.uuid,
+                        part.uuid,
+                        "v1",
+                        "uploaded",
+                        "application/pdf",
+                        "abc",
+                        "100",
+                        outside.toString(),
+                        "Atty",
+                        "",
+                        true
+                ));
     }
 }

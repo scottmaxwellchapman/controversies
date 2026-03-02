@@ -95,6 +95,7 @@ LinkedHashMap<String, Path> sourcePathByVersionUuid = new LinkedHashMap<String, 
 for (part_versions.VersionRec rec : allVersions) {
   if (!pdf_redaction_service.isPdfVersion(rec)) continue;
   Path p = pdf_redaction_service.resolveStoragePath(rec == null ? "" : rec.storagePath);
+  if (!pdf_redaction_service.isPathWithinTenant(p, tenantUuid)) continue;
   if (p == null || !Files.isRegularFile(p)) continue;
   pdfVersions.add(rec);
   sourcePathByVersionUuid.put(safe(rec.uuid).trim(), p);
@@ -122,6 +123,7 @@ if ("page_image".equals(action)) {
     return;
   }
   Path selectedPath = sourcePathByVersionUuid.get(selectedSourceUuid);
+  pdf_redaction_service.requirePathWithinTenant(selectedPath, tenantUuid, "Source PDF path");
   if (selectedPath == null || !Files.isRegularFile(selectedPath)) {
     response.setStatus(404);
     response.setContentType("text/plain; charset=UTF-8");
@@ -154,6 +156,7 @@ if ("POST".equalsIgnoreCase(request.getMethod())) {
       part_versions.VersionRec sourceVersion = findVersion(pdfVersions, selectedSourceUuid);
       if (sourceVersion == null) throw new IllegalArgumentException("Selected source version is unavailable.");
       Path sourcePath = sourcePathByVersionUuid.get(selectedSourceUuid);
+      pdf_redaction_service.requirePathWithinTenant(sourcePath, tenantUuid, "Source PDF path");
       if (sourcePath == null || !Files.isRegularFile(sourcePath)) throw new IllegalArgumentException("Source PDF file is missing.");
 
       List<pdf_redaction_service.RedactionRectNorm> normalized =

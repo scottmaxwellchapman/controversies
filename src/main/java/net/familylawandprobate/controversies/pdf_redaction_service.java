@@ -138,6 +138,26 @@ public final class pdf_redaction_service {
         }
     }
 
+    public static Path tenantRootPath(String tenantUuid) {
+        String tu = safeFileToken(tenantUuid);
+        if (tu.isBlank()) return null;
+        return Paths.get("data", "tenants", tu).toAbsolutePath().normalize();
+    }
+
+    public static boolean isPathWithinTenant(Path path, String tenantUuid) {
+        Path root = tenantRootPath(tenantUuid);
+        if (path == null || root == null) return false;
+        Path normalized = path.toAbsolutePath().normalize();
+        return normalized.startsWith(root);
+    }
+
+    public static void requirePathWithinTenant(Path path, String tenantUuid, String label) {
+        if (isPathWithinTenant(path, tenantUuid)) return;
+        String what = safe(label).trim();
+        if (what.isBlank()) what = "File path";
+        throw new IllegalArgumentException(what + " is outside the tenant boundary.");
+    }
+
     public static boolean isPdfVersion(part_versions.VersionRec rec) {
         if (rec == null) return false;
         String mime = safe(rec.mimeType).trim().toLowerCase(Locale.ROOT);
@@ -522,5 +542,9 @@ public final class pdf_redaction_service {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static String safeFileToken(String s) {
+        return safe(s).trim().replaceAll("[^A-Za-z0-9._-]", "_");
     }
 }

@@ -89,32 +89,29 @@
   String message = null;
   String error = null;
 
-  // Load all tenants for dropdown
+  // Tenant guardrail: tenant admins can only administer their own tenant.
   tenants tstore = tenants.defaultStore();
   try { tstore.ensure(); } catch (Exception ignored) {}
 
   List<tenants.Tenant> allTenants = new ArrayList<>();
-  try {
-    List<tenants.Tenant> tmp = tstore.list();
-    if (tmp != null) allTenants.addAll(tmp);
-    allTenants.sort((a,b) -> u_safe(a.label).compareToIgnoreCase(u_safe(b.label)));
-  } catch (Exception e) {
-    error = "Unable to load tenants: " + e.getMessage();
+  String requestedTargetTenantUuid = u_safe(request.getParameter("targetTenantUuid")).trim();
+  String targetTenantUuid = sessionTenantUuid;
+  if (!requestedTargetTenantUuid.isBlank() && !requestedTargetTenantUuid.equals(sessionTenantUuid)) {
+    error = "Cross-tenant access is not allowed.";
   }
 
-  // Target tenant (administer THIS tenant)
-  String targetTenantUuid = u_safe(request.getParameter("targetTenantUuid")).trim();
-  if (targetTenantUuid.isBlank()) targetTenantUuid = sessionTenantUuid;
-
-  // Validate target tenant exists
   tenants.Tenant targetTenant = null;
-  if (error == null) {
-    for (tenants.Tenant t : allTenants) {
-      if (t != null && targetTenantUuid.equals(u_safe(t.uuid))) { targetTenant = t; break; }
+  try {
+    if (!sessionTenantUuid.isBlank()) {
+      targetTenant = tstore.getByUuid(sessionTenantUuid);
+      if (targetTenant != null) allTenants.add(targetTenant);
     }
-    if (targetTenant == null && !targetTenantUuid.isBlank()) {
-      error = "Selected tenant does not exist.";
-    }
+  } catch (Exception e) {
+    if (error == null) error = "Unable to load tenant: " + e.getMessage();
+  }
+
+  if (error == null && (targetTenant == null || targetTenantUuid.isBlank())) {
+    error = "Tenant context is unavailable.";
   }
 
   // Selections (GET/POST) within target tenant
@@ -276,7 +273,7 @@
   <section class="card">
     <div class="section-head">
       <div>
-        <h1>Users & Roles (All Tenants)</h1>
+        <h1>Users & Roles</h1>
         <div class="meta">
           Logged in tenant: <strong><%= u_esc(sessionTenantLabel.isBlank() ? sessionTenantUuid : sessionTenantLabel) %></strong>
         </div>
@@ -297,7 +294,7 @@
       <div class="section-head">
         <div>
           <h2>Target tenant</h2>
-          <div class="meta">Choose which tenant you want to administer.</div>
+          <div class="meta">Tenant admins may only administer their current tenant.</div>
         </div>
       </div>
 
@@ -323,7 +320,7 @@
         </label>
 
         <div class="actions">
-          <button class="btn btn-ghost" type="submit" <%= allTenants.isEmpty() ? "disabled" : "" %>>Load tenant</button>
+          <button class="btn btn-ghost" type="submit" <%= allTenants.isEmpty() ? "disabled" : "" %>>Reload</button>
         </div>
 
         <% if (!targetTenantUuid.isBlank()) { %>

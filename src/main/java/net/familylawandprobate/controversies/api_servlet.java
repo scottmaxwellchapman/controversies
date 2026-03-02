@@ -1031,6 +1031,7 @@ public final class api_servlet extends HttpServlet {
                 }
 
                 Path sourcePath = pdf_redaction_service.resolveStoragePath(source.storagePath);
+                pdf_redaction_service.requirePathWithinTenant(sourcePath, tenantUuid, "Source PDF path");
                 if (sourcePath == null || !Files.isRegularFile(sourcePath)) {
                     throw new IllegalArgumentException("Source PDF file not found.");
                 }
@@ -1069,6 +1070,7 @@ public final class api_servlet extends HttpServlet {
                 }
 
                 Path sourcePath = pdf_redaction_service.resolveStoragePath(source.storagePath);
+                pdf_redaction_service.requirePathWithinTenant(sourcePath, tenantUuid, "Source PDF path");
                 if (sourcePath == null || !Files.isRegularFile(sourcePath)) {
                     throw new IllegalArgumentException("Source PDF file not found.");
                 }
