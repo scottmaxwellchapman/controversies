@@ -96,6 +96,38 @@ public class pdf_redaction_service_test {
         assertTrue(pdf_redaction_service.parseNormalizedPayload("bad,data").isEmpty());
     }
 
+    @Test
+    void fallback_rasterizes_only_redacted_pages() throws Exception {
+        Path work = Files.createTempDirectory("pdf-redaction-service-partial-");
+        try {
+            Path source = work.resolve("source.pdf");
+            createPdf(source, 2);
+
+            List<pdf_redaction_service.RedactionRectPt> rects =
+                    pdf_redaction_service.toPageCoordinates(
+                            source,
+                            pdf_redaction_service.parseNormalizedPayload("0,0.08,0.12,0.24,0.08")
+                    );
+            assertEquals(1, rects.size());
+
+            Path output = work.resolve("source_partially_redacted.pdf");
+            pdf_redaction_service.RedactionRun run = pdf_redaction_service.redact(source, output, rects);
+            assertNotNull(run);
+            assertTrue(Files.exists(output));
+            assertTrue(Files.size(output) > 0L);
+
+            if (!run.usedPdfRedactor) {
+                String extracted = extractText(output);
+                assertTrue(extracted.contains("Page 2 Sample Content"),
+                        "Unredacted pages should be copied through without rasterization.");
+                assertTrue(!extracted.contains("Page 1 Sample Content"),
+                        "Redacted pages should not retain extractable text in fallback mode.");
+            }
+        } finally {
+            deleteRecursively(work);
+        }
+    }
+
     private static void createPdf(Path target, int pages) throws Exception {
         try (PDDocument doc = new PDDocument()) {
             for (int i = 0; i < pages; i++) {

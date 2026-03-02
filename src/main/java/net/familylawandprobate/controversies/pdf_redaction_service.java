@@ -326,9 +326,14 @@ public final class pdf_redaction_service {
             for (int pageIndex = 0; pageIndex < pages; pageIndex++) {
                 PDPage sourcePage = input.getPage(pageIndex);
                 if (sourcePage == null) continue;
+                ArrayList<RedactionRectPt> pageRects = byPage.get(pageIndex);
+                if (pageRects == null || pageRects.isEmpty()) {
+                    output.importPage(sourcePage);
+                    continue;
+                }
 
                 BufferedImage rendered = renderer.renderImageWithDPI(pageIndex, RASTER_REDACTION_DPI, ImageType.RGB);
-                applyRasterRedactions(rendered, sourcePage, byPage.get(pageIndex));
+                applyRasterRedactions(rendered, sourcePage, pageRects);
 
                 float pageWidthPt = (float) (rendered.getWidth() * 72d / RASTER_REDACTION_DPI);
                 float pageHeightPt = (float) (rendered.getHeight() * 72d / RASTER_REDACTION_DPI);
