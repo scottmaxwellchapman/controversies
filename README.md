@@ -6,6 +6,7 @@ It supports:
 - Tenant and user login (with role-based permissions)
 - Case management
 - Facts case-plan management (Claims -> Elements -> Facts)
+- Task management (subtasks, custom attributes/fields, due-time planning, assignment balancing)
 - Omnichannel thread management (Flowroute SMS/MMS + IMAP/SMTP + Graph mailbox channels)
 - Tenant-level and case-level replacement fields
 - DOCX/DOC/RTF/ODT/TXT template assembly
@@ -21,6 +22,7 @@ It supports:
 - [Getting started (novice-friendly)](#getting-started-novice-friendly)
 - [Daily workflow](#daily-workflow)
 - [Facts Case Plan](#facts-case-plan)
+- [Tasks](#tasks)
 - [Omnichannel Threads](#omnichannel-threads)
 - [Template format support](#template-format-support)
 - [Browser auto-open behavior](#browser-auto-open-behavior)
@@ -100,9 +102,10 @@ mvn -version
 2. **User login** (`user_login.jsp`)
 3. **Users & Security**: define roles/permissions and users
 4. **Cases**: create matters and case-specific values
-5. **Tenant Fields**: define shared/global tenant values
-6. **Form Assembly**: assemble `.docx`, `.doc`, `.rtf`, `.odt`, and `.txt` templates with token replacement
-7. **Assembled Forms / Logs**: inspect output and diagnostics
+5. **Tasks**: plan due-time work, assign/reassign users, and link to facts/documents/threads
+6. **Tenant Fields**: define shared/global tenant values
+7. **Form Assembly**: assemble `.docx`, `.doc`, `.rtf`, `.odt`, and `.txt` templates with token replacement
+8. **Assembled Forms / Logs**: inspect output and diagnostics
 
 Main navigation is in `menu.xml` and links these pages from the header.
 
@@ -125,6 +128,31 @@ API coverage for this feature includes:
 - `facts.elements.*`
 - `facts.facts.*`
 - `facts.report.refresh`
+
+---
+
+## Tasks
+
+The app includes a dedicated `tasks.jsp` workspace with:
+
+- Side-tree task/sub-task planning
+- Required `due_at` and `estimate_minutes` fields for every task
+- Multi-user assignment and reassignment history
+- Optional round-robin assignment balancing
+- Internal task notes (user-only)
+- Association links to:
+  - matter UUID
+  - facts hierarchy (`claim_uuid`, `element_uuid`, `fact_uuid`)
+  - document references (`document_uuid`, `part_uuid`, `version_uuid`, `page_number`)
+  - omnichannel thread UUID
+- Tenant-defined custom task attributes (`task_attributes.jsp`) and per-task custom field values
+- Matter-linked task PDF reports stored in document part version history
+
+API coverage for this feature includes:
+
+- `task.attributes.*`
+- `task.fields.*`
+- `tasks.*`
 
 ---
 
@@ -272,8 +300,10 @@ src/main/webapp/
   users_roles.jsp
   cases.jsp
   facts.jsp
+  tasks.jsp
   omnichannel.jsp
   omnichannel_manifest.jsp
+  task_attributes.jsp
   tenant_fields.jsp
   forms.jsp
   assembled_forms.jsp
@@ -283,6 +313,8 @@ src/main/webapp/
   help_center.jsp
   help_facts_novice.jsp
   help_facts_expert.jsp
+  help_tasks_novice.jsp
+  help_tasks_expert.jsp
   help_threads_novice.jsp
   help_threads_expert.jsp
   token_guide.jsp
@@ -478,6 +510,11 @@ Current API coverage includes:
   - `matters.*`, `case.attributes.*`, `case.fields.*`, `case.list_items.*`
 - Facts case-plan workflow:
   - `facts.tree.get`, `facts.claims.*`, `facts.elements.*`, `facts.facts.*`, `facts.report.refresh`
+- Tasks workflow:
+  - `task.attributes.*`, `task.fields.*`
+  - `tasks.list/get/create/update/set_archived`
+  - `tasks.notes.list/add`, `tasks.assignments.list`
+  - `tasks.round_robin.next_assignee`, `tasks.report.refresh`
 - Document workflow:
   - `document.taxonomy.*`, `document.attributes.*`, `documents.*`, `document.fields.*`, `document.parts.*`, `document.versions.*`
   - `document.versions.render_page`, `document.versions.redact` (PDF version preview/redaction)
@@ -524,10 +561,15 @@ Built-in BPM step actions now include:
 - `set_case_list_item`
 - `set_document_field`
 - `set_tenant_field`
+- `set_task_field`
 - `set_variable`
 - `trigger_event`
 - `update_thread`
 - `add_thread_note`
+- `update_task`
+- `add_task_note`
+- `update_fact`
+- `refresh_facts_report`
 - `human_review`
 
 Use API operation `bpm.actions.catalog` for machine-readable action metadata including required/optional settings and reversibility.
@@ -535,9 +577,9 @@ Use API operation `bpm.actions.catalog` for machine-readable action metadata inc
 Undo/redo support:
 
 - Reversible out of the box:
-  - `set_case_field`, `set_case_list_item`, `set_document_field`, `set_tenant_field`
+  - `set_case_field`, `set_case_list_item`, `set_document_field`, `set_tenant_field`, `set_task_field`
 - Non-reversible by design:
-  - logging, variable/event actions, and message/thread-note actions
+  - logging, variable/event actions, thread/task updates, note actions, and facts-report refresh actions
 
 ---
 

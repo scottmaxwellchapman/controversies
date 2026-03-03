@@ -135,14 +135,17 @@ public class api_omnichannel_bpm_extensions_test {
 
         boolean foundUpdateThread = false;
         boolean foundSetDocumentField = false;
+        boolean foundUpdateTask = false;
         for (Object row : asList(out.get("items"))) {
             if (!(row instanceof Map<?, ?> map)) continue;
             String action = safe(String.valueOf(map.get("action")));
             if ("update_thread".equals(action)) foundUpdateThread = true;
             if ("set_document_field".equals(action)) foundSetDocumentField = true;
+            if ("update_task".equals(action)) foundUpdateTask = true;
         }
         assertTrue(foundUpdateThread);
         assertTrue(foundSetDocumentField);
+        assertTrue(foundUpdateTask);
     }
 
     @SuppressWarnings("unchecked")

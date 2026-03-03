@@ -4,6 +4,7 @@
   <item label="Cases" href="/cases.jsp" />
   <item label="Documents" href="/documents.jsp" />
   <item label="Facts Case Plan" href="/facts.jsp" />
+  <item label="Tasks" href="/tasks.jsp" />
   <item label="Omnichannel Threads" href="/omnichannel.jsp" />
   <item label="Knowledge Wiki" href="/wiki.jsp" />
   <item label="Texas Law" href="/texas_law.jsp" />
@@ -25,6 +26,7 @@
     <item label="Custom Objects" href="/custom_objects.jsp" />
     <item label="Case Attributes" href="/case_attributes.jsp" />
     <item label="Document Attributes" href="/document_attributes.jsp" />
+    <item label="Task Attributes" href="/task_attributes.jsp" />
     <item label="Business Processes" href="/business_processes.jsp" />
     <item label="BPM Reviews" href="/business_process_reviews.jsp" />
     <item label="Tenant Settings" href="/tenant_settings.jsp" />
@@ -39,6 +41,8 @@
     <item label="Form Assembly Guide" href="/help_form_assembly.jsp" />
     <item label="Facts Guide (Novice)" href="/help_facts_novice.jsp" />
     <item label="Facts Guide (Expert)" href="/help_facts_expert.jsp" />
+    <item label="Tasks Guide (Novice)" href="/help_tasks_novice.jsp" />
+    <item label="Tasks Guide (Expert)" href="/help_tasks_expert.jsp" />
     <item label="Threads Guide (Novice)" href="/help_threads_novice.jsp" />
     <item label="Threads Guide (Expert)" href="/help_threads_expert.jsp" />
     <item label="Token Guide" href="/token_guide.jsp" />

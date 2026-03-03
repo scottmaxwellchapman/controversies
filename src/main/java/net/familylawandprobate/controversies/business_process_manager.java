@@ -448,6 +448,13 @@ public final class business_process_manager {
                 List.of("on_error")
         ));
         out.add(actionDescriptor(
+                "set_task_field",
+                "Set one task custom-field value.",
+                true,
+                List.of("task_uuid", "field_key", "field_value"),
+                List.of("on_error")
+        ));
+        out.add(actionDescriptor(
                 "set_variable",
                 "Set a process variable for later steps.",
                 false,
@@ -473,6 +480,39 @@ public final class business_process_manager {
                 "Add an internal note to an omnichannel thread.",
                 false,
                 List.of("thread_uuid", "body"),
+                List.of("actor_user_uuid", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "update_task",
+                "Update a task record.",
+                false,
+                List.of("task_uuid"),
+                List.of("matter_uuid", "parent_task_uuid", "title", "description", "status", "priority",
+                        "assignment_mode", "assigned_user_uuid", "due_at", "reminder_at", "estimate_minutes",
+                        "claim_uuid", "element_uuid", "fact_uuid", "document_uuid", "part_uuid", "version_uuid",
+                        "page_number", "thread_uuid", "archived", "assignment_reason", "actor_user_uuid", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "add_task_note",
+                "Add an internal note to a task.",
+                false,
+                List.of("task_uuid", "body"),
+                List.of("actor_user_uuid", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "update_fact",
+                "Update a matter fact record.",
+                false,
+                List.of("matter_uuid", "fact_uuid"),
+                List.of("claim_uuid", "element_uuid", "summary", "detail", "internal_notes", "status", "strength",
+                        "document_uuid", "part_uuid", "version_uuid", "page_number", "sort_order",
+                        "actor_user_uuid", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "refresh_facts_report",
+                "Regenerate landscape facts PDF report for a matter.",
+                false,
+                List.of("matter_uuid"),
                 List.of("actor_user_uuid", "on_error")
         ));
         out.add(actionDescriptor(
@@ -788,6 +828,27 @@ public final class business_process_manager {
             if (hadKey) fields.put(fieldKey, value);
             else fields.remove(fieldKey);
             store.write(tenantUuid, matterUuid, docUuid, fields);
+            return;
+        }
+
+        if ("set_task_field".equals(type)) {
+            String taskUuid = safe(op.get("task_uuid")).trim();
+            String fieldKey = safe(op.get("field_key")).trim();
+            if (taskUuid.isBlank() || fieldKey.isBlank()) {
+                throw new IllegalArgumentException("Compensation set_task_field requires task_uuid and field_key.");
+            }
+            if (tasks.defaultStore().getTask(tenantUuid, taskUuid) == null) {
+                throw new IllegalArgumentException("Compensation task not found: " + taskUuid);
+            }
+
+            boolean hadKey = parseBool(op.get("had_key"), true);
+            String value = safe(op.get("field_value"));
+
+            task_fields store = task_fields.defaultStore();
+            LinkedHashMap<String, String> fields = new LinkedHashMap<String, String>(store.read(tenantUuid, taskUuid));
+            if (hadKey) fields.put(fieldKey, value);
+            else fields.remove(fieldKey);
+            store.write(tenantUuid, taskUuid, fields);
             return;
         }
 
@@ -1323,6 +1384,190 @@ public final class business_process_manager {
             context.put("vars.last_thread_uuid", threadUuid);
             context.put("vars.last_thread_note_uuid", safe(note == null ? "" : note.uuid));
             return StepOutcome.continueWithMessage("Internal thread note added.");
+        });
+
+        handlers.put("set_task_field", (exec, step, context) -> {
+            String taskUuid = resolveTemplate(step.settings.get("task_uuid"), context).trim();
+            if (taskUuid.isBlank()) taskUuid = safe(context.get("event.task_uuid")).trim();
+            if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required for set_task_field.");
+
+            if (tasks.defaultStore().getTask(exec.tenantUuid, taskUuid) == null) {
+                throw new IllegalArgumentException("Task not found.");
+            }
+
+            String fieldKey = resolveTemplate(step.settings.get("field_key"), context).trim();
+            if (fieldKey.isBlank()) throw new IllegalArgumentException("field_key is required for set_task_field.");
+            String fieldValue = resolveTemplate(step.settings.get("field_value"), context);
+
+            task_fields store = task_fields.defaultStore();
+            LinkedHashMap<String, String> fields = new LinkedHashMap<String, String>(store.read(exec.tenantUuid, taskUuid));
+            boolean hadBefore = fields.containsKey(fieldKey);
+            String beforeValue = safe(fields.get(fieldKey));
+            fields.put(fieldKey, fieldValue);
+            store.write(exec.tenantUuid, taskUuid, fields);
+
+            context.put("vars.last_task_uuid", taskUuid);
+            context.put("vars.last_task_field_key", fieldKey);
+            context.put("vars.last_task_field_value", fieldValue);
+
+            RunJournalEntry entry = new RunJournalEntry();
+            entry.createdAt = nowIso();
+            entry.stepId = safe(step.stepId);
+            entry.action = "set_task_field";
+            entry.description = "Updated task field " + fieldKey;
+            entry.reversible = true;
+            entry.undo = compensationOpTask("set_task_field", taskUuid, fieldKey, beforeValue, hadBefore);
+            entry.redo = compensationOpTask("set_task_field", taskUuid, fieldKey, fieldValue, true);
+
+            return StepOutcome.continueWithJournal("Task field updated: " + fieldKey, entry);
+        });
+
+        handlers.put("update_task", (exec, step, context) -> {
+            String taskUuid = resolveTemplate(step.settings.get("task_uuid"), context).trim();
+            if (taskUuid.isBlank()) taskUuid = safe(context.get("event.task_uuid")).trim();
+            if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required for update_task.");
+
+            tasks store = tasks.defaultStore();
+            tasks.TaskRec current = store.getTask(exec.tenantUuid, taskUuid);
+            if (current == null) throw new IllegalArgumentException("Task not found.");
+
+            tasks.TaskRec in = copyTask(current);
+            in.uuid = taskUuid;
+
+            String val;
+            val = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (!val.isBlank()) in.matterUuid = val;
+            val = resolveTemplate(step.settings.get("parent_task_uuid"), context).trim();
+            if (!val.isBlank()) in.parentTaskUuid = val;
+            val = resolveTemplate(step.settings.get("title"), context).trim();
+            if (!val.isBlank()) in.title = val;
+            val = resolveTemplate(step.settings.get("description"), context).trim();
+            if (!val.isBlank()) in.description = val;
+            val = resolveTemplate(step.settings.get("status"), context).trim();
+            if (!val.isBlank()) in.status = val;
+            val = resolveTemplate(step.settings.get("priority"), context).trim();
+            if (!val.isBlank()) in.priority = val;
+            val = resolveTemplate(step.settings.get("assignment_mode"), context).trim();
+            if (!val.isBlank()) in.assignmentMode = val;
+            val = resolveTemplate(step.settings.get("assigned_user_uuid"), context).trim();
+            if (!val.isBlank()) in.assignedUserUuid = val;
+            val = resolveTemplate(step.settings.get("due_at"), context).trim();
+            if (!val.isBlank()) in.dueAt = val;
+            val = resolveTemplate(step.settings.get("reminder_at"), context).trim();
+            if (!val.isBlank()) in.reminderAt = val;
+            val = resolveTemplate(step.settings.get("estimate_minutes"), context).trim();
+            if (!val.isBlank()) in.estimateMinutes = parseInt(val, in.estimateMinutes);
+            val = resolveTemplate(step.settings.get("claim_uuid"), context).trim();
+            if (!val.isBlank()) in.claimUuid = val;
+            val = resolveTemplate(step.settings.get("element_uuid"), context).trim();
+            if (!val.isBlank()) in.elementUuid = val;
+            val = resolveTemplate(step.settings.get("fact_uuid"), context).trim();
+            if (!val.isBlank()) in.factUuid = val;
+            val = resolveTemplate(step.settings.get("document_uuid"), context).trim();
+            if (!val.isBlank()) in.documentUuid = val;
+            val = resolveTemplate(step.settings.get("part_uuid"), context).trim();
+            if (!val.isBlank()) in.partUuid = val;
+            val = resolveTemplate(step.settings.get("version_uuid"), context).trim();
+            if (!val.isBlank()) in.versionUuid = val;
+            val = resolveTemplate(step.settings.get("page_number"), context).trim();
+            if (!val.isBlank()) in.pageNumber = parseInt(val, in.pageNumber);
+            val = resolveTemplate(step.settings.get("thread_uuid"), context).trim();
+            if (!val.isBlank()) in.threadUuid = val;
+            if (step.settings.containsKey("archived")) {
+                in.archived = parseBool(resolveTemplate(step.settings.get("archived"), context), in.archived);
+            }
+
+            String assignmentReason = resolveTemplate(step.settings.get("assignment_reason"), context);
+            String actorUser = resolveTemplate(step.settings.get("actor_user_uuid"), context).trim();
+            if (actorUser.isBlank()) actorUser = exec.actorUserUuid;
+
+            boolean changed = store.updateTask(exec.tenantUuid, in, actorUser, assignmentReason);
+            context.put("vars.last_task_uuid", taskUuid);
+            context.put("vars.last_task_updated", changed ? "true" : "false");
+            return StepOutcome.continueWithMessage(changed ? "Task updated." : "Task unchanged.");
+        });
+
+        handlers.put("add_task_note", (exec, step, context) -> {
+            String taskUuid = resolveTemplate(step.settings.get("task_uuid"), context).trim();
+            if (taskUuid.isBlank()) taskUuid = safe(context.get("event.task_uuid")).trim();
+            if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required for add_task_note.");
+
+            String body = resolveTemplate(step.settings.get("body"), context).trim();
+            if (body.isBlank()) throw new IllegalArgumentException("body is required for add_task_note.");
+
+            String actorUser = resolveTemplate(step.settings.get("actor_user_uuid"), context).trim();
+            if (actorUser.isBlank()) actorUser = exec.actorUserUuid;
+
+            tasks.NoteRec note = tasks.defaultStore().addNote(exec.tenantUuid, taskUuid, body, actorUser);
+            context.put("vars.last_task_uuid", taskUuid);
+            context.put("vars.last_task_note_uuid", safe(note == null ? "" : note.uuid));
+            return StepOutcome.continueWithMessage("Internal task note added.");
+        });
+
+        handlers.put("update_fact", (exec, step, context) -> {
+            String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+            if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required for update_fact.");
+
+            String factUuid = resolveTemplate(step.settings.get("fact_uuid"), context).trim();
+            if (factUuid.isBlank()) factUuid = safe(context.get("event.fact_uuid")).trim();
+            if (factUuid.isBlank()) throw new IllegalArgumentException("fact_uuid is required for update_fact.");
+
+            matter_facts store = matter_facts.defaultStore();
+            matter_facts.FactRec current = store.getFact(exec.tenantUuid, matterUuid, factUuid);
+            if (current == null) throw new IllegalArgumentException("Fact not found.");
+
+            matter_facts.FactRec in = copyFact(current);
+            in.uuid = factUuid;
+
+            String val;
+            val = resolveTemplate(step.settings.get("claim_uuid"), context).trim();
+            if (!val.isBlank()) in.claimUuid = val;
+            val = resolveTemplate(step.settings.get("element_uuid"), context).trim();
+            if (!val.isBlank()) in.elementUuid = val;
+            val = resolveTemplate(step.settings.get("summary"), context).trim();
+            if (!val.isBlank()) in.summary = val;
+            val = resolveTemplate(step.settings.get("detail"), context).trim();
+            if (!val.isBlank()) in.detail = val;
+            val = resolveTemplate(step.settings.get("internal_notes"), context).trim();
+            if (!val.isBlank()) in.internalNotes = val;
+            val = resolveTemplate(step.settings.get("status"), context).trim();
+            if (!val.isBlank()) in.status = val;
+            val = resolveTemplate(step.settings.get("strength"), context).trim();
+            if (!val.isBlank()) in.strength = val;
+            val = resolveTemplate(step.settings.get("document_uuid"), context).trim();
+            if (!val.isBlank()) in.documentUuid = val;
+            val = resolveTemplate(step.settings.get("part_uuid"), context).trim();
+            if (!val.isBlank()) in.partUuid = val;
+            val = resolveTemplate(step.settings.get("version_uuid"), context).trim();
+            if (!val.isBlank()) in.versionUuid = val;
+            val = resolveTemplate(step.settings.get("page_number"), context).trim();
+            if (!val.isBlank()) in.pageNumber = parseInt(val, in.pageNumber);
+            val = resolveTemplate(step.settings.get("sort_order"), context).trim();
+            if (!val.isBlank()) in.sortOrder = parseInt(val, in.sortOrder);
+
+            String actorUser = resolveTemplate(step.settings.get("actor_user_uuid"), context).trim();
+            if (actorUser.isBlank()) actorUser = exec.actorUserUuid;
+
+            boolean changed = store.updateFact(exec.tenantUuid, matterUuid, in, actorUser);
+            context.put("vars.last_fact_uuid", factUuid);
+            context.put("vars.last_fact_updated", changed ? "true" : "false");
+            return StepOutcome.continueWithMessage(changed ? "Fact updated." : "Fact unchanged.");
+        });
+
+        handlers.put("refresh_facts_report", (exec, step, context) -> {
+            String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+            if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required for refresh_facts_report.");
+
+            String actorUser = resolveTemplate(step.settings.get("actor_user_uuid"), context).trim();
+            if (actorUser.isBlank()) actorUser = exec.actorUserUuid;
+
+            matter_facts.ReportRec report = matter_facts.defaultStore().refreshMatterReport(exec.tenantUuid, matterUuid, actorUser);
+            context.put("vars.last_facts_report_document_uuid", safe(report == null ? "" : report.reportDocumentUuid));
+            context.put("vars.last_facts_report_part_uuid", safe(report == null ? "" : report.reportPartUuid));
+            context.put("vars.last_facts_report_version_uuid", safe(report == null ? "" : report.lastReportVersionUuid));
+            return StepOutcome.continueWithMessage("Facts report refreshed.");
         });
 
         handlers.put("human_review", (exec, step, context) -> {
@@ -1956,6 +2201,20 @@ public final class business_process_manager {
         return out;
     }
 
+    private static LinkedHashMap<String, String> compensationOpTask(String type,
+                                                                     String taskUuid,
+                                                                     String fieldKey,
+                                                                     String fieldValue,
+                                                                     boolean hadKey) {
+        LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
+        out.put("type", safe(type).trim());
+        out.put("task_uuid", safe(taskUuid));
+        out.put("field_key", safe(fieldKey));
+        out.put("field_value", safe(fieldValue));
+        out.put("had_key", hadKey ? "true" : "false");
+        return out;
+    }
+
     private static LinkedHashMap<String, Object> actionDescriptor(String action,
                                                                   String summary,
                                                                   boolean reversible,
@@ -1968,6 +2227,62 @@ public final class business_process_manager {
         row.put("required_settings", parseCsv(requiredSettings));
         row.put("optional_settings", parseCsv(optionalSettings));
         return row;
+    }
+
+    private static tasks.TaskRec copyTask(tasks.TaskRec in) {
+        tasks.TaskRec out = new tasks.TaskRec();
+        if (in == null) return out;
+        out.uuid = safe(in.uuid);
+        out.matterUuid = safe(in.matterUuid);
+        out.parentTaskUuid = safe(in.parentTaskUuid);
+        out.title = safe(in.title);
+        out.description = safe(in.description);
+        out.status = safe(in.status);
+        out.priority = safe(in.priority);
+        out.assignmentMode = safe(in.assignmentMode);
+        out.assignedUserUuid = safe(in.assignedUserUuid);
+        out.dueAt = safe(in.dueAt);
+        out.reminderAt = safe(in.reminderAt);
+        out.estimateMinutes = in.estimateMinutes;
+        out.claimUuid = safe(in.claimUuid);
+        out.elementUuid = safe(in.elementUuid);
+        out.factUuid = safe(in.factUuid);
+        out.documentUuid = safe(in.documentUuid);
+        out.partUuid = safe(in.partUuid);
+        out.versionUuid = safe(in.versionUuid);
+        out.pageNumber = in.pageNumber;
+        out.threadUuid = safe(in.threadUuid);
+        out.createdBy = safe(in.createdBy);
+        out.createdAt = safe(in.createdAt);
+        out.updatedAt = safe(in.updatedAt);
+        out.completedAt = safe(in.completedAt);
+        out.archived = in.archived;
+        out.reportDocumentUuid = safe(in.reportDocumentUuid);
+        out.reportPartUuid = safe(in.reportPartUuid);
+        out.lastReportVersionUuid = safe(in.lastReportVersionUuid);
+        return out;
+    }
+
+    private static matter_facts.FactRec copyFact(matter_facts.FactRec in) {
+        matter_facts.FactRec out = new matter_facts.FactRec();
+        if (in == null) return out;
+        out.uuid = safe(in.uuid);
+        out.claimUuid = safe(in.claimUuid);
+        out.elementUuid = safe(in.elementUuid);
+        out.summary = safe(in.summary);
+        out.detail = safe(in.detail);
+        out.internalNotes = safe(in.internalNotes);
+        out.status = safe(in.status);
+        out.strength = safe(in.strength);
+        out.documentUuid = safe(in.documentUuid);
+        out.partUuid = safe(in.partUuid);
+        out.versionUuid = safe(in.versionUuid);
+        out.pageNumber = in.pageNumber;
+        out.sortOrder = in.sortOrder;
+        out.createdAt = safe(in.createdAt);
+        out.updatedAt = safe(in.updatedAt);
+        out.trashed = in.trashed;
+        return out;
     }
 
     private static omnichannel_tickets.TicketRec copyThread(omnichannel_tickets.TicketRec in) {

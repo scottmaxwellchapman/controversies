@@ -44,6 +44,18 @@
     </article>
 
     <article class="card" style="padding:14px; margin:0;">
+      <h3 style="margin-top:0;">Tasks (Novice)</h3>
+      <p class="muted">Step-by-step guidance for creating and assigning tasks with due dates and associations.</p>
+      <a class="btn" href="<%= request.getContextPath() %>/help_tasks_novice.jsp">Open Guide</a>
+    </article>
+
+    <article class="card" style="padding:14px; margin:0;">
+      <h3 style="margin-top:0;">Tasks (Expert)</h3>
+      <p class="muted">Advanced task automation, round-robin balancing, API usage, and reporting practices.</p>
+      <a class="btn" href="<%= request.getContextPath() %>/help_tasks_expert.jsp">Open Guide</a>
+    </article>
+
+    <article class="card" style="padding:14px; margin:0;">
       <h3 style="margin-top:0;">Token + Markup Reference</h3>
       <p class="muted">Technical references for token sources, fallback behavior, and markup notation details.</p>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -87,6 +99,11 @@
           <td>Capture matter facts</td>
           <td><a href="<%= request.getContextPath() %>/facts.jsp">Facts Case Plan</a></td>
           <td>When structuring claims/elements/facts and linking evidence sources.</td>
+        </tr>
+        <tr>
+          <td>Track work assignments and deadlines</td>
+          <td><a href="<%= request.getContextPath() %>/tasks.jsp">Tasks</a></td>
+          <td>For due-date-driven work, sub-task planning, and assignment/reassignment history.</td>
         </tr>
         <tr>
           <td>Maintain reusable firm values</td>

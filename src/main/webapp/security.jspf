@@ -9,6 +9,7 @@
       || __secUri.endsWith("/attribute_editor.jsp") || __secUri.endsWith("attribute_editor.jsp")
       || __secUri.endsWith("/case_attributes.jsp") || __secUri.endsWith("case_attributes.jsp")
       || __secUri.endsWith("/document_attributes.jsp") || __secUri.endsWith("document_attributes.jsp")
+      || __secUri.endsWith("/task_attributes.jsp") || __secUri.endsWith("task_attributes.jsp")
       || __secUri.endsWith("/custom_objects.jsp") || __secUri.endsWith("custom_objects.jsp")
       || __secUri.endsWith("/custom_object_attributes.jsp") || __secUri.endsWith("custom_object_attributes.jsp")
       || __secUri.endsWith("/plugin_manager.jsp") || __secUri.endsWith("plugin_manager.jsp")

@@ -22,6 +22,7 @@
 <%@ page import="net.familylawandprobate.controversies.ip_lists" %>
 <%@ page import="net.familylawandprobate.controversies.case_attributes" %>
 <%@ page import="net.familylawandprobate.controversies.document_attributes" %>
+<%@ page import="net.familylawandprobate.controversies.task_attributes" %>
 <%@ page import="net.familylawandprobate.controversies.two_factor_auth" %>
 <%@ include file="security.jspf" %>
 
@@ -756,6 +757,7 @@
                         try { ur.ensure(found.uuid); } catch (Exception ignored) {}
                         try { case_attributes.defaultStore().ensure(found.uuid); } catch (Exception ex) { application.log("[tenant_login] unable to seed case attributes for tenant " + found.uuid, ex); }
                         try { document_attributes.defaultStore().ensure(found.uuid); } catch (Exception ex) { application.log("[tenant_login] unable to seed document attributes for tenant " + found.uuid, ex); }
+                        try { task_attributes.defaultStore().ensure(found.uuid); } catch (Exception ex) { application.log("[tenant_login] unable to seed task attributes for tenant " + found.uuid, ex); }
 
                         users_roles.AuthResult ar = null;
                         char[] pw = pwStr.toCharArray();

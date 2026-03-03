@@ -312,6 +312,9 @@ public final class api_servlet extends HttpServlet {
         LinkedHashMap<String, Object> facts = executeFactsOperation(operation, params, tenantUuid);
         if (facts != null) return facts;
 
+        LinkedHashMap<String, Object> tasks = executeTasksOperation(operation, params, tenantUuid);
+        if (tasks != null) return tasks;
+
         switch (operation) {
             case "auth.whoami": {
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
@@ -2594,6 +2597,338 @@ public final class api_servlet extends HttpServlet {
         }
     }
 
+    private static LinkedHashMap<String, Object> executeTasksOperation(String operation,
+                                                                        Map<String, Object> params,
+                                                                        String tenantUuid) throws Exception {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (!(op.startsWith("tasks.") || op.startsWith("task."))) return null;
+
+        tasks store = tasks.defaultStore();
+
+        switch (op) {
+            case "task.attributes.list": {
+                task_attributes attrStore = task_attributes.defaultStore();
+                boolean enabledOnly = boolVal(params, "enabled_only", false);
+                List<task_attributes.AttributeRec> rows = enabledOnly
+                        ? attrStore.listEnabled(tenantUuid)
+                        : attrStore.listAll(tenantUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (task_attributes.AttributeRec r : rows) {
+                    if (r == null) continue;
+                    items.add(taskAttributeMap(r));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "task.attributes.save": {
+                task_attributes attrStore = task_attributes.defaultStore();
+                List<task_attributes.AttributeRec> rows = parseTaskAttributeRows(params.get("rows"));
+                attrStore.saveAll(tenantUuid, rows);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("saved", true);
+                out.put("count", attrStore.listAll(tenantUuid).size());
+                return out;
+            }
+
+            case "task.fields.get": {
+                String taskUuid = str(params, "task_uuid");
+                if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required.");
+                Map<String, String> rows = task_fields.defaultStore().read(tenantUuid, taskUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("task_uuid", taskUuid);
+                out.put("fields", new LinkedHashMap<String, String>(rows));
+                out.put("count", rows.size());
+                return out;
+            }
+
+            case "task.fields.update": {
+                String taskUuid = str(params, "task_uuid");
+                if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required.");
+                if (store.getTask(tenantUuid, taskUuid) == null) throw new IllegalArgumentException("Task not found.");
+
+                task_fields fieldStore = task_fields.defaultStore();
+                boolean replace = boolVal(params, "replace", false);
+                LinkedHashMap<String, String> incoming = stringMap(params.get("fields"));
+                LinkedHashMap<String, String> next = replace
+                        ? new LinkedHashMap<String, String>()
+                        : new LinkedHashMap<String, String>(fieldStore.read(tenantUuid, taskUuid));
+                next.putAll(incoming);
+                fieldStore.write(tenantUuid, taskUuid, next);
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("saved", true);
+                out.put("task_uuid", taskUuid);
+                out.put("fields", fieldStore.read(tenantUuid, taskUuid));
+                return out;
+            }
+
+            case "tasks.list": {
+                boolean includeArchived = boolVal(params, "include_archived", false);
+                String matterFilter = str(params, "matter_uuid");
+                String statusFilter = str(params, "status");
+                String assignedFilter = str(params, "assigned_user_uuid");
+                String parentFilter = str(params, "parent_task_uuid");
+                String threadFilter = str(params, "thread_uuid");
+                String factFilter = str(params, "fact_uuid");
+                String elementFilter = str(params, "element_uuid");
+                String q = str(params, "q").toLowerCase(Locale.ROOT);
+
+                List<tasks.TaskRec> rows = store.listTasks(tenantUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (tasks.TaskRec r : rows) {
+                    if (r == null) continue;
+                    if (!includeArchived && r.archived) continue;
+                    if (!matterFilter.isBlank() && !matterFilter.equalsIgnoreCase(safe(r.matterUuid).trim())) continue;
+                    if (!statusFilter.isBlank() && !statusFilter.equalsIgnoreCase(safe(r.status).trim())) continue;
+                    if (!assignedFilter.isBlank() && !csvContains(safe(r.assignedUserUuid), assignedFilter)) continue;
+                    if (!parentFilter.isBlank() && !parentFilter.equalsIgnoreCase(safe(r.parentTaskUuid).trim())) continue;
+                    if (!threadFilter.isBlank() && !threadFilter.equalsIgnoreCase(safe(r.threadUuid).trim())) continue;
+                    if (!factFilter.isBlank() && !factFilter.equalsIgnoreCase(safe(r.factUuid).trim())) continue;
+                    if (!elementFilter.isBlank() && !elementFilter.equalsIgnoreCase(safe(r.elementUuid).trim())) continue;
+                    if (!q.isBlank()) {
+                        String hay = (safe(r.title) + " " + safe(r.description)).toLowerCase(Locale.ROOT);
+                        if (!hay.contains(q)) continue;
+                    }
+                    items.add(taskMap(r));
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "tasks.get": {
+                String taskUuid = str(params, "task_uuid");
+                if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required.");
+
+                tasks.TaskRec row = store.getTask(tenantUuid, taskUuid);
+                if (row == null) throw new IllegalArgumentException("Task not found.");
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("task", taskMap(row));
+
+                if (boolVal(params, "include_details", true)) {
+                    ArrayList<LinkedHashMap<String, Object>> notes = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (tasks.NoteRec n : store.listNotes(tenantUuid, taskUuid)) {
+                        if (n == null) continue;
+                        notes.add(taskNoteMap(n));
+                    }
+                    ArrayList<LinkedHashMap<String, Object>> assignments = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (tasks.AssignmentRec a : store.listAssignments(tenantUuid, taskUuid)) {
+                        if (a == null) continue;
+                        assignments.add(taskAssignmentMap(a));
+                    }
+                    LinkedHashMap<String, String> fields = new LinkedHashMap<String, String>(task_fields.defaultStore().read(tenantUuid, taskUuid));
+
+                    out.put("notes", notes);
+                    out.put("assignments", assignments);
+                    out.put("fields", fields);
+                }
+                return out;
+            }
+
+            case "tasks.create": {
+                String assignmentMode = str(params, "assignment_mode");
+                String assignedUserUuid = str(params, "assigned_user_uuid");
+                if (assignedUserUuid.isBlank()) assignedUserUuid = str(params, "assigned_user_uuids");
+                if ("round_robin".equalsIgnoreCase(assignmentMode) && assignedUserUuid.isBlank()) {
+                    List<String> candidates = csvOrList(params.get("candidate_user_uuids"));
+                    if (candidates.isEmpty()) candidates = csvOrList(params.get("round_robin_candidates"));
+                    if (!candidates.isEmpty()) {
+                        String queueKey = str(params, "round_robin_queue_key");
+                        if (queueKey.isBlank()) {
+                            queueKey = safe(str(params, "matter_uuid")) + "|" + safe(str(params, "thread_uuid"));
+                        }
+                        assignedUserUuid = store.chooseRoundRobinAssignee(tenantUuid, queueKey, candidates);
+                    }
+                }
+
+                tasks.TaskRec in = new tasks.TaskRec();
+                in.matterUuid = str(params, "matter_uuid");
+                in.parentTaskUuid = str(params, "parent_task_uuid");
+                in.title = str(params, "title");
+                in.description = str(params, "description");
+                in.status = str(params, "status");
+                in.priority = str(params, "priority");
+                in.assignmentMode = assignmentMode;
+                in.assignedUserUuid = assignedUserUuid;
+                in.dueAt = str(params, "due_at");
+                in.reminderAt = str(params, "reminder_at");
+                in.estimateMinutes = intVal(params, "estimate_minutes", 0);
+
+                in.claimUuid = str(params, "claim_uuid");
+                in.elementUuid = str(params, "element_uuid");
+                in.factUuid = str(params, "fact_uuid");
+                in.documentUuid = str(params, "document_uuid");
+                in.partUuid = str(params, "part_uuid");
+                in.versionUuid = str(params, "version_uuid");
+                in.pageNumber = intVal(params, "page_number", 0);
+                in.threadUuid = str(params, "thread_uuid");
+
+                tasks.TaskRec row = store.createTask(tenantUuid, in, str(params, "actor_user_uuid"), str(params, "assignment_reason"));
+
+                LinkedHashMap<String, String> fieldValues = stringMap(params.get("fields"));
+                if (!fieldValues.isEmpty() && row != null) {
+                    task_fields.defaultStore().write(tenantUuid, row.uuid, fieldValues);
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("task", taskMap(row));
+                out.put("fields", row == null ? Map.of() : task_fields.defaultStore().read(tenantUuid, row.uuid));
+                return out;
+            }
+
+            case "tasks.update": {
+                String taskUuid = str(params, "task_uuid");
+                if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required.");
+                tasks.TaskRec current = store.getTask(tenantUuid, taskUuid);
+                if (current == null) throw new IllegalArgumentException("Task not found.");
+
+                tasks.TaskRec update = copyTask(current);
+                update.uuid = taskUuid;
+
+                String assignmentMode = update.assignmentMode;
+                String assignedUserUuid = update.assignedUserUuid;
+                if (hasParam(params, "assignment_mode")) assignmentMode = str(params, "assignment_mode");
+                if (hasParam(params, "assigned_user_uuid")) assignedUserUuid = str(params, "assigned_user_uuid");
+                if (hasParam(params, "assigned_user_uuids")) assignedUserUuid = str(params, "assigned_user_uuids");
+                if ("round_robin".equalsIgnoreCase(assignmentMode) && safe(assignedUserUuid).trim().isBlank()) {
+                    List<String> candidates = csvOrList(params.get("candidate_user_uuids"));
+                    if (candidates.isEmpty()) candidates = csvOrList(params.get("round_robin_candidates"));
+                    if (!candidates.isEmpty()) {
+                        String queueKey = str(params, "round_robin_queue_key");
+                        if (queueKey.isBlank()) {
+                            String queueMatter = hasParam(params, "matter_uuid") ? str(params, "matter_uuid") : safe(current.matterUuid);
+                            String queueThread = hasParam(params, "thread_uuid") ? str(params, "thread_uuid") : safe(current.threadUuid);
+                            queueKey = queueMatter + "|" + queueThread;
+                        }
+                        assignedUserUuid = store.chooseRoundRobinAssignee(tenantUuid, queueKey, candidates);
+                    }
+                }
+
+                if (hasParam(params, "matter_uuid")) update.matterUuid = str(params, "matter_uuid");
+                if (hasParam(params, "parent_task_uuid")) update.parentTaskUuid = str(params, "parent_task_uuid");
+                if (hasParam(params, "title")) update.title = str(params, "title");
+                if (hasParam(params, "description")) update.description = str(params, "description");
+                if (hasParam(params, "status")) update.status = str(params, "status");
+                if (hasParam(params, "priority")) update.priority = str(params, "priority");
+                update.assignmentMode = assignmentMode;
+                update.assignedUserUuid = assignedUserUuid;
+                if (hasParam(params, "due_at")) update.dueAt = str(params, "due_at");
+                if (hasParam(params, "reminder_at")) update.reminderAt = str(params, "reminder_at");
+                if (hasParam(params, "estimate_minutes")) update.estimateMinutes = intVal(params, "estimate_minutes", update.estimateMinutes);
+
+                if (hasParam(params, "claim_uuid")) update.claimUuid = str(params, "claim_uuid");
+                if (hasParam(params, "element_uuid")) update.elementUuid = str(params, "element_uuid");
+                if (hasParam(params, "fact_uuid")) update.factUuid = str(params, "fact_uuid");
+                if (hasParam(params, "document_uuid")) update.documentUuid = str(params, "document_uuid");
+                if (hasParam(params, "part_uuid")) update.partUuid = str(params, "part_uuid");
+                if (hasParam(params, "version_uuid")) update.versionUuid = str(params, "version_uuid");
+                if (hasParam(params, "page_number")) update.pageNumber = intVal(params, "page_number", update.pageNumber);
+                if (hasParam(params, "thread_uuid")) update.threadUuid = str(params, "thread_uuid");
+                if (hasParam(params, "archived")) update.archived = boolVal(params, "archived", update.archived);
+
+                boolean changed = store.updateTask(tenantUuid, update, str(params, "actor_user_uuid"), str(params, "assignment_reason"));
+                tasks.TaskRec refreshed = store.getTask(tenantUuid, taskUuid);
+
+                if (hasParam(params, "fields")) {
+                    task_fields fieldStore = task_fields.defaultStore();
+                    boolean replace = boolVal(params, "replace_fields", false);
+                    LinkedHashMap<String, String> incoming = stringMap(params.get("fields"));
+                    LinkedHashMap<String, String> next = replace
+                            ? new LinkedHashMap<String, String>()
+                            : new LinkedHashMap<String, String>(fieldStore.read(tenantUuid, taskUuid));
+                    next.putAll(incoming);
+                    fieldStore.write(tenantUuid, taskUuid, next);
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("task", taskMap(refreshed));
+                out.put("fields", task_fields.defaultStore().read(tenantUuid, taskUuid));
+                return out;
+            }
+
+            case "tasks.set_archived": {
+                String taskUuid = str(params, "task_uuid");
+                if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required.");
+                boolean archived = boolVal(params, "archived", true);
+                boolean changed = store.setArchived(tenantUuid, taskUuid, archived, str(params, "actor_user_uuid"));
+                tasks.TaskRec refreshed = store.getTask(tenantUuid, taskUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("task", taskMap(refreshed));
+                return out;
+            }
+
+            case "tasks.notes.list": {
+                String taskUuid = str(params, "task_uuid");
+                if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required.");
+                List<tasks.NoteRec> rows = store.listNotes(tenantUuid, taskUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (tasks.NoteRec row : rows) {
+                    if (row == null) continue;
+                    items.add(taskNoteMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "tasks.notes.add": {
+                String taskUuid = str(params, "task_uuid");
+                if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required.");
+                tasks.NoteRec row = store.addNote(tenantUuid, taskUuid, str(params, "body"), str(params, "actor_user_uuid"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("note", taskNoteMap(row));
+                return out;
+            }
+
+            case "tasks.assignments.list": {
+                String taskUuid = str(params, "task_uuid");
+                if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required.");
+                List<tasks.AssignmentRec> rows = store.listAssignments(tenantUuid, taskUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (tasks.AssignmentRec row : rows) {
+                    if (row == null) continue;
+                    items.add(taskAssignmentMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "tasks.round_robin.next_assignee": {
+                String queueKey = str(params, "queue_key");
+                List<String> candidates = csvOrList(params.get("candidate_user_uuids"));
+                if (candidates.isEmpty()) candidates = csvOrList(params.get("candidates"));
+                if (candidates.isEmpty()) throw new IllegalArgumentException("candidate_user_uuids are required.");
+                String assignee = store.chooseRoundRobinAssignee(tenantUuid, queueKey, candidates);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("assigned_user_uuid", assignee);
+                return out;
+            }
+
+            case "tasks.report.refresh": {
+                String taskUuid = str(params, "task_uuid");
+                if (taskUuid.isBlank()) throw new IllegalArgumentException("task_uuid is required.");
+                tasks.TaskRec row = store.refreshTaskReport(tenantUuid, taskUuid, str(params, "actor_user_uuid"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("task", taskMap(row));
+                return out;
+            }
+
+            default:
+                throw new UnsupportedOperationException("Unknown operation: " + op);
+        }
+    }
+
     private static AssemblerInputs resolveAssemblerInputs(String tenantUuid, Map<String, Object> params) throws Exception {
         String templateUuid = str(params, "template_uuid");
         String templateExtOrName = str(params, "template_ext_or_name");
@@ -2727,6 +3062,27 @@ public final class api_servlet extends HttpServlet {
                     boolVal(r, "required", false),
                     boolVal(r, "enabled", true),
                     boolVal(r, "built_in", false),
+                    intVal(r, "sort_order", (i + 1) * 10),
+                    safe(asString(r.get("updated_at")))
+            ));
+        }
+        return out;
+    }
+
+    private static List<task_attributes.AttributeRec> parseTaskAttributeRows(Object raw) {
+        ArrayList<task_attributes.AttributeRec> out = new ArrayList<task_attributes.AttributeRec>();
+        List<Map<String, Object>> rows = objectList(raw);
+        for (int i = 0; i < rows.size(); i++) {
+            Map<String, Object> r = rows.get(i);
+            if (r == null) continue;
+            out.add(new task_attributes.AttributeRec(
+                    safe(asString(r.get("uuid"))),
+                    safe(asString(r.get("key"))),
+                    safe(asString(r.get("label"))),
+                    safe(asString(r.get("data_type"))),
+                    safe(asString(r.get("options"))),
+                    boolVal(r, "required", false),
+                    boolVal(r, "enabled", true),
                     intVal(r, "sort_order", (i + 1) * 10),
                     safe(asString(r.get("updated_at")))
             ));
@@ -2968,6 +3324,21 @@ public final class api_servlet extends HttpServlet {
         ops.put("facts.facts.set_trashed", "Archive/restore fact");
         ops.put("facts.report.refresh", "Regenerate landscape facts case-plan PDF report");
 
+        ops.put("task.attributes.list", "List task attribute definitions");
+        ops.put("task.attributes.save", "Save task attribute definitions");
+        ops.put("task.fields.get", "Read task custom field values");
+        ops.put("task.fields.update", "Update task custom field values");
+        ops.put("tasks.list", "List tasks");
+        ops.put("tasks.get", "Get one task with optional notes/assignments/fields");
+        ops.put("tasks.create", "Create task");
+        ops.put("tasks.update", "Update task");
+        ops.put("tasks.set_archived", "Archive/restore task");
+        ops.put("tasks.notes.list", "List task internal notes");
+        ops.put("tasks.notes.add", "Add task internal note");
+        ops.put("tasks.assignments.list", "List task assignment history");
+        ops.put("tasks.round_robin.next_assignee", "Choose next assignee from task round-robin queue");
+        ops.put("tasks.report.refresh", "Regenerate matter-linked task PDF report");
+
         ops.put("case.attributes.list", "List case attribute definitions");
         ops.put("case.attributes.save", "Save case attribute definitions");
         ops.put("case.fields.get", "Read case fields");
@@ -3119,6 +3490,7 @@ curl -k -X POST "%s/execute" \\
 - Users, roles, permissions
 - Matters/cases + fields + list datasets
 - Facts case plans (Claims->Elements->Facts), source document linkage, landscape report refresh
+- Tasks (custom attributes/fields, subtasks, associations, notes, assignments, round-robin, task report refresh)
 - Document taxonomy, attributes, documents, parts, versions
 - PDF version rendering and redaction
 - Templates, template tools, assembly, assembled forms
@@ -3456,6 +3828,87 @@ When features are added or changed in the application, matching API operations s
         return out;
     }
 
+    private static LinkedHashMap<String, Object> taskAttributeMap(task_attributes.AttributeRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("uuid", safe(r.uuid));
+        out.put("key", safe(r.key));
+        out.put("label", safe(r.label));
+        out.put("data_type", safe(r.dataType));
+        out.put("options", safe(r.options));
+        out.put("required", r.required);
+        out.put("enabled", r.enabled);
+        out.put("sort_order", r.sortOrder);
+        out.put("updated_at", safe(r.updatedAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> taskMap(tasks.TaskRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("task_uuid", safe(r.uuid));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("parent_task_uuid", safe(r.parentTaskUuid));
+        out.put("title", safe(r.title));
+        out.put("description", safe(r.description));
+        out.put("status", safe(r.status));
+        out.put("priority", safe(r.priority));
+        out.put("assignment_mode", safe(r.assignmentMode));
+        out.put("assigned_user_uuid", safe(r.assignedUserUuid));
+        out.put("assigned_user_uuids", csvOrList(safe(r.assignedUserUuid)));
+        out.put("due_at", safe(r.dueAt));
+        out.put("reminder_at", safe(r.reminderAt));
+        out.put("estimate_minutes", r.estimateMinutes);
+
+        out.put("claim_uuid", safe(r.claimUuid));
+        out.put("element_uuid", safe(r.elementUuid));
+        out.put("fact_uuid", safe(r.factUuid));
+
+        out.put("document_uuid", safe(r.documentUuid));
+        out.put("part_uuid", safe(r.partUuid));
+        out.put("version_uuid", safe(r.versionUuid));
+        out.put("page_number", r.pageNumber);
+
+        out.put("thread_uuid", safe(r.threadUuid));
+        out.put("created_by", safe(r.createdBy));
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("completed_at", safe(r.completedAt));
+        out.put("archived", r.archived);
+
+        out.put("report_document_uuid", safe(r.reportDocumentUuid));
+        out.put("report_part_uuid", safe(r.reportPartUuid));
+        out.put("last_report_version_uuid", safe(r.lastReportVersionUuid));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> taskNoteMap(tasks.NoteRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("note_uuid", safe(r.uuid));
+        out.put("task_uuid", safe(r.taskUuid));
+        out.put("body", safe(r.body));
+        out.put("created_by", safe(r.createdBy));
+        out.put("created_at", safe(r.createdAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> taskAssignmentMap(tasks.AssignmentRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("assignment_uuid", safe(r.uuid));
+        out.put("task_uuid", safe(r.taskUuid));
+        out.put("mode", safe(r.mode));
+        out.put("from_user_uuid", safe(r.fromUserUuid));
+        out.put("from_user_uuids", csvOrList(safe(r.fromUserUuid)));
+        out.put("to_user_uuid", safe(r.toUserUuid));
+        out.put("to_user_uuids", csvOrList(safe(r.toUserUuid)));
+        out.put("reason", safe(r.reason));
+        out.put("changed_by", safe(r.changedBy));
+        out.put("changed_at", safe(r.changedAt));
+        return out;
+    }
+
     private static LinkedHashMap<String, Object> threadMap(omnichannel_tickets.TicketRec r) {
         LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
         if (r == null) return out;
@@ -3539,6 +3992,40 @@ When features are added or changed in the application, matching API operations s
         out.put("reason", safe(r.reason));
         out.put("changed_by", safe(r.changedBy));
         out.put("changed_at", safe(r.changedAt));
+        return out;
+    }
+
+    private static tasks.TaskRec copyTask(tasks.TaskRec in) {
+        tasks.TaskRec out = new tasks.TaskRec();
+        if (in == null) return out;
+        out.uuid = safe(in.uuid);
+        out.matterUuid = safe(in.matterUuid);
+        out.parentTaskUuid = safe(in.parentTaskUuid);
+        out.title = safe(in.title);
+        out.description = safe(in.description);
+        out.status = safe(in.status);
+        out.priority = safe(in.priority);
+        out.assignmentMode = safe(in.assignmentMode);
+        out.assignedUserUuid = safe(in.assignedUserUuid);
+        out.dueAt = safe(in.dueAt);
+        out.reminderAt = safe(in.reminderAt);
+        out.estimateMinutes = in.estimateMinutes;
+        out.claimUuid = safe(in.claimUuid);
+        out.elementUuid = safe(in.elementUuid);
+        out.factUuid = safe(in.factUuid);
+        out.documentUuid = safe(in.documentUuid);
+        out.partUuid = safe(in.partUuid);
+        out.versionUuid = safe(in.versionUuid);
+        out.pageNumber = in.pageNumber;
+        out.threadUuid = safe(in.threadUuid);
+        out.createdBy = safe(in.createdBy);
+        out.createdAt = safe(in.createdAt);
+        out.updatedAt = safe(in.updatedAt);
+        out.completedAt = safe(in.completedAt);
+        out.archived = in.archived;
+        out.reportDocumentUuid = safe(in.reportDocumentUuid);
+        out.reportPartUuid = safe(in.reportPartUuid);
+        out.lastReportVersionUuid = safe(in.lastReportVersionUuid);
         return out;
     }
 

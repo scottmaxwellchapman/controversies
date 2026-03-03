@@ -413,6 +413,111 @@ public class business_process_manager_test {
         assertTrue(foundInternal);
     }
 
+    @Test
+    void supports_task_actions_and_reversible_task_field_updates() throws Exception {
+        String tenant = "tenant-bpm-task-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        matters.MatterRec matter = matters.defaultStore().create(
+                tenant,
+                "Task BPM Matter",
+                "",
+                "",
+                "",
+                "",
+                ""
+        );
+
+        tasks.TaskRec create = new tasks.TaskRec();
+        create.matterUuid = matter.uuid;
+        create.title = "Review discovery responses";
+        create.description = "Initial task seeded for BPM flow.";
+        create.status = "open";
+        create.priority = "normal";
+        create.assignmentMode = "manual";
+        create.assignedUserUuid = "user-a";
+        create.dueAt = "2026-05-01T17:00";
+        create.reminderAt = "";
+        create.estimateMinutes = 60;
+        tasks.TaskRec task = tasks.defaultStore().createTask(tenant, create, "tester", "Initial owner");
+        assertNotNull(task);
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Task Ops";
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "manual";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep setField = new business_process_manager.ProcessStep();
+        setField.stepId = "set_task_field";
+        setField.order = 10;
+        setField.action = "set_task_field";
+        setField.settings.put("task_uuid", "{{event.task_uuid}}");
+        setField.settings.put("field_key", "phase");
+        setField.settings.put("field_value", "Discovery");
+        process.steps.add(setField);
+
+        business_process_manager.ProcessStep updateTask = new business_process_manager.ProcessStep();
+        updateTask.stepId = "update_task";
+        updateTask.order = 20;
+        updateTask.action = "update_task";
+        updateTask.settings.put("task_uuid", "{{event.task_uuid}}");
+        updateTask.settings.put("status", "in_progress");
+        updateTask.settings.put("priority", "high");
+        updateTask.settings.put("title", "Review discovery responses (BPM)");
+        process.steps.add(updateTask);
+
+        business_process_manager.ProcessStep addNote = new business_process_manager.ProcessStep();
+        addNote.stepId = "add_task_note";
+        addNote.order = 30;
+        addNote.action = "add_task_note";
+        addNote.settings.put("task_uuid", "{{event.task_uuid}}");
+        addNote.settings.put("body", "Internal BPM note");
+        process.steps.add(addNote);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, process);
+
+        LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+        payload.put("task_uuid", task.uuid);
+        payload.put("matter_uuid", matter.uuid);
+
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                payload,
+                "tester",
+                "test"
+        );
+        assertEquals("completed", run.status);
+
+        assertEquals("Discovery", task_fields.defaultStore().read(tenant, task.uuid).get("phase"));
+        tasks.TaskRec after = tasks.defaultStore().getTask(tenant, task.uuid);
+        assertEquals("in_progress", safe(after.status));
+        assertEquals("high", safe(after.priority));
+        assertTrue(safe(after.title).contains("(BPM)"));
+
+        List<tasks.NoteRec> notes = tasks.defaultStore().listNotes(tenant, task.uuid);
+        boolean found = false;
+        for (tasks.NoteRec n : notes) {
+            if (n == null) continue;
+            if (safe(n.body).contains("Internal BPM note")) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found);
+
+        business_process_manager.RunResult undone = bpm.undoRun(tenant, run.runUuid, "tester");
+        assertEquals("undone", safe(undone.undoState));
+        assertFalse(task_fields.defaultStore().read(tenant, task.uuid).containsKey("phase"));
+
+        business_process_manager.RunResult redone = bpm.redoRun(tenant, run.runUuid, "tester");
+        assertEquals("active", safe(redone.undoState));
+        assertEquals("Discovery", task_fields.defaultStore().read(tenant, task.uuid).get("phase"));
+    }
+
     private static business_process_manager.ProcessDefinition minimalProcess(String name, String triggerType) {
         business_process_manager.ProcessDefinition p = new business_process_manager.ProcessDefinition();
         p.name = name;
