@@ -5,9 +5,11 @@ Controversies is a local-first legal document workflow app built on embedded Tom
 It supports:
 - Tenant and user login (with role-based permissions)
 - Case management
+- Omnichannel thread management (Flowroute SMS/MMS + IMAP/SMTP + Graph mailbox channels)
 - Tenant-level and case-level replacement fields
 - DOCX/DOC/RTF/ODT/TXT template assembly
 - Token-driven merge behavior (`{{case.*}}`, `{{tenant.*}}`, `{{kv.*}}`)
+- Built-in business process automation with human review and undo/redo
 - Activity/log views from inside the UI
 
 ---
@@ -17,14 +19,17 @@ It supports:
 - [Prerequisites](#prerequisites)
 - [Getting started (novice-friendly)](#getting-started-novice-friendly)
 - [Daily workflow](#daily-workflow)
+- [Omnichannel Threads](#omnichannel-threads)
 - [Template format support](#template-format-support)
 - [Browser auto-open behavior](#browser-auto-open-behavior)
 - [Running and packaging](#running-and-packaging)
+- [Cross-platform compatibility](#cross-platform-compatibility)
 - [Project layout](#project-layout)
 - [Data and security notes](#data-and-security-notes)
 - [Tenant settings guide (first-time and advanced)](#tenant-settings-guide-first-time-and-advanced)
 - [Clio integration by deployment topology](#clio-integration-by-deployment-topology)
 - [API (n8n/OpenClaw)](#api-n8nopenclaw)
+- [Business process built-ins](#business-process-built-ins)
 - [Logging and audit visibility](#logging-and-audit-visibility)
 - [Troubleshooting](#troubleshooting)
 - [For experienced users](#for-experienced-users)
@@ -98,6 +103,30 @@ mvn -version
 7. **Assembled Forms / Logs**: inspect output and diagnostics
 
 Main navigation is in `menu.xml` and links these pages from the header.
+
+---
+
+## Omnichannel Threads
+
+The app includes an omnichannel thread workspace at `omnichannel.jsp` with:
+
+- Channels:
+  - `flowroute_sms` (SMS/MMS)
+  - `email_imap_smtp`
+  - `email_graph_user`
+  - `email_graph_shared`
+- Statuses, reminders, due dates, assignment/re-assignment history
+- Manual assignment and optional round-robin assignment support
+- Multi-user assignment values (CSV UUID list) for shared ownership
+- Message timeline with internal notes (staff-only)
+- Attachment/media ledger with download and manifest views
+
+Thread report behavior:
+
+- Thread updates can generate/regenerate a matter-linked PDF report.
+- Public thread media/attachments are embedded in the PDF and image media is rendered onto dedicated pages.
+- Internal-note-linked content is excluded from external-facing report content.
+- `omnichannel_manifest.jsp` provides a per-thread embedded-media manifest.
 
 ---
 
@@ -181,6 +210,29 @@ java -jar target/controversies-1.0-SNAPSHOT-all.jar
 
 ---
 
+## Cross-platform compatibility
+
+Controversies is designed to run on Windows, macOS, Debian Linux, and FreeBSD with JDK 23 + Maven.
+
+Platform notes:
+
+- Startup uses Java APIs (`Desktop`, NIO `Path`, embedded Tomcat) instead of shell-specific launch code.
+- HTTPS dev keystore generation uses `keytool` from `java.home/bin` and falls back to `keytool` on `PATH`.
+- File paths are built with `java.nio.file.Path` for separator compatibility.
+
+Command quick references:
+
+- macOS / Debian / FreeBSD:
+  - `mvn exec:java`
+  - `mvn -q -DskipTests package`
+  - `java -jar target/controversies-1.0-SNAPSHOT-all.jar`
+- Windows (PowerShell):
+  - `mvn exec:java`
+  - `mvn -q -DskipTests package`
+  - `java -jar target\controversies-1.0-SNAPSHOT-all.jar`
+
+---
+
 ## Project layout
 
 ```text
@@ -197,10 +249,17 @@ src/main/webapp/
   user_login.jsp
   users_roles.jsp
   cases.jsp
+  omnichannel.jsp
+  omnichannel_manifest.jsp
   tenant_fields.jsp
   forms.jsp
   assembled_forms.jsp
   template_library.jsp
+  business_processes.jsp
+  business_process_reviews.jsp
+  help_center.jsp
+  help_threads_novice.jsp
+  help_threads_expert.jsp
   token_guide.jsp
   log_viewer.jsp
   ...
@@ -283,6 +342,9 @@ Operational notes:
 - A random pepper file is maintained at `data/sec/random_pepper.bin`.
 - Dev HTTPS keystore is auto-generated at `data/sec/ssl/keystore.p12`.
 - Tenant bootstrap credentials are intended for first-run setup; change credentials and role assignments promptly.
+- API discovery endpoints are unauthenticated by design; operation endpoints require tenant API credentials.
+- API server errors return a generic `server_error` response while detailed error context is logged internally.
+- Thread attachment storage paths are normalized and constrained under the tenant thread attachment directory.
 
 ---
 
@@ -299,6 +361,9 @@ The settings workflow records detailed events for:
 - Secret rotation acceptance/rejection
 - Validation failures on save
 - Successful setting updates
+- API operation success/failure audit entries (`api.operation.*`)
+- Omnichannel thread lifecycle events (`omnichannel.thread.*`, `omnichannel.message.*`, `omnichannel.attachment.*`)
+- BPM run lifecycle and human-review queue events
 
 Sensitive values (secrets, tokens, keys, passwords) are automatically redacted in log detail payloads.
 
@@ -392,8 +457,14 @@ Current API coverage includes:
   - `templates.*`, `template.tools.*`, `assembler.preview`, `assembler.assemble`, `assembly.run`, `assembled_forms.*`
 - Custom objects:
   - `custom_objects.*`, `custom_object_attributes.*`, `custom_object_records.*`
+- Omnichannel threads:
+  - `omnichannel.threads.*`, `omnichannel.messages.*`, `omnichannel.notes.add`
+  - `omnichannel.attachments.*`, `omnichannel.assignments.list`
+  - `omnichannel.round_robin.next_assignee`
 - Texas law:
   - `texas_law.status`, `texas_law.sync_now`, `texas_law.list_dir`, `texas_law.search`, `texas_law.render_page`
+- Business process manager:
+  - `bpm.actions.catalog`, `bpm.processes.*`, `bpm.events.trigger`, `bpm.runs.*`, `bpm.reviews.*`
 
 Use `/api/v1/capabilities` for the authoritative operation list.
 
@@ -416,6 +487,32 @@ When application features are added or changed, corresponding API operations sho
 
 ---
 
+## Business process built-ins
+
+Built-in BPM step actions now include:
+
+- `log_note`
+- `set_case_field`
+- `set_case_list_item`
+- `set_document_field`
+- `set_tenant_field`
+- `set_variable`
+- `trigger_event`
+- `update_thread`
+- `add_thread_note`
+- `human_review`
+
+Use API operation `bpm.actions.catalog` for machine-readable action metadata including required/optional settings and reversibility.
+
+Undo/redo support:
+
+- Reversible out of the box:
+  - `set_case_field`, `set_case_list_item`, `set_document_field`, `set_tenant_field`
+- Non-reversible by design:
+  - logging, variable/event actions, and message/thread-note actions
+
+---
+
 ## Troubleshooting
 
 ### Port in use
@@ -431,7 +528,7 @@ If startup fails with `port ... is already in use`, stop the conflicting process
 Expected for local dev self-signed cert. Continue after trusting/accepting for localhost.
 
 ### `keytool not found`
-Use a full JDK (not JRE-only runtime), then re-run startup.
+Use a full JDK (not JRE-only runtime) or ensure `keytool` is available on `PATH`, then re-run startup.
 
 ### Unsupported or invalid template uploads
 - If you see `Unsupported template type`, use one of: `.docx`, `.doc`, `.rtf`, `.odt`, or `.txt`.

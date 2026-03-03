@@ -13,6 +13,7 @@ import org.apache.tomcat.util.descriptor.web.FilterDef;
 import org.apache.tomcat.util.descriptor.web.FilterMap;
 import org.apache.tomcat.util.net.SSLHostConfig;
 import org.apache.tomcat.util.net.SSLHostConfigCertificate;
+import jakarta.servlet.MultipartConfigElement;
 
 import java.io.File;
 import java.net.InetSocketAddress;
@@ -93,6 +94,7 @@ public class tomcat {
         registerFilter(ctx);
         registerApiServlet(ctx);
         registerVersionUploadServlet(ctx);
+        registerWikiFileServlet(ctx);
 
         // HTTPS connector (primary)
         Connector https = createHttpsConnector(this.httpsPort, keystorePath, keystorePassword, keyAlias);
@@ -175,6 +177,13 @@ public class tomcat {
         ctx.addServletMappingDecoded("/versions_upload", "versionUploadServlet");
     }
 
+    private static void registerWikiFileServlet(Context ctx) {
+        Wrapper wrapper = Tomcat.addServlet(ctx, "wikiFileServlet", new wiki_file_servlet());
+        wrapper.setLoadOnStartup(1);
+        wrapper.setMultipartConfigElement(new MultipartConfigElement("", tenant_wikis.MAX_ATTACHMENT_BYTES, tenant_wikis.MAX_ATTACHMENT_BYTES + (5L * 1024L * 1024L), 0));
+        ctx.addServletMappingDecoded("/wiki_files", "wikiFileServlet");
+    }
+
     private static void assertPortFree(int port, String label) {
         if (port <= 0) return;
         try (ServerSocket ss = new ServerSocket()) {
@@ -248,15 +257,18 @@ public class tomcat {
         Files.createDirectories(keystore.getParent()); // creates data/sec/ssl
 
         boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
-        Path keytool = Paths.get(System.getProperty("java.home"), "bin",
+        Path javaHomeKeytool = Paths.get(System.getProperty("java.home"), "bin",
                 isWindows ? "keytool.exe" : "keytool");
-
-        if (!Files.exists(keytool)) {
-            throw new IllegalStateException("keytool not found at: " + keytool + " (run with a full JDK).");
+        String keytoolCommand = javaHomeKeytool.toString();
+        boolean usingPathLookup = false;
+        if (!Files.exists(javaHomeKeytool) || !Files.isExecutable(javaHomeKeytool)) {
+            // Some deployments use a JRE-only java.home path while keytool is available on PATH.
+            keytoolCommand = isWindows ? "keytool.exe" : "keytool";
+            usingPathLookup = true;
         }
 
         List<String> cmd = new ArrayList<>();
-        cmd.add(keytool.toString());
+        cmd.add(keytoolCommand);
         cmd.add("-genkeypair");
         cmd.add("-alias"); cmd.add(alias);
         cmd.add("-keyalg"); cmd.add("RSA");
@@ -271,6 +283,9 @@ public class tomcat {
 
         Process p = new ProcessBuilder(cmd).inheritIO().start();
         int code = p.waitFor();
-        if (code != 0) throw new IllegalStateException("keytool failed (exit " + code + ")");
+        if (code != 0) {
+            String mode = usingPathLookup ? "PATH lookup" : javaHomeKeytool.toString();
+            throw new IllegalStateException("keytool failed (exit " + code + ") using " + mode);
+        }
     }
 }

@@ -12,6 +12,8 @@
       || __secUri.endsWith("/custom_objects.jsp") || __secUri.endsWith("custom_objects.jsp")
       || __secUri.endsWith("/custom_object_attributes.jsp") || __secUri.endsWith("custom_object_attributes.jsp")
       || __secUri.endsWith("/plugin_manager.jsp") || __secUri.endsWith("plugin_manager.jsp")
+      || __secUri.endsWith("/business_processes.jsp") || __secUri.endsWith("business_processes.jsp")
+      || __secUri.endsWith("/business_process_reviews.jsp") || __secUri.endsWith("business_process_reviews.jsp")
       || __secUri.endsWith("/log_viewer.jsp") || __secUri.endsWith("log_viewer.jsp")) {
     if (!require_permission("tenant_admin")) return;
   }

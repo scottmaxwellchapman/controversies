@@ -111,6 +111,9 @@ public final class users_roles {
     private static final String BOOTSTRAP_PERM_VALUE = "true";
     private static final String BOOTSTRAP_ADMIN_EMAIL = "tenant_admin"; // stored in <email_address>
     private static final String BOOTSTRAP_DEFAULT_PASSWORD = "password";
+    private static final String USER_TWO_FACTOR_ENGINE_INHERIT = "inherit";
+    private static final String USER_TWO_FACTOR_ENGINE_EMAIL_PIN = "email_pin";
+    private static final String USER_TWO_FACTOR_ENGINE_FLOWROUTE_SMS = "flowroute_sms";
 
     public static users_roles defaultStore() {
         return new users_roles();
@@ -125,13 +128,30 @@ public final class users_roles {
         public final String roleUuid;
         public final String emailAddress;           // stored normalized (lowercase trim)
         public final String algo2idPasswordHash;    // Argon2id encoded string
+        public final boolean twoFactorEnabled;
+        public final String twoFactorEngine;        // inherit | email_pin | flowroute_sms
+        public final String twoFactorPhone;         // optional phone destination (for SMS)
 
         public UserRec(String uuid, boolean enabled, String roleUuid, String emailAddress, String algo2idPasswordHash) {
+            this(uuid, enabled, roleUuid, emailAddress, algo2idPasswordHash, false, USER_TWO_FACTOR_ENGINE_INHERIT, "");
+        }
+
+        public UserRec(String uuid,
+                       boolean enabled,
+                       String roleUuid,
+                       String emailAddress,
+                       String algo2idPasswordHash,
+                       boolean twoFactorEnabled,
+                       String twoFactorEngine,
+                       String twoFactorPhone) {
             this.uuid = safe(uuid);
             this.enabled = enabled;
             this.roleUuid = safe(roleUuid);
             this.emailAddress = normalizeEmail(emailAddress);
             this.algo2idPasswordHash = safe(algo2idPasswordHash);
+            this.twoFactorEnabled = twoFactorEnabled;
+            this.twoFactorEngine = normalizeUserTwoFactorEngine(twoFactorEngine);
+            this.twoFactorPhone = normalizePhone(twoFactorPhone);
         }
     }
 
@@ -420,7 +440,10 @@ public final class users_roles {
                     true,
                     adminRole.uuid,
                     adminEmail,
-                    hash
+                    hash,
+                    false,
+                    USER_TWO_FACTOR_ENGINE_INHERIT,
+                    ""
             );
             users.add(adminUser);
             usersChanged = true;
@@ -461,7 +484,16 @@ public final class users_roles {
                 List<UserRec> out = new ArrayList<>(users.size());
                 for (UserRec u : users) {
                     if (u != null && safe(u.uuid).equals(adminUser.uuid)) {
-                        out.add(new UserRec(adminUser.uuid, enabled, roleUuid, email, hash));
+                        out.add(new UserRec(
+                                adminUser.uuid,
+                                enabled,
+                                roleUuid,
+                                email,
+                                hash,
+                                adminUser.twoFactorEnabled,
+                                adminUser.twoFactorEngine,
+                                adminUser.twoFactorPhone
+                        ));
                     } else {
                         out.add(u);
                     }
@@ -620,6 +652,19 @@ public final class users_roles {
      * Creates a new user. Enforces unique email (case-insensitive).
      */
     public UserRec createUser(String tenantUuid, String email, String roleUuid, boolean enabled, char[] password) throws Exception {
+        return createUser(tenantUuid, email, roleUuid, enabled, password, false);
+    }
+
+    /**
+     * Creates a new user. Enforces unique email (case-insensitive).
+     * When bypassPasswordPolicy is true, password-policy checks are skipped.
+     */
+    public UserRec createUser(String tenantUuid,
+                              String email,
+                              String roleUuid,
+                              boolean enabled,
+                              char[] password,
+                              boolean bypassPasswordPolicy) throws Exception {
         String tu = safe(tenantUuid).trim();
         String em = normalizeEmail(email);
         String ru = safe(roleUuid).trim();
@@ -627,6 +672,7 @@ public final class users_roles {
         if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
         if (em.isBlank()) throw new IllegalArgumentException("email required");
         if (password == null || password.length == 0) throw new IllegalArgumentException("password required");
+        if (!bypassPasswordPolicy) enforcePasswordPolicy(tu, password);
 
         byte[] pepper = getPepper();
 
@@ -643,7 +689,7 @@ public final class users_roles {
             String uuid = UUID.randomUUID().toString();
             String hash = Argon2id.hash(password, pepper);
 
-            UserRec u = new UserRec(uuid, enabled, ru, em, hash);
+            UserRec u = new UserRec(uuid, enabled, ru, em, hash, false, USER_TWO_FACTOR_ENGINE_INHERIT, "");
             users.add(u);
 
             writeUsers(tu, users);
@@ -683,7 +729,16 @@ public final class users_roles {
             List<UserRec> out = new ArrayList<>(users.size());
             for (UserRec u : users) {
                 if (uu.equals(u.uuid)) {
-                    out.add(new UserRec(u.uuid, u.enabled, u.roleUuid, em, u.algo2idPasswordHash));
+                    out.add(new UserRec(
+                            u.uuid,
+                            u.enabled,
+                            u.roleUuid,
+                            em,
+                            u.algo2idPasswordHash,
+                            u.twoFactorEnabled,
+                            u.twoFactorEngine,
+                            u.twoFactorPhone
+                    ));
                     changed = true;
                 } else {
                     out.add(u);
@@ -696,11 +751,82 @@ public final class users_roles {
         }
     }
 
+    public boolean updateUserTwoFactorEnabled(String tenantUuid, String userUuid, boolean enabled) throws Exception {
+        return updateUserField(tenantUuid, userUuid, "two_factor_enabled", enabled ? "true" : "false");
+    }
+
+    public boolean updateUserTwoFactorEngine(String tenantUuid, String userUuid, String engine) throws Exception {
+        return updateUserField(tenantUuid, userUuid, "two_factor_engine", normalizeUserTwoFactorEngine(engine));
+    }
+
+    public boolean updateUserTwoFactorPhone(String tenantUuid, String userUuid, String phoneNumber) throws Exception {
+        return updateUserField(tenantUuid, userUuid, "two_factor_phone", normalizePhone(phoneNumber));
+    }
+
+    public boolean updateUserTwoFactorSettings(String tenantUuid,
+                                               String userUuid,
+                                               boolean enabled,
+                                               String engine,
+                                               String phoneNumber) throws Exception {
+        String tu = safe(tenantUuid).trim();
+        String uu = safe(userUuid).trim();
+        if (tu.isBlank() || uu.isBlank()) return false;
+
+        String normalizedEngine = normalizeUserTwoFactorEngine(engine);
+        String normalizedPhone = normalizePhone(phoneNumber);
+
+        ReentrantReadWriteLock lock = lockFor(tu);
+        lock.writeLock().lock();
+        try {
+            ensure(tu);
+            List<UserRec> users = readUsers(tu);
+            boolean changed = false;
+            List<UserRec> out = new ArrayList<>(users.size());
+            for (UserRec u : users) {
+                if (!uu.equals(u.uuid)) {
+                    out.add(u);
+                    continue;
+                }
+                if (u.twoFactorEnabled != enabled
+                        || !u.twoFactorEngine.equals(normalizedEngine)
+                        || !u.twoFactorPhone.equals(normalizedPhone)) {
+                    changed = true;
+                }
+                out.add(new UserRec(
+                        u.uuid,
+                        u.enabled,
+                        u.roleUuid,
+                        u.emailAddress,
+                        u.algo2idPasswordHash,
+                        enabled,
+                        normalizedEngine,
+                        normalizedPhone
+                ));
+            }
+            if (changed) writeUsers(tu, out);
+            return changed;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
     public boolean updateUserPassword(String tenantUuid, String userUuid, char[] newPassword) throws Exception {
+        return updateUserPassword(tenantUuid, userUuid, newPassword, false);
+    }
+
+    /**
+     * Updates a user's password.
+     * When bypassPasswordPolicy is true, password-policy checks are skipped.
+     */
+    public boolean updateUserPassword(String tenantUuid,
+                                      String userUuid,
+                                      char[] newPassword,
+                                      boolean bypassPasswordPolicy) throws Exception {
         String tu = safe(tenantUuid).trim();
         String uu = safe(userUuid).trim();
         if (tu.isBlank() || uu.isBlank()) return false;
         if (newPassword == null || newPassword.length == 0) return false;
+        if (!bypassPasswordPolicy) enforcePasswordPolicy(tu, newPassword);
 
         byte[] pepper = getPepper();
 
@@ -716,7 +842,16 @@ public final class users_roles {
 
             for (UserRec u : users) {
                 if (uu.equals(u.uuid)) {
-                    out.add(new UserRec(u.uuid, u.enabled, u.roleUuid, u.emailAddress, newHash));
+                    out.add(new UserRec(
+                            u.uuid,
+                            u.enabled,
+                            u.roleUuid,
+                            u.emailAddress,
+                            newHash,
+                            u.twoFactorEnabled,
+                            u.twoFactorEngine,
+                            u.twoFactorPhone
+                    ));
                     changed = true;
                 } else {
                     out.add(u);
@@ -728,6 +863,12 @@ public final class users_roles {
             wipe(newPassword);
             lock.writeLock().unlock();
         }
+    }
+
+    private void enforcePasswordPolicy(String tenantUuid, char[] password) {
+        List<String> issues = tenant_settings.defaultStore().validatePasswordAgainstPolicy(tenantUuid, password);
+        if (issues == null || issues.isEmpty()) return;
+        throw new IllegalArgumentException("Password policy: " + String.join(" ", issues));
     }
 
     /** Soft-delete helper: disables the user. */
@@ -939,9 +1080,21 @@ public final class users_roles {
             String roleUuid = text(e, "role_uuid");
             String email = text(e, "email_address");
             String hash = text(e, "algo2id_password_hash");
+            boolean twoFactorEnabled = parseBool(text(e, "two_factor_enabled"), false);
+            String twoFactorEngine = normalizeUserTwoFactorEngine(text(e, "two_factor_engine"));
+            String twoFactorPhone = normalizePhone(text(e, "two_factor_phone"));
 
             if (uuid.isBlank() || email.isBlank()) continue;
-            out.add(new UserRec(uuid, enabled, roleUuid, email, hash));
+            out.add(new UserRec(
+                    uuid,
+                    enabled,
+                    roleUuid,
+                    email,
+                    hash,
+                    twoFactorEnabled,
+                    twoFactorEngine,
+                    twoFactorPhone
+            ));
         }
         return out;
     }
@@ -1000,6 +1153,9 @@ public final class users_roles {
             sb.append("    <role_uuid>").append(xmlText(u.roleUuid)).append("</role_uuid>\n");
             sb.append("    <email_address>").append(xmlText(u.emailAddress)).append("</email_address>\n");
             sb.append("    <algo2id_password_hash>").append(xmlText(u.algo2idPasswordHash)).append("</algo2id_password_hash>\n");
+            sb.append("    <two_factor_enabled>").append(u.twoFactorEnabled ? "true" : "false").append("</two_factor_enabled>\n");
+            sb.append("    <two_factor_engine>").append(xmlText(u.twoFactorEngine)).append("</two_factor_engine>\n");
+            sb.append("    <two_factor_phone>").append(xmlText(u.twoFactorPhone)).append("</two_factor_phone>\n");
             sb.append("  </user>\n");
         }
 
@@ -1066,16 +1222,31 @@ public final class users_roles {
                 String roleUuid = u.roleUuid;
                 String email = u.emailAddress;
                 String hash = u.algo2idPasswordHash;
+                boolean twoFactorEnabled = u.twoFactorEnabled;
+                String twoFactorEngine = u.twoFactorEngine;
+                String twoFactorPhone = u.twoFactorPhone;
 
                 switch (f) {
                     case "enabled" -> enabled = parseBool(newValue, enabled);
                     case "role_uuid" -> roleUuid = safe(newValue).trim();
                     case "email_address" -> email = normalizeEmail(newValue);
                     case "algo2id_password_hash" -> hash = safe(newValue);
+                    case "two_factor_enabled" -> twoFactorEnabled = parseBool(newValue, twoFactorEnabled);
+                    case "two_factor_engine" -> twoFactorEngine = normalizeUserTwoFactorEngine(newValue);
+                    case "two_factor_phone" -> twoFactorPhone = normalizePhone(newValue);
                     default -> { out.add(u); continue; }
                 }
 
-                out.add(new UserRec(uuid, enabled, roleUuid, email, hash));
+                out.add(new UserRec(
+                        uuid,
+                        enabled,
+                        roleUuid,
+                        email,
+                        hash,
+                        twoFactorEnabled,
+                        twoFactorEngine,
+                        twoFactorPhone
+                ));
                 changed = true;
             }
 
@@ -1277,6 +1448,23 @@ public final class users_roles {
 
     private static String normalizeEmail(String email) {
         return safe(email).trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String normalizeUserTwoFactorEngine(String engine) {
+        String e = safe(engine).trim().toLowerCase(Locale.ROOT);
+        if (USER_TWO_FACTOR_ENGINE_EMAIL_PIN.equals(e)) return USER_TWO_FACTOR_ENGINE_EMAIL_PIN;
+        if (USER_TWO_FACTOR_ENGINE_FLOWROUTE_SMS.equals(e)) return USER_TWO_FACTOR_ENGINE_FLOWROUTE_SMS;
+        return USER_TWO_FACTOR_ENGINE_INHERIT;
+    }
+
+    private static String normalizePhone(String phone) {
+        String p = safe(phone).trim();
+        if (p.isBlank()) return "";
+        boolean plus = p.startsWith("+");
+        String digits = p.replaceAll("[^0-9]", "");
+        if (digits.length() < 10) return "";
+        if (digits.length() > 15) digits = digits.substring(digits.length() - 15);
+        return plus ? ("+" + digits) : digits;
     }
 
     private static String emptyUsersXml() {

@@ -27,6 +27,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Tenant-scoped JSON API for automation clients.
@@ -38,6 +40,8 @@ import java.util.UUID;
  *  - api.credential_scope
  */
 public final class api_servlet extends HttpServlet {
+
+    private static final Logger LOG = Logger.getLogger(api_servlet.class.getName());
 
     private static final ObjectMapper JSON = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -127,9 +131,10 @@ public final class api_servlet extends HttpServlet {
 
         LinkedHashMap<String, Object> params = collectParams(req, payload);
 
+        String operation = safe(op).trim().toLowerCase(Locale.ROOT);
         try {
             LinkedHashMap<String, Object> result = executeOperation(
-                    op,
+                    operation,
                     params,
                     tenantUuid,
                     safe((String) req.getAttribute(REQ_CREDENTIAL_ID)),
@@ -141,16 +146,67 @@ public final class api_servlet extends HttpServlet {
             LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
             out.put("ok", true);
             out.put("version", "v1");
-            out.put("operation", op);
+            out.put("operation", operation);
             out.put("tenant_uuid", tenantUuid);
             out.put("result", result);
             writeJson(resp, 200, out);
+            auditApiInvocation(
+                    tenantUuid,
+                    operation,
+                    safe((String) req.getAttribute(REQ_CREDENTIAL_ID)),
+                    safe(req.getRemoteAddr()),
+                    method,
+                    true,
+                    200,
+                    "",
+                    ""
+            );
         } catch (IllegalArgumentException ex) {
+            auditApiInvocation(
+                    tenantUuid,
+                    operation,
+                    safe((String) req.getAttribute(REQ_CREDENTIAL_ID)),
+                    safe(req.getRemoteAddr()),
+                    method,
+                    false,
+                    400,
+                    "bad_request",
+                    safe(ex.getMessage())
+            );
             writeError(resp, 400, "bad_request", safe(ex.getMessage()));
         } catch (UnsupportedOperationException ex) {
+            auditApiInvocation(
+                    tenantUuid,
+                    operation,
+                    safe((String) req.getAttribute(REQ_CREDENTIAL_ID)),
+                    safe(req.getRemoteAddr()),
+                    method,
+                    false,
+                    404,
+                    "unknown_operation",
+                    safe(ex.getMessage())
+            );
             writeError(resp, 404, "unknown_operation", safe(ex.getMessage()));
         } catch (Exception ex) {
-            writeError(resp, 500, "server_error", safe(ex.getMessage()));
+            LOG.log(
+                    Level.WARNING,
+                    "API operation failed op=" + operation + ", tenant=" + tenantUuid + ", credential="
+                            + safe((String) req.getAttribute(REQ_CREDENTIAL_ID)) + ", ip=" + safe(req.getRemoteAddr())
+                            + ", method=" + method + ", message=" + safe(ex.getMessage()),
+                    ex
+            );
+            auditApiInvocation(
+                    tenantUuid,
+                    operation,
+                    safe((String) req.getAttribute(REQ_CREDENTIAL_ID)),
+                    safe(req.getRemoteAddr()),
+                    method,
+                    false,
+                    500,
+                    "server_error",
+                    safe(ex.getMessage())
+            );
+            writeError(resp, 500, "server_error", "Internal server error.");
         }
     }
 
@@ -249,6 +305,9 @@ public final class api_servlet extends HttpServlet {
                                                                    String method) throws Exception {
 
         String operation = safe(op).trim().toLowerCase(Locale.ROOT);
+
+        LinkedHashMap<String, Object> omnichannel = executeOmnichannelOperation(operation, params, tenantUuid);
+        if (omnichannel != null) return omnichannel;
 
         switch (operation) {
             case "auth.whoami": {
@@ -1543,6 +1602,182 @@ public final class api_servlet extends HttpServlet {
                 return out;
             }
 
+            case "bpm.processes.list": {
+                business_process_manager bpm = business_process_manager.defaultService();
+                boolean includeDisabled = boolVal(params, "include_disabled", true);
+                List<business_process_manager.ProcessDefinition> rows = bpm.listProcesses(tenantUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (business_process_manager.ProcessDefinition row : rows) {
+                    if (row == null) continue;
+                    if (!includeDisabled && !row.enabled) continue;
+                    items.add(bpmProcessMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "bpm.actions.catalog": {
+                List<LinkedHashMap<String, Object>> rows = business_process_manager.defaultService().listBuiltInActions();
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", rows);
+                out.put("count", rows.size());
+                return out;
+            }
+
+            case "bpm.processes.get": {
+                business_process_manager.ProcessDefinition row = business_process_manager.defaultService().getProcess(
+                        tenantUuid,
+                        str(params, "process_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("process", bpmProcessMap(row));
+                return out;
+            }
+
+            case "bpm.processes.save": {
+                business_process_manager.ProcessDefinition parsed = parseBpmProcess(
+                        mapFrom(params.get("process"), params)
+                );
+                business_process_manager.ProcessDefinition saved = business_process_manager.defaultService()
+                        .saveProcess(tenantUuid, parsed);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("saved", true);
+                out.put("process", bpmProcessMap(saved));
+                return out;
+            }
+
+            case "bpm.processes.delete": {
+                boolean deleted = business_process_manager.defaultService().deleteProcess(
+                        tenantUuid,
+                        str(params, "process_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("deleted", deleted);
+                return out;
+            }
+
+            case "bpm.events.trigger": {
+                business_process_manager bpm = business_process_manager.defaultService();
+                String processUuid = str(params, "process_uuid");
+                String eventType = str(params, "event_type");
+                if (eventType.isBlank()) eventType = "manual";
+                LinkedHashMap<String, String> payload = stringMap(params.get("payload"));
+                String actorUserUuid = str(params, "actor_user_uuid");
+                String source = str(params, "source");
+                if (source.isBlank()) source = "api.bpm.events.trigger";
+
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                if (processUuid.isBlank()) {
+                    List<business_process_manager.RunResult> rows = bpm.triggerEvent(
+                            tenantUuid,
+                            eventType,
+                            payload,
+                            actorUserUuid,
+                            source
+                    );
+                    for (business_process_manager.RunResult row : rows) {
+                        if (row == null) continue;
+                        items.add(bpmRunMap(row));
+                    }
+                } else {
+                    business_process_manager.RunResult row = bpm.triggerProcess(
+                            tenantUuid,
+                            processUuid,
+                            eventType,
+                            payload,
+                            actorUserUuid,
+                            source
+                    );
+                    items.add(bpmRunMap(row));
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "bpm.runs.list": {
+                List<business_process_manager.RunResult> rows = business_process_manager.defaultService().listRuns(
+                        tenantUuid,
+                        clampInt(intVal(params, "limit", 100), 1, 500)
+                );
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (business_process_manager.RunResult row : rows) {
+                    if (row == null) continue;
+                    items.add(bpmRunMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "bpm.runs.get": {
+                business_process_manager.RunResult row = business_process_manager.defaultService().getRunResult(
+                        tenantUuid,
+                        str(params, "run_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("run", bpmRunMap(row));
+                return out;
+            }
+
+            case "bpm.runs.undo": {
+                business_process_manager.RunResult row = business_process_manager.defaultService().undoRun(
+                        tenantUuid,
+                        str(params, "run_uuid"),
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("run", bpmRunMap(row));
+                return out;
+            }
+
+            case "bpm.runs.redo": {
+                business_process_manager.RunResult row = business_process_manager.defaultService().redoRun(
+                        tenantUuid,
+                        str(params, "run_uuid"),
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("run", bpmRunMap(row));
+                return out;
+            }
+
+            case "bpm.reviews.list": {
+                List<business_process_manager.HumanReviewTask> rows = business_process_manager.defaultService().listReviews(
+                        tenantUuid,
+                        boolVal(params, "pending_only", true),
+                        clampInt(intVal(params, "limit", 100), 1, 500)
+                );
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (business_process_manager.HumanReviewTask row : rows) {
+                    if (row == null) continue;
+                    items.add(bpmReviewMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "bpm.reviews.complete": {
+                business_process_manager.HumanReviewTask row = business_process_manager.defaultService().completeReview(
+                        tenantUuid,
+                        str(params, "review_uuid"),
+                        boolVal(params, "approved", true),
+                        str(params, "reviewed_by_user_uuid"),
+                        stringMap(params.get("input")),
+                        str(params, "comment")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("review", bpmReviewMap(row));
+                return out;
+            }
+
             case "texas_law.status": {
                 texas_law_sync sync = texas_law_sync.defaultService();
                 Properties status = sync.readStatusSnapshot();
@@ -1689,6 +1924,334 @@ public final class api_servlet extends HttpServlet {
                     nav.add(m);
                 }
                 out.put("navigation", nav);
+                return out;
+            }
+
+            default:
+                throw new UnsupportedOperationException("Unknown operation: " + op);
+        }
+    }
+
+    private static LinkedHashMap<String, Object> executeOmnichannelOperation(String operation,
+                                                                              Map<String, Object> params,
+                                                                              String tenantUuid) throws Exception {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (!op.startsWith("omnichannel.")) return null;
+
+        omnichannel_tickets store = omnichannel_tickets.defaultStore();
+
+        switch (op) {
+            case "omnichannel.threads.list": {
+                boolean includeArchived = boolVal(params, "include_archived", false);
+                String matterFilter = str(params, "matter_uuid");
+                String channelFilter = str(params, "channel");
+                String statusFilter = str(params, "status");
+                String assignedFilter = str(params, "assigned_user_uuid");
+
+                List<omnichannel_tickets.TicketRec> rows = store.listTickets(tenantUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (omnichannel_tickets.TicketRec r : rows) {
+                    if (r == null) continue;
+                    if (!includeArchived && r.archived) continue;
+                    if (!matterFilter.isBlank() && !matterFilter.equalsIgnoreCase(safe(r.matterUuid).trim())) continue;
+                    if (!channelFilter.isBlank() && !channelFilter.equalsIgnoreCase(safe(r.channel).trim())) continue;
+                    if (!statusFilter.isBlank() && !statusFilter.equalsIgnoreCase(safe(r.status).trim())) continue;
+                    if (!assignedFilter.isBlank() && !csvContains(safe(r.assignedUserUuid), assignedFilter)) continue;
+                    items.add(threadMap(r));
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "omnichannel.threads.get": {
+                String threadUuid = threadUuidParam(params);
+                if (threadUuid.isBlank()) throw new IllegalArgumentException("thread_uuid is required.");
+
+                omnichannel_tickets.TicketRec row = store.getTicket(tenantUuid, threadUuid);
+                if (row == null) throw new IllegalArgumentException("Thread not found.");
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("thread", threadMap(row));
+
+                if (boolVal(params, "include_details", true)) {
+                    ArrayList<LinkedHashMap<String, Object>> messages = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (omnichannel_tickets.MessageRec m : store.listMessages(tenantUuid, threadUuid)) {
+                        if (m == null) continue;
+                        messages.add(threadMessageMap(m));
+                    }
+                    ArrayList<LinkedHashMap<String, Object>> attachments = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (omnichannel_tickets.AttachmentRec a : store.listAttachments(tenantUuid, threadUuid)) {
+                        if (a == null) continue;
+                        attachments.add(threadAttachmentMap(a));
+                    }
+                    ArrayList<LinkedHashMap<String, Object>> assignments = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (omnichannel_tickets.AssignmentRec a : store.listAssignments(tenantUuid, threadUuid)) {
+                        if (a == null) continue;
+                        assignments.add(threadAssignmentMap(a));
+                    }
+                    out.put("messages", messages);
+                    out.put("attachments", attachments);
+                    out.put("assignments", assignments);
+                }
+                return out;
+            }
+
+            case "omnichannel.threads.create": {
+                String assignmentMode = str(params, "assignment_mode");
+                String assignedUserUuid = str(params, "assigned_user_uuid");
+                if (assignedUserUuid.isBlank()) assignedUserUuid = str(params, "assigned_user_uuids");
+                String initialDirection = str(params, "initial_direction");
+                if (initialDirection.isBlank()) initialDirection = "inbound";
+
+                if ("round_robin".equalsIgnoreCase(assignmentMode) && assignedUserUuid.isBlank()) {
+                    List<String> candidates = csvOrList(params.get("candidate_user_uuids"));
+                    if (candidates.isEmpty()) candidates = csvOrList(params.get("round_robin_candidates"));
+                    if (!candidates.isEmpty()) {
+                        String queueKey = str(params, "round_robin_queue_key");
+                        if (queueKey.isBlank()) queueKey = str(params, "round_robin_queue");
+                        if (queueKey.isBlank()) queueKey = str(params, "channel") + ":" + str(params, "mailbox_address");
+                        assignedUserUuid = store.chooseRoundRobinAssignee(tenantUuid, queueKey, candidates);
+                    }
+                }
+
+                omnichannel_tickets.TicketRec created = store.createTicket(
+                        tenantUuid,
+                        str(params, "matter_uuid"),
+                        str(params, "channel"),
+                        str(params, "subject"),
+                        str(params, "status"),
+                        str(params, "priority"),
+                        assignmentMode,
+                        assignedUserUuid,
+                        str(params, "reminder_at"),
+                        str(params, "due_at"),
+                        str(params, "customer_display"),
+                        str(params, "customer_address"),
+                        str(params, "mailbox_address"),
+                        str(params, "thread_key"),
+                        str(params, "external_conversation_id"),
+                        initialDirection,
+                        str(params, "initial_body"),
+                        str(params, "initial_from_address"),
+                        str(params, "initial_to_address"),
+                        boolVal(params, "initial_mms", false),
+                        str(params, "actor_user_uuid"),
+                        str(params, "assignment_reason")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("thread", threadMap(created));
+                return out;
+            }
+
+            case "omnichannel.threads.update": {
+                String threadUuid = threadUuidParam(params);
+                if (threadUuid.isBlank()) throw new IllegalArgumentException("thread_uuid is required.");
+
+                omnichannel_tickets.TicketRec current = store.getTicket(tenantUuid, threadUuid);
+                if (current == null) throw new IllegalArgumentException("Thread not found.");
+
+                omnichannel_tickets.TicketRec update = copyThread(current);
+                update.uuid = threadUuid;
+
+                if (hasParam(params, "matter_uuid")) update.matterUuid = str(params, "matter_uuid");
+                if (hasParam(params, "channel")) update.channel = str(params, "channel");
+                if (hasParam(params, "subject")) update.subject = str(params, "subject");
+                if (hasParam(params, "status")) update.status = str(params, "status");
+                if (hasParam(params, "priority")) update.priority = str(params, "priority");
+                if (hasParam(params, "assignment_mode")) update.assignmentMode = str(params, "assignment_mode");
+                if (hasParam(params, "assigned_user_uuid")) update.assignedUserUuid = str(params, "assigned_user_uuid");
+                if (hasParam(params, "assigned_user_uuids")) update.assignedUserUuid = str(params, "assigned_user_uuids");
+                if (hasParam(params, "reminder_at")) update.reminderAt = str(params, "reminder_at");
+                if (hasParam(params, "due_at")) update.dueAt = str(params, "due_at");
+                if (hasParam(params, "customer_display")) update.customerDisplay = str(params, "customer_display");
+                if (hasParam(params, "customer_address")) update.customerAddress = str(params, "customer_address");
+                if (hasParam(params, "mailbox_address")) update.mailboxAddress = str(params, "mailbox_address");
+                if (hasParam(params, "thread_key")) update.threadKey = str(params, "thread_key");
+                if (hasParam(params, "external_conversation_id")) update.externalConversationId = str(params, "external_conversation_id");
+                if (hasParam(params, "mms_enabled")) update.mmsEnabled = boolVal(params, "mms_enabled", update.mmsEnabled);
+                if (hasParam(params, "archived")) update.archived = boolVal(params, "archived", update.archived);
+
+                boolean changed = store.updateTicket(
+                        tenantUuid,
+                        update,
+                        str(params, "actor_user_uuid"),
+                        str(params, "assignment_reason")
+                );
+                omnichannel_tickets.TicketRec refreshed = store.getTicket(tenantUuid, threadUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("thread", threadMap(refreshed));
+                return out;
+            }
+
+            case "omnichannel.threads.set_archived": {
+                String threadUuid = threadUuidParam(params);
+                if (threadUuid.isBlank()) throw new IllegalArgumentException("thread_uuid is required.");
+                boolean archived = boolVal(params, "archived", true);
+                boolean changed = store.setArchived(tenantUuid, threadUuid, archived, str(params, "actor_user_uuid"));
+                omnichannel_tickets.TicketRec refreshed = store.getTicket(tenantUuid, threadUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("thread", threadMap(refreshed));
+                return out;
+            }
+
+            case "omnichannel.threads.refresh_report": {
+                String threadUuid = threadUuidParam(params);
+                if (threadUuid.isBlank()) throw new IllegalArgumentException("thread_uuid is required.");
+                omnichannel_tickets.TicketRec refreshed = store.refreshMatterReport(
+                        tenantUuid,
+                        threadUuid,
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("thread", threadMap(refreshed));
+                return out;
+            }
+
+            case "omnichannel.messages.list": {
+                String threadUuid = threadUuidParam(params);
+                if (threadUuid.isBlank()) throw new IllegalArgumentException("thread_uuid is required.");
+                List<omnichannel_tickets.MessageRec> rows = store.listMessages(tenantUuid, threadUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (omnichannel_tickets.MessageRec row : rows) {
+                    if (row == null) continue;
+                    items.add(threadMessageMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "omnichannel.messages.add": {
+                String threadUuid = threadUuidParam(params);
+                if (threadUuid.isBlank()) throw new IllegalArgumentException("thread_uuid is required.");
+                String direction = str(params, "direction");
+                if (direction.isBlank()) direction = "inbound";
+                omnichannel_tickets.MessageRec row = store.addMessage(
+                        tenantUuid,
+                        threadUuid,
+                        direction,
+                        str(params, "body"),
+                        boolVal(params, "mms", false),
+                        str(params, "from_address"),
+                        str(params, "to_address"),
+                        str(params, "provider_message_id"),
+                        str(params, "email_message_id"),
+                        str(params, "email_in_reply_to"),
+                        str(params, "email_references"),
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("message", threadMessageMap(row));
+                return out;
+            }
+
+            case "omnichannel.notes.add": {
+                String threadUuid = threadUuidParam(params);
+                if (threadUuid.isBlank()) throw new IllegalArgumentException("thread_uuid is required.");
+                omnichannel_tickets.MessageRec row = store.addMessage(
+                        tenantUuid,
+                        threadUuid,
+                        "internal",
+                        str(params, "body"),
+                        false,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("note", threadMessageMap(row));
+                return out;
+            }
+
+            case "omnichannel.attachments.list": {
+                String threadUuid = threadUuidParam(params);
+                if (threadUuid.isBlank()) throw new IllegalArgumentException("thread_uuid is required.");
+                List<omnichannel_tickets.AttachmentRec> rows = store.listAttachments(tenantUuid, threadUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (omnichannel_tickets.AttachmentRec row : rows) {
+                    if (row == null) continue;
+                    items.add(threadAttachmentMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "omnichannel.attachments.add": {
+                String threadUuid = threadUuidParam(params);
+                if (threadUuid.isBlank()) throw new IllegalArgumentException("thread_uuid is required.");
+                String contentBase64 = str(params, "content_base64");
+                if (contentBase64.isBlank()) contentBase64 = str(params, "bytes_base64");
+                byte[] bytes = decodeBase64(contentBase64);
+                if (bytes.length == 0) throw new IllegalArgumentException("content_base64 is required.");
+
+                omnichannel_tickets.AttachmentRec row = store.saveAttachment(
+                        tenantUuid,
+                        threadUuid,
+                        str(params, "message_uuid"),
+                        str(params, "file_name"),
+                        str(params, "mime_type"),
+                        bytes,
+                        boolVal(params, "inline_media", false),
+                        str(params, "uploaded_by")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("attachment", threadAttachmentMap(row));
+                return out;
+            }
+
+            case "omnichannel.attachments.get": {
+                String threadUuid = threadUuidParam(params);
+                String attachmentUuid = str(params, "attachment_uuid");
+                if (threadUuid.isBlank() || attachmentUuid.isBlank()) {
+                    throw new IllegalArgumentException("thread_uuid and attachment_uuid are required.");
+                }
+                omnichannel_tickets.AttachmentBlob blob = store.getAttachmentBlob(tenantUuid, threadUuid, attachmentUuid);
+                if (blob == null || blob.path == null || !Files.exists(blob.path) || !Files.isRegularFile(blob.path)) {
+                    throw new IllegalArgumentException("Attachment not found.");
+                }
+                byte[] bytes = Files.readAllBytes(blob.path);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("attachment", threadAttachmentMap(blob.attachment));
+                out.put("content_base64", encodeBase64(bytes));
+                out.put("content_size_bytes", bytes.length);
+                return out;
+            }
+
+            case "omnichannel.assignments.list": {
+                String threadUuid = threadUuidParam(params);
+                if (threadUuid.isBlank()) throw new IllegalArgumentException("thread_uuid is required.");
+                List<omnichannel_tickets.AssignmentRec> rows = store.listAssignments(tenantUuid, threadUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (omnichannel_tickets.AssignmentRec row : rows) {
+                    if (row == null) continue;
+                    items.add(threadAssignmentMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "omnichannel.round_robin.next_assignee": {
+                String queueKey = str(params, "queue_key");
+                List<String> candidates = csvOrList(params.get("candidate_user_uuids"));
+                if (candidates.isEmpty()) candidates = csvOrList(params.get("candidates"));
+                if (candidates.isEmpty()) throw new IllegalArgumentException("candidate_user_uuids are required.");
+                String assignee = store.chooseRoundRobinAssignee(tenantUuid, queueKey, candidates);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("assigned_user_uuid", assignee);
                 return out;
             }
 
@@ -1899,6 +2462,75 @@ public final class api_servlet extends HttpServlet {
         return out;
     }
 
+    private static Map<String, Object> mapFrom(Object preferred, Map<String, Object> fallback) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (preferred instanceof Map<?, ?> pm) {
+            for (Map.Entry<?, ?> e : pm.entrySet()) {
+                if (e == null) continue;
+                String k = safe(asString(e.getKey())).trim();
+                if (k.isBlank()) continue;
+                out.put(k, e.getValue());
+            }
+            return out;
+        }
+        if (fallback != null) out.putAll(fallback);
+        return out;
+    }
+
+    private static business_process_manager.ProcessDefinition parseBpmProcess(Map<String, Object> raw) {
+        business_process_manager.ProcessDefinition out = new business_process_manager.ProcessDefinition();
+        if (raw == null) return out;
+
+        out.processUuid = safe(asString(raw.get("process_uuid"))).trim();
+        if (out.processUuid.isBlank()) out.processUuid = safe(asString(raw.get("uuid"))).trim();
+        out.name = safe(asString(raw.get("name"))).trim();
+        out.description = safe(asString(raw.get("description"))).trim();
+        out.enabled = boolVal(raw, "enabled", true);
+        out.updatedAt = safe(asString(raw.get("updated_at"))).trim();
+
+        List<Map<String, Object>> triggerRows = objectList(raw.get("triggers"));
+        for (Map<String, Object> row : triggerRows) {
+            if (row == null) continue;
+            business_process_manager.ProcessTrigger t = new business_process_manager.ProcessTrigger();
+            t.type = safe(asString(row.get("type"))).trim();
+            t.key = safe(asString(row.get("key"))).trim();
+            t.op = safe(asString(row.get("op"))).trim();
+            t.value = safe(asString(row.get("value")));
+            t.enabled = boolVal(row, "enabled", true);
+            if (!t.type.isBlank()) out.triggers.add(t);
+        }
+
+        List<Map<String, Object>> stepRows = objectList(raw.get("steps"));
+        for (int i = 0; i < stepRows.size(); i++) {
+            Map<String, Object> row = stepRows.get(i);
+            if (row == null) continue;
+            business_process_manager.ProcessStep s = new business_process_manager.ProcessStep();
+            s.stepId = safe(asString(row.get("step_id"))).trim();
+            if (s.stepId.isBlank()) s.stepId = safe(asString(row.get("id"))).trim();
+            if (s.stepId.isBlank()) s.stepId = "step_" + (i + 1);
+            s.order = intVal(row, "order", (i + 1) * 10);
+            s.action = safe(asString(row.get("action"))).trim();
+            s.label = safe(asString(row.get("label"))).trim();
+            s.enabled = boolVal(row, "enabled", true);
+            s.settings = stringMap(row.get("settings"));
+
+            List<Map<String, Object>> condRows = objectList(row.get("conditions"));
+            for (Map<String, Object> cr : condRows) {
+                if (cr == null) continue;
+                business_process_manager.ProcessCondition c = new business_process_manager.ProcessCondition();
+                c.source = safe(asString(cr.get("source"))).trim();
+                c.key = safe(asString(cr.get("key"))).trim();
+                c.op = safe(asString(cr.get("op"))).trim();
+                c.value = safe(asString(cr.get("value")));
+                if (!c.key.isBlank()) s.conditions.add(c);
+            }
+
+            if (!s.action.isBlank()) out.steps.add(s);
+        }
+
+        return out;
+    }
+
     private static LinkedHashMap<String, String> redactSecrets(Map<String, String> in) {
         LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
         if (in == null) return out;
@@ -2044,6 +2676,34 @@ public final class api_servlet extends HttpServlet {
         ops.put("custom_object_records.update", "Update custom object record");
         ops.put("custom_object_records.set_trashed", "Trash/restore custom object record");
 
+        ops.put("omnichannel.threads.list", "List omnichannel threads");
+        ops.put("omnichannel.threads.get", "Get one thread with optional timeline/details");
+        ops.put("omnichannel.threads.create", "Create thread");
+        ops.put("omnichannel.threads.update", "Update thread fields");
+        ops.put("omnichannel.threads.set_archived", "Archive/restore thread");
+        ops.put("omnichannel.threads.refresh_report", "Regenerate matter-linked thread PDF report");
+        ops.put("omnichannel.messages.list", "List thread messages");
+        ops.put("omnichannel.messages.add", "Add thread message");
+        ops.put("omnichannel.notes.add", "Add internal note to thread");
+        ops.put("omnichannel.attachments.list", "List thread attachments");
+        ops.put("omnichannel.attachments.add", "Add attachment/media to thread");
+        ops.put("omnichannel.attachments.get", "Get attachment metadata + base64 content");
+        ops.put("omnichannel.assignments.list", "List thread assignment history");
+        ops.put("omnichannel.round_robin.next_assignee", "Choose next assignee from round-robin queue");
+
+        ops.put("bpm.processes.list", "List business process definitions");
+        ops.put("bpm.actions.catalog", "List built-in BPM step actions and settings");
+        ops.put("bpm.processes.get", "Get one business process definition");
+        ops.put("bpm.processes.save", "Create/update business process definition");
+        ops.put("bpm.processes.delete", "Delete business process definition");
+        ops.put("bpm.events.trigger", "Trigger one or more business process runs");
+        ops.put("bpm.runs.list", "List business process run summaries");
+        ops.put("bpm.runs.get", "Get one business process run summary");
+        ops.put("bpm.runs.undo", "Undo an executed business process run");
+        ops.put("bpm.runs.redo", "Redo a previously undone process run");
+        ops.put("bpm.reviews.list", "List human-review tasks");
+        ops.put("bpm.reviews.complete", "Approve/reject and resume a human-review task");
+
         ops.put("texas_law.status", "Texas law sync status");
         ops.put("texas_law.sync_now", "Trigger Texas law sync now");
         ops.put("texas_law.list_dir", "Browse Texas law data directory");
@@ -2109,6 +2769,8 @@ curl -k -X POST "%s/execute" \\
 - PDF version rendering and redaction
 - Templates, template tools, assembly, assembled forms
 - Custom objects, attributes, records
+- Omnichannel threads/messages/attachments/assignments + report refresh
+- Business process manager (action catalog, definitions, runs, human review, undo/redo)
 - Texas law sync/browse/search/render
 - Activity logs
 
@@ -2140,6 +2802,9 @@ When features are added or changed in the application, matching API operations s
         m.put("enabled", r.enabled);
         m.put("role_uuid", r.roleUuid);
         m.put("email_address", r.emailAddress);
+        m.put("two_factor_enabled", r.twoFactorEnabled);
+        m.put("two_factor_engine", r.twoFactorEngine);
+        m.put("two_factor_phone", r.twoFactorPhone);
         return m;
     }
 
@@ -2281,6 +2946,221 @@ When features are added or changed in the application, matching API operations s
         return out;
     }
 
+    private static LinkedHashMap<String, Object> bpmProcessMap(business_process_manager.ProcessDefinition p) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (p == null) return out;
+        out.put("uuid", p.processUuid);
+        out.put("process_uuid", p.processUuid);
+        out.put("name", p.name);
+        out.put("description", p.description);
+        out.put("enabled", p.enabled);
+        out.put("updated_at", p.updatedAt);
+
+        ArrayList<LinkedHashMap<String, Object>> triggers = new ArrayList<LinkedHashMap<String, Object>>();
+        for (business_process_manager.ProcessTrigger t : p.triggers) {
+            if (t == null) continue;
+            LinkedHashMap<String, Object> row = new LinkedHashMap<String, Object>();
+            row.put("type", t.type);
+            row.put("key", t.key);
+            row.put("op", t.op);
+            row.put("value", t.value);
+            row.put("enabled", t.enabled);
+            triggers.add(row);
+        }
+        out.put("triggers", triggers);
+
+        ArrayList<LinkedHashMap<String, Object>> steps = new ArrayList<LinkedHashMap<String, Object>>();
+        for (business_process_manager.ProcessStep s : p.steps) {
+            if (s == null) continue;
+            LinkedHashMap<String, Object> row = new LinkedHashMap<String, Object>();
+            row.put("step_id", s.stepId);
+            row.put("order", s.order);
+            row.put("action", s.action);
+            row.put("label", s.label);
+            row.put("enabled", s.enabled);
+            row.put("settings", new LinkedHashMap<String, String>(s.settings));
+
+            ArrayList<LinkedHashMap<String, Object>> conds = new ArrayList<LinkedHashMap<String, Object>>();
+            for (business_process_manager.ProcessCondition c : s.conditions) {
+                if (c == null) continue;
+                LinkedHashMap<String, Object> m = new LinkedHashMap<String, Object>();
+                m.put("source", c.source);
+                m.put("key", c.key);
+                m.put("op", c.op);
+                m.put("value", c.value);
+                conds.add(m);
+            }
+            row.put("conditions", conds);
+            steps.add(row);
+        }
+        out.put("steps", steps);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> bpmRunMap(business_process_manager.RunResult r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("run_uuid", r.runUuid);
+        out.put("process_uuid", r.processUuid);
+        out.put("process_name", r.processName);
+        out.put("event_type", r.eventType);
+        out.put("status", r.status);
+        out.put("started_at", r.startedAt);
+        out.put("completed_at", r.completedAt);
+        out.put("message", r.message);
+        out.put("human_review_uuid", r.humanReviewUuid);
+        out.put("step_count", r.stepCount);
+        out.put("steps_completed", r.stepsCompleted);
+        out.put("steps_skipped", r.stepsSkipped);
+        out.put("errors", r.errors);
+        out.put("undo_state", r.undoState);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> bpmReviewMap(business_process_manager.HumanReviewTask r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("review_uuid", r.reviewUuid);
+        out.put("process_uuid", r.processUuid);
+        out.put("process_name", r.processName);
+        out.put("request_run_uuid", r.requestRunUuid);
+        out.put("resumed_run_uuid", r.resumedRunUuid);
+        out.put("event_type", r.eventType);
+        out.put("status", r.status);
+        out.put("title", r.title);
+        out.put("instructions", r.instructions);
+        out.put("comment", r.comment);
+        out.put("requested_by_user_uuid", r.requestedByUserUuid);
+        out.put("reviewed_by_user_uuid", r.reviewedByUserUuid);
+        out.put("created_at", r.createdAt);
+        out.put("resolved_at", r.resolvedAt);
+        out.put("next_step_order", r.nextStepOrder);
+        out.put("resume_status", r.resumeStatus);
+        out.put("resume_message", r.resumeMessage);
+        out.put("required_input_keys", new ArrayList<String>(r.requiredInputKeys));
+        out.put("input", new LinkedHashMap<String, String>(r.input));
+        out.put("context", new LinkedHashMap<String, String>(r.context));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> threadMap(omnichannel_tickets.TicketRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("thread_uuid", safe(r.uuid));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("channel", safe(r.channel));
+        out.put("subject", safe(r.subject));
+        out.put("status", safe(r.status));
+        out.put("priority", safe(r.priority));
+        out.put("assignment_mode", safe(r.assignmentMode));
+        out.put("assigned_user_uuid", safe(r.assignedUserUuid));
+        out.put("assigned_user_uuids", csvOrList(safe(r.assignedUserUuid)));
+        out.put("reminder_at", safe(r.reminderAt));
+        out.put("due_at", safe(r.dueAt));
+        out.put("customer_display", safe(r.customerDisplay));
+        out.put("customer_address", safe(r.customerAddress));
+        out.put("mailbox_address", safe(r.mailboxAddress));
+        out.put("thread_key", safe(r.threadKey));
+        out.put("external_conversation_id", safe(r.externalConversationId));
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("last_inbound_at", safe(r.lastInboundAt));
+        out.put("last_outbound_at", safe(r.lastOutboundAt));
+        out.put("inbound_count", r.inboundCount);
+        out.put("outbound_count", r.outboundCount);
+        out.put("mms_enabled", r.mmsEnabled);
+        out.put("archived", r.archived);
+        out.put("report_document_uuid", safe(r.reportDocumentUuid));
+        out.put("report_part_uuid", safe(r.reportPartUuid));
+        out.put("last_report_version_uuid", safe(r.lastReportVersionUuid));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> threadMessageMap(omnichannel_tickets.MessageRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("message_uuid", safe(r.uuid));
+        out.put("thread_uuid", safe(r.ticketUuid));
+        out.put("direction", safe(r.direction));
+        out.put("channel", safe(r.channel));
+        out.put("body", safe(r.body));
+        out.put("mms", r.mms);
+        out.put("from_address", safe(r.fromAddress));
+        out.put("to_address", safe(r.toAddress));
+        out.put("provider_message_id", safe(r.providerMessageId));
+        out.put("email_message_id", safe(r.emailMessageId));
+        out.put("email_in_reply_to", safe(r.emailInReplyTo));
+        out.put("email_references", safe(r.emailReferences));
+        out.put("created_by", safe(r.createdBy));
+        out.put("created_at", safe(r.createdAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> threadAttachmentMap(omnichannel_tickets.AttachmentRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("attachment_uuid", safe(r.uuid));
+        out.put("thread_uuid", safe(r.ticketUuid));
+        out.put("message_uuid", safe(r.messageUuid));
+        out.put("file_name", safe(r.fileName));
+        out.put("mime_type", safe(r.mimeType));
+        out.put("file_size_bytes", safe(r.fileSizeBytes));
+        out.put("checksum_sha256", safe(r.checksumSha256));
+        out.put("storage_file", safe(r.storageFile));
+        out.put("inline_media", r.inlineMedia);
+        out.put("uploaded_by", safe(r.uploadedBy));
+        out.put("uploaded_at", safe(r.uploadedAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> threadAssignmentMap(omnichannel_tickets.AssignmentRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("assignment_uuid", safe(r.uuid));
+        out.put("thread_uuid", safe(r.ticketUuid));
+        out.put("mode", safe(r.mode));
+        out.put("from_user_uuid", safe(r.fromUserUuid));
+        out.put("from_user_uuids", csvOrList(safe(r.fromUserUuid)));
+        out.put("to_user_uuid", safe(r.toUserUuid));
+        out.put("to_user_uuids", csvOrList(safe(r.toUserUuid)));
+        out.put("reason", safe(r.reason));
+        out.put("changed_by", safe(r.changedBy));
+        out.put("changed_at", safe(r.changedAt));
+        return out;
+    }
+
+    private static omnichannel_tickets.TicketRec copyThread(omnichannel_tickets.TicketRec in) {
+        omnichannel_tickets.TicketRec out = new omnichannel_tickets.TicketRec();
+        if (in == null) return out;
+        out.uuid = safe(in.uuid);
+        out.matterUuid = safe(in.matterUuid);
+        out.channel = safe(in.channel);
+        out.subject = safe(in.subject);
+        out.status = safe(in.status);
+        out.priority = safe(in.priority);
+        out.assignmentMode = safe(in.assignmentMode);
+        out.assignedUserUuid = safe(in.assignedUserUuid);
+        out.reminderAt = safe(in.reminderAt);
+        out.dueAt = safe(in.dueAt);
+        out.customerDisplay = safe(in.customerDisplay);
+        out.customerAddress = safe(in.customerAddress);
+        out.mailboxAddress = safe(in.mailboxAddress);
+        out.threadKey = safe(in.threadKey);
+        out.externalConversationId = safe(in.externalConversationId);
+        out.createdAt = safe(in.createdAt);
+        out.updatedAt = safe(in.updatedAt);
+        out.lastInboundAt = safe(in.lastInboundAt);
+        out.lastOutboundAt = safe(in.lastOutboundAt);
+        out.inboundCount = in.inboundCount;
+        out.outboundCount = in.outboundCount;
+        out.mmsEnabled = in.mmsEnabled;
+        out.archived = in.archived;
+        out.reportDocumentUuid = safe(in.reportDocumentUuid);
+        out.reportPartUuid = safe(in.reportPartUuid);
+        out.lastReportVersionUuid = safe(in.lastReportVersionUuid);
+        return out;
+    }
+
     private static part_versions.VersionRec findPartVersion(List<part_versions.VersionRec> rows, String versionUuid) {
         if (rows == null || rows.isEmpty()) return null;
         String wanted = safe(versionUuid).trim();
@@ -2368,6 +3248,24 @@ When features are added or changed in the application, matching API operations s
         return params.containsKey(key);
     }
 
+    private static String threadUuidParam(Map<String, Object> params) {
+        String id = str(params, "thread_uuid");
+        if (id.isBlank()) id = str(params, "ticket_uuid");
+        return id;
+    }
+
+    private static boolean csvContains(String csv, String wanted) {
+        String needle = safe(wanted).trim();
+        if (needle.isBlank()) return false;
+        String[] parts = safe(csv).split(",");
+        for (int i = 0; i < parts.length; i++) {
+            String id = safe(parts[i]).trim();
+            if (id.isBlank()) continue;
+            if (needle.equalsIgnoreCase(id)) return true;
+        }
+        return false;
+    }
+
     private static int clampInt(int v, int lo, int hi) {
         if (v < lo) return lo;
         if (v > hi) return hi;
@@ -2435,6 +3333,28 @@ When features are added or changed in the application, matching API operations s
         return out;
     }
 
+    private static List<String> csvOrList(Object raw) {
+        LinkedHashSet<String> out = new LinkedHashSet<String>();
+        if (raw instanceof List<?> xs) {
+            for (Object v : xs) {
+                String s = safe(asString(v)).trim();
+                if (s.isBlank()) continue;
+                for (String part : s.split(",")) {
+                    String item = safe(part).trim();
+                    if (!item.isBlank()) out.add(item);
+                }
+            }
+            return new ArrayList<String>(out);
+        }
+        String s = safe(asString(raw)).trim();
+        if (s.isBlank()) return new ArrayList<String>();
+        for (String part : s.split(",")) {
+            String item = safe(part).trim();
+            if (!item.isBlank()) out.add(item);
+        }
+        return new ArrayList<String>(out);
+    }
+
     private static List<Map<String, Object>> objectList(Object raw) {
         ArrayList<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
         if (!(raw instanceof List<?> xs)) return out;
@@ -2477,6 +3397,50 @@ When features are added or changed in the application, matching API operations s
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static void auditApiInvocation(String tenantUuid,
+                                           String operation,
+                                           String credentialId,
+                                           String clientIp,
+                                           String method,
+                                           boolean ok,
+                                           int status,
+                                           String errorCode,
+                                           String errorMessage) {
+        try {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("operation", clampText(safe(operation), 180));
+            details.put("credential_id", clampText(safe(credentialId), 120));
+            details.put("client_ip", clampText(safe(clientIp), 120));
+            details.put("method", clampText(safe(method), 20));
+            details.put("http_status", String.valueOf(status));
+            details.put("ok", ok ? "true" : "false");
+            if (!safe(errorCode).isBlank()) details.put("error_code", clampText(errorCode, 80));
+            if (!safe(errorMessage).isBlank()) details.put("error", clampText(errorMessage, 220));
+
+            String actor = safe(credentialId).trim();
+            if (actor.isBlank()) actor = "api";
+            else actor = "api:" + actor;
+
+            activity_log logs = activity_log.defaultStore();
+            if (ok) {
+                logs.logVerbose("api.operation.success", safe(tenantUuid), actor, "", "", details);
+            } else if (status >= 500) {
+                logs.logError("api.operation.failure", safe(tenantUuid), actor, "", "", details);
+            } else {
+                logs.logWarning("api.operation.failure", safe(tenantUuid), actor, "", "", details);
+            }
+        } catch (Exception ex) {
+            LOG.log(Level.FINE, "API audit log failure: " + safe(ex.getMessage()), ex);
+        }
+    }
+
+    private static String clampText(String raw, int max) {
+        String s = safe(raw);
+        int lim = Math.max(1, max);
+        if (s.length() <= lim) return s;
+        return s.substring(0, lim);
     }
 
     private static void writeJson(HttpServletResponse resp, int status, Object payload) throws IOException {

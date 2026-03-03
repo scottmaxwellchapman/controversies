@@ -3,6 +3,8 @@
   <item label="Home" href="/index.jsp" />
   <item label="Cases" href="/cases.jsp" />
   <item label="Documents" href="/documents.jsp" />
+  <item label="Omnichannel Threads" href="/omnichannel.jsp" />
+  <item label="Knowledge Wiki" href="/wiki.jsp" />
   <item label="Texas Law" href="/texas_law.jsp" />
   <item label="Case Fields" href="/case_fields.jsp" />
 
@@ -15,11 +17,15 @@
 
   <item label="Settings">
     <item label="Users &amp; Security" href="/users_roles.jsp" />
+    <item label="Change E-Mail Address" href="/change_email.jsp" />
+    <item label="Change Password" href="/change_password.jsp" />
     <item label="Tenant Fields" href="/tenant_fields.jsp" />
     <item label="Attribute Editor" href="/attribute_editor.jsp" />
     <item label="Custom Objects" href="/custom_objects.jsp" />
     <item label="Case Attributes" href="/case_attributes.jsp" />
     <item label="Document Attributes" href="/document_attributes.jsp" />
+    <item label="Business Processes" href="/business_processes.jsp" />
+    <item label="BPM Reviews" href="/business_process_reviews.jsp" />
     <item label="Tenant Settings" href="/tenant_settings.jsp" />
     <item label="Plugin Manager" href="/plugin_manager.jsp" />
     <item label="Logs" href="/log_viewer.jsp" />
@@ -30,6 +36,8 @@
     <item label="Getting Started (Legal Team)" href="/help_getting_started.jsp" />
     <item label="Case Workflow Guide" href="/help_case_workflow.jsp" />
     <item label="Form Assembly Guide" href="/help_form_assembly.jsp" />
+    <item label="Threads Guide (Novice)" href="/help_threads_novice.jsp" />
+    <item label="Threads Guide (Expert)" href="/help_threads_expert.jsp" />
     <item label="Token Guide" href="/token_guide.jsp" />
     <item label="Markup Notation" href="/markup_notation.jsp" />
   </item>

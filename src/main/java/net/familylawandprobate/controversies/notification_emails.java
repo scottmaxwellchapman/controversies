@@ -371,6 +371,107 @@ public final class notification_emails {
         return new ValidationResult(issues.isEmpty(), provider, issues);
     }
 
+    /**
+     * Sends a notification email immediately without queue persistence.
+     * Used for security-sensitive real-time flows (e.g., two-factor codes).
+     */
+    public SendResult sendSimpleMessageNow(String tenantUuid,
+                                           String requestedByUserUuid,
+                                           NotificationEmailRequest request) throws Exception {
+        String tu = safeFileToken(tenantUuid);
+        if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
+        if (request == null) throw new IllegalArgumentException("request required");
+        if (request.to.isEmpty() && request.cc.isEmpty() && request.bcc.isEmpty()) {
+            throw new IllegalArgumentException("at least one recipient is required");
+        }
+        if (request.subject.isBlank()) throw new IllegalArgumentException("subject required");
+        if (request.bodyText.isBlank() && request.bodyHtml.isBlank()) {
+            throw new IllegalArgumentException("email body is required");
+        }
+
+        LinkedHashMap<String, String> cfg = settingsStore.read(tu);
+        ValidationResult cfgValidation = validateConfiguration(cfg);
+        if (!cfgValidation.ok) {
+            throw new IllegalStateException("email provider configuration invalid: " + String.join("; ", cfgValidation.issues));
+        }
+
+        String fromAddress = safe(request.fromAddress).trim();
+        if (fromAddress.isBlank()) fromAddress = safe(cfg.get("email_from_address")).trim();
+        if (fromAddress.isBlank() && "smtp".equals(cfgValidation.provider)) {
+            fromAddress = safe(cfg.get("email_smtp_username")).trim();
+        }
+        String fromName = safe(request.fromName).trim();
+        if (fromName.isBlank()) fromName = safe(cfg.get("email_from_name")).trim();
+        String replyTo = safe(request.replyTo).trim();
+        if (replyTo.isBlank()) replyTo = safe(cfg.get("email_reply_to")).trim();
+
+        String now = Instant.now().toString();
+        EmailJob transientJob = new EmailJob(
+                UUID.randomUUID().toString(),
+                tu,
+                request.matterUuid,
+                requestedByUserUuid,
+                cfgValidation.provider,
+                "pending",
+                0,
+                1,
+                now,
+                now,
+                "",
+                now,
+                "",
+                fromAddress,
+                fromName,
+                replyTo,
+                request.subject,
+                request.bodyText,
+                request.bodyHtml,
+                request.to,
+                request.cc,
+                request.bcc,
+                List.of(),
+                "queued",
+                0,
+                "",
+                "",
+                ""
+        );
+
+        SendResult sent = send(transientJob, cfg);
+        EmailJob logged = new EmailJob(
+                transientJob.uuid,
+                transientJob.tenantUuid,
+                transientJob.matterUuid,
+                transientJob.requestedByUserUuid,
+                transientJob.provider,
+                "sent",
+                1,
+                1,
+                transientJob.createdAt,
+                Instant.now().toString(),
+                Instant.now().toString(),
+                "",
+                Instant.now().toString(),
+                transientJob.fromAddress,
+                transientJob.fromName,
+                transientJob.replyTo,
+                transientJob.subject,
+                transientJob.bodyText,
+                transientJob.bodyHtml,
+                transientJob.to,
+                transientJob.cc,
+                transientJob.bcc,
+                transientJob.attachments,
+                "ok",
+                sent.statusCode,
+                sent.providerMessageId,
+                sent.serverResponse,
+                ""
+        );
+        logSendResult(logged, true);
+        return sent;
+    }
+
     public void ensureQueue(String tenantUuid) throws Exception {
         String tu = safeFileToken(tenantUuid);
         if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");

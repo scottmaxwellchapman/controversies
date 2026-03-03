@@ -39,6 +39,18 @@
         <a class="btn btn-ghost" href="<%= request.getContextPath() %>/markup_notation.jsp">Markup Notation</a>
       </div>
     </article>
+
+    <article class="card" style="padding:14px; margin:0;">
+      <h3 style="margin-top:0;">Threads (Novice)</h3>
+      <p class="muted">Step-by-step thread handling for daily legal team communication workflows.</p>
+      <a class="btn" href="<%= request.getContextPath() %>/help_threads_novice.jsp">Open Guide</a>
+    </article>
+
+    <article class="card" style="padding:14px; margin:0;">
+      <h3 style="margin-top:0;">Threads (Expert)</h3>
+      <p class="muted">Advanced API/BPM and reporting practices for omnichannel thread operations.</p>
+      <a class="btn" href="<%= request.getContextPath() %>/help_threads_expert.jsp">Open Guide</a>
+    </article>
   </div>
 </section>
 

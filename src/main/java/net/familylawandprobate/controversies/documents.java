@@ -6,6 +6,7 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 
@@ -85,6 +86,7 @@ public final class documents {
         all.add(rec);
         writeAll(tenantUuid, matterUuid, all);
         Files.createDirectories(documentFolder(tenantUuid, matterUuid, rec.uuid));
+        publishDocumentEvent(tenantUuid, matterUuid, "document.created", rec);
         return rec;
     }
 
@@ -93,6 +95,7 @@ public final class documents {
         if (id.isBlank()) return false;
         List<DocumentRec> all = listAll(tenantUuid, matterUuid);
         boolean changed = false;
+        DocumentRec updatedRec = null;
         for (DocumentRec rec : all) {
             if (!id.equals(document_workflow_support.safe(rec.uuid).trim())) continue;
             rec.title = document_workflow_support.safe(recIn.title).trim();
@@ -106,21 +109,30 @@ public final class documents {
             rec.notes = document_workflow_support.safe(recIn.notes).trim();
             rec.updatedAt = document_workflow_support.nowIso();
             changed = true;
+            updatedRec = rec;
         }
-        if (changed) writeAll(tenantUuid, matterUuid, all);
+        if (changed) {
+            writeAll(tenantUuid, matterUuid, all);
+            publishDocumentEvent(tenantUuid, matterUuid, "document.updated", updatedRec);
+        }
         return changed;
     }
 
     public boolean setTrashed(String tenantUuid, String matterUuid, String docUuid, boolean trashed) throws Exception {
         List<DocumentRec> all = listAll(tenantUuid, matterUuid);
         boolean changed = false;
+        DocumentRec changedRec = null;
         for (DocumentRec rec : all) {
             if (!document_workflow_support.safe(docUuid).trim().equals(document_workflow_support.safe(rec.uuid).trim())) continue;
             rec.trashed = trashed;
             rec.updatedAt = document_workflow_support.nowIso();
             changed = true;
+            changedRec = rec;
         }
-        if (changed) writeAll(tenantUuid, matterUuid, all);
+        if (changed) {
+            writeAll(tenantUuid, matterUuid, all);
+            publishDocumentEvent(tenantUuid, matterUuid, trashed ? "document.trashed" : "document.restored", changedRec);
+        }
         return changed;
     }
 
@@ -191,6 +203,35 @@ public final class documents {
         String tu = safeFileToken(tenantUuid); String mu = safeFileToken(matterUuid);
         if (tu.isBlank() || mu.isBlank()) return null;
         return Paths.get("data", "tenants", tu, "matters", mu, "documents.xml").toAbsolutePath();
+    }
+
+    private static void publishDocumentEvent(String tenantUuid, String matterUuid, String eventType, DocumentRec rec) {
+        if (rec == null) return;
+        try {
+            LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+            payload.put("matter_uuid", document_workflow_support.safe(matterUuid));
+            payload.put("doc_uuid", document_workflow_support.safe(rec.uuid));
+            payload.put("title", document_workflow_support.safe(rec.title));
+            payload.put("category", document_workflow_support.safe(rec.category));
+            payload.put("subcategory", document_workflow_support.safe(rec.subcategory));
+            payload.put("status", document_workflow_support.safe(rec.status));
+            payload.put("owner", document_workflow_support.safe(rec.owner));
+            payload.put("privilege_level", document_workflow_support.safe(rec.privilegeLevel));
+            payload.put("filed_on", document_workflow_support.safe(rec.filedOn));
+            payload.put("external_reference", document_workflow_support.safe(rec.externalReference));
+            payload.put("notes", document_workflow_support.safe(rec.notes));
+            payload.put("created_at", document_workflow_support.safe(rec.createdAt));
+            payload.put("updated_at", document_workflow_support.safe(rec.updatedAt));
+            payload.put("trashed", rec.trashed ? "true" : "false");
+            business_process_manager.defaultService().triggerEvent(
+                    document_workflow_support.safe(tenantUuid),
+                    document_workflow_support.safe(eventType),
+                    payload,
+                    "",
+                    "documents.store"
+            );
+        } catch (Exception ignored) {
+        }
     }
 
     private static String safeFileToken(String s) {

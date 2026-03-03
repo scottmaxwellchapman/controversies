@@ -1,0 +1,448 @@
+package net.familylawandprobate.controversies;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.UUID;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+public class business_process_manager_test {
+
+    private final ArrayList<Path> cleanupRoots = new ArrayList<Path>();
+
+    @AfterEach
+    void cleanup() throws Exception {
+        for (Path root : cleanupRoots) {
+            deleteRecursively(root);
+        }
+    }
+
+    @Test
+    void stores_each_process_as_its_own_tenant_xml_file() throws Exception {
+        String tenant = "tenant-bpm-xml-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition p1 = minimalProcess("Intake A", "manual");
+        business_process_manager.ProcessDefinition p2 = minimalProcess("Intake B", "matter.created");
+
+        business_process_manager.ProcessDefinition s1 = bpm.saveProcess(tenant, p1);
+        business_process_manager.ProcessDefinition s2 = bpm.saveProcess(tenant, p2);
+
+        Path p1Path = Paths.get("data", "tenants", tenant, "bpm", "processes", s1.processUuid + ".xml").toAbsolutePath();
+        Path p2Path = Paths.get("data", "tenants", tenant, "bpm", "processes", s2.processUuid + ".xml").toAbsolutePath();
+
+        assertTrue(Files.exists(p1Path));
+        assertTrue(Files.exists(p2Path));
+        assertEquals(2, bpm.listProcesses(tenant).size());
+    }
+
+    @Test
+    void supports_execute_then_undo_then_redo_for_reversible_actions() throws Exception {
+        String tenant = "tenant-bpm-undo-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        matters.MatterRec matter = matters.defaultStore().create(
+                tenant,
+                "Undo Matter",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+        );
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Undoable Case Field Update";
+
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "manual";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep step = new business_process_manager.ProcessStep();
+        step.stepId = "set_priority";
+        step.order = 10;
+        step.action = "set_case_field";
+        step.label = "Set Priority";
+        step.settings.put("matter_uuid", "{{event.matter_uuid}}");
+        step.settings.put("field_key", "priority");
+        step.settings.put("field_value", "High");
+        process.steps.add(step);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, process);
+
+        LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+        payload.put("matter_uuid", matter.uuid);
+
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                payload,
+                "tester",
+                "test"
+        );
+
+        assertNotNull(run);
+        assertEquals("completed", run.status);
+        assertEquals("High", case_fields.defaultStore().read(tenant, matter.uuid).get("priority"));
+
+        business_process_manager.RunResult undone = bpm.undoRun(tenant, run.runUuid, "tester");
+        assertEquals("undone", safe(undone.undoState));
+        assertFalse(case_fields.defaultStore().read(tenant, matter.uuid).containsKey("priority"));
+
+        business_process_manager.RunResult redone = bpm.redoRun(tenant, run.runUuid, "tester");
+        assertEquals("active", safe(redone.undoState));
+        assertEquals("High", case_fields.defaultStore().read(tenant, matter.uuid).get("priority"));
+    }
+
+    @Test
+    void pauses_for_human_review_then_resumes_with_user_input() throws Exception {
+        String tenant = "tenant-bpm-review-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        matters.MatterRec matter = matters.defaultStore().create(
+                tenant,
+                "Review Matter",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+        );
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Human Review Flow";
+
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "manual";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep review = new business_process_manager.ProcessStep();
+        review.stepId = "review";
+        review.order = 10;
+        review.action = "human_review";
+        review.label = "Attorney Approval";
+        review.settings.put("title", "Approve Matter Intake");
+        review.settings.put("instructions", "Provide decision and notes.");
+        review.settings.put("required_input_keys", "decision");
+        process.steps.add(review);
+
+        business_process_manager.ProcessStep apply = new business_process_manager.ProcessStep();
+        apply.stepId = "apply";
+        apply.order = 20;
+        apply.action = "set_case_field";
+        apply.label = "Apply Review Decision";
+        apply.settings.put("matter_uuid", "{{event.matter_uuid}}");
+        apply.settings.put("field_key", "review_decision");
+        apply.settings.put("field_value", "{{review.decision}}");
+        process.steps.add(apply);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, process);
+
+        LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+        payload.put("matter_uuid", matter.uuid);
+
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                payload,
+                "tester",
+                "test"
+        );
+
+        assertEquals("waiting_human_review", run.status);
+        assertFalse(safe(run.humanReviewUuid).isBlank());
+
+        List<business_process_manager.HumanReviewTask> pending = bpm.listReviews(tenant, true, 50);
+        assertEquals(1, pending.size());
+
+        LinkedHashMap<String, String> input = new LinkedHashMap<String, String>();
+        input.put("decision", "approved");
+
+        business_process_manager.HumanReviewTask done = bpm.completeReview(
+                tenant,
+                pending.get(0).reviewUuid,
+                true,
+                "reviewer",
+                input,
+                "Looks good"
+        );
+
+        assertEquals("approved", safe(done.status));
+        assertEquals("completed", safe(done.resumeStatus));
+
+        LinkedHashMap<String, String> fields = new LinkedHashMap<String, String>(case_fields.defaultStore().read(tenant, matter.uuid));
+        assertEquals("approved", fields.get("review_decision"));
+    }
+
+    @Test
+    void supports_multiple_triggers_per_process() throws Exception {
+        String tenant = "tenant-bpm-triggers-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Multiple Triggers";
+
+        business_process_manager.ProcessTrigger t1 = new business_process_manager.ProcessTrigger();
+        t1.type = "matter.created";
+        process.triggers.add(t1);
+
+        business_process_manager.ProcessTrigger t2 = new business_process_manager.ProcessTrigger();
+        t2.type = "document.created";
+        process.triggers.add(t2);
+
+        business_process_manager.ProcessStep step = new business_process_manager.ProcessStep();
+        step.stepId = "log";
+        step.order = 10;
+        step.action = "log_note";
+        step.label = "Log";
+        step.settings.put("message", "Triggered");
+        process.steps.add(step);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        bpm.saveProcess(tenant, process);
+
+        LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+        payload.put("matter_uuid", "matter-x");
+
+        List<business_process_manager.RunResult> runs = bpm.triggerEvent(
+                tenant,
+                "matter.created",
+                payload,
+                "tester",
+                "test"
+        );
+
+        assertEquals(1, runs.size());
+        assertEquals("completed", runs.get(0).status);
+    }
+
+    @Test
+    void supports_document_and_case_list_actions_with_undo_redo() throws Exception {
+        String tenant = "tenant-bpm-doclist-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        matters.MatterRec matter = matters.defaultStore().create(
+                tenant,
+                "Doc/List Matter",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+        );
+        documents.DocumentRec doc = documents.defaultStore().create(
+                tenant,
+                matter.uuid,
+                "Checklist",
+                "communication",
+                "notes",
+                "draft",
+                "tester",
+                "work_product",
+                "",
+                "",
+                ""
+        );
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Doc + Case List Updates";
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "manual";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep step1 = new business_process_manager.ProcessStep();
+        step1.stepId = "set_doc_field";
+        step1.order = 10;
+        step1.action = "set_document_field";
+        step1.settings.put("matter_uuid", "{{event.matter_uuid}}");
+        step1.settings.put("doc_uuid", "{{event.doc_uuid}}");
+        step1.settings.put("field_key", "review_status");
+        step1.settings.put("field_value", "Ready");
+        process.steps.add(step1);
+
+        business_process_manager.ProcessStep step2 = new business_process_manager.ProcessStep();
+        step2.stepId = "set_case_list";
+        step2.order = 20;
+        step2.action = "set_case_list_item";
+        step2.settings.put("matter_uuid", "{{event.matter_uuid}}");
+        step2.settings.put("list_key", "next_hearing");
+        step2.settings.put("list_value", "2026-04-01");
+        process.steps.add(step2);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, process);
+
+        LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+        payload.put("matter_uuid", matter.uuid);
+        payload.put("doc_uuid", doc.uuid);
+
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                payload,
+                "tester",
+                "test"
+        );
+        assertEquals("completed", run.status);
+        assertEquals("Ready", document_fields.defaultStore().read(tenant, matter.uuid, doc.uuid).get("review_status"));
+        assertTrue(safe(case_list_items.defaultStore().read(tenant, matter.uuid).get("next_hearing")).contains("2026-04-01"));
+
+        business_process_manager.RunResult undone = bpm.undoRun(tenant, run.runUuid, "tester");
+        assertEquals("undone", safe(undone.undoState));
+        assertFalse(document_fields.defaultStore().read(tenant, matter.uuid, doc.uuid).containsKey("review_status"));
+        assertFalse(case_list_items.defaultStore().read(tenant, matter.uuid).containsKey("next_hearing"));
+
+        business_process_manager.RunResult redone = bpm.redoRun(tenant, run.runUuid, "tester");
+        assertEquals("active", safe(redone.undoState));
+        assertEquals("Ready", document_fields.defaultStore().read(tenant, matter.uuid, doc.uuid).get("review_status"));
+        assertTrue(safe(case_list_items.defaultStore().read(tenant, matter.uuid).get("next_hearing")).contains("2026-04-01"));
+    }
+
+    @Test
+    void supports_thread_update_and_internal_note_actions() throws Exception {
+        String tenant = "tenant-bpm-thread-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        omnichannel_tickets store = omnichannel_tickets.defaultStore();
+        store.ensure(tenant);
+        omnichannel_tickets.TicketRec thread = store.createTicket(
+                tenant,
+                "",
+                "flowroute_sms",
+                "Intake message",
+                "open",
+                "normal",
+                "manual",
+                "",
+                "",
+                "",
+                "Client",
+                "+15551230000",
+                "+15557654321",
+                "sms-1",
+                "",
+                "inbound",
+                "Initial message",
+                "+15551230000",
+                "+15557654321",
+                false,
+                "tester",
+                ""
+        );
+        assertNotNull(thread);
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Thread Ops";
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "manual";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep update = new business_process_manager.ProcessStep();
+        update.stepId = "update_thread";
+        update.order = 10;
+        update.action = "update_thread";
+        update.settings.put("thread_uuid", "{{event.thread_uuid}}");
+        update.settings.put("status", "resolved");
+        update.settings.put("priority", "high");
+        update.settings.put("assigned_user_uuid", "user-a,user-b");
+        update.settings.put("subject", "Intake message (reviewed)");
+        process.steps.add(update);
+
+        business_process_manager.ProcessStep note = new business_process_manager.ProcessStep();
+        note.stepId = "note";
+        note.order = 20;
+        note.action = "add_thread_note";
+        note.settings.put("thread_uuid", "{{event.thread_uuid}}");
+        note.settings.put("body", "Internal follow-up note");
+        process.steps.add(note);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, process);
+
+        LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+        payload.put("thread_uuid", thread.uuid);
+
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                payload,
+                "tester",
+                "test"
+        );
+        assertEquals("completed", run.status);
+
+        omnichannel_tickets.TicketRec updated = store.getTicket(tenant, thread.uuid);
+        assertNotNull(updated);
+        assertEquals("resolved", safe(updated.status));
+        assertTrue(safe(updated.assignedUserUuid).contains("user-a"));
+
+        List<omnichannel_tickets.MessageRec> messages = store.listMessages(tenant, thread.uuid);
+        boolean foundInternal = false;
+        for (omnichannel_tickets.MessageRec m : messages) {
+            if (m == null) continue;
+            if ("internal".equalsIgnoreCase(safe(m.direction))
+                    && safe(m.body).contains("Internal follow-up note")) {
+                foundInternal = true;
+                break;
+            }
+        }
+        assertTrue(foundInternal);
+    }
+
+    private static business_process_manager.ProcessDefinition minimalProcess(String name, String triggerType) {
+        business_process_manager.ProcessDefinition p = new business_process_manager.ProcessDefinition();
+        p.name = name;
+
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = triggerType;
+        p.triggers.add(trigger);
+
+        business_process_manager.ProcessStep step = new business_process_manager.ProcessStep();
+        step.stepId = "log";
+        step.order = 10;
+        step.action = "log_note";
+        step.label = "Log Step";
+        step.settings.put("message", "hello");
+        p.steps.add(step);
+
+        return p;
+    }
+
+    private static void deleteRecursively(Path root) throws Exception {
+        if (root == null || !Files.exists(root)) return;
+        Files.walk(root).sorted(Comparator.reverseOrder()).forEach(p -> {
+            try {
+                Files.deleteIfExists(p);
+            } catch (Exception ignored) {
+            }
+        });
+    }
+
+    private static String safe(String s) {
+        return s == null ? "" : s;
+    }
+}

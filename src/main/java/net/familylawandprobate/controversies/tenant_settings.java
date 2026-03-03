@@ -58,6 +58,12 @@ public final class tenant_settings {
             "theme_light_start_hour",
             "theme_dark_start_hour",
             "theme_text_size_default",
+            "password_policy_enabled",
+            "password_policy_min_length",
+            "password_policy_require_uppercase",
+            "password_policy_require_lowercase",
+            "password_policy_require_number",
+            "password_policy_require_symbol",
             "secret_rotation_storage_at",
             "secret_rotation_clio_at",
             "storage_connection_status",
@@ -91,7 +97,13 @@ public final class tenant_settings {
             "email_graph_client_id",
             "email_graph_client_secret",
             "email_graph_sender_user",
-            "email_graph_scope"
+            "email_graph_scope",
+            "two_factor_policy",
+            "two_factor_default_engine",
+            "flowroute_sms_access_key",
+            "flowroute_sms_secret_key",
+            "flowroute_sms_from_number",
+            "flowroute_sms_api_base_url"
     };
 
     private static final String[] SECRET_KEYS = new String[] {
@@ -102,7 +114,9 @@ public final class tenant_settings {
             "clio_access_token",
             "clio_refresh_token",
             "email_smtp_password",
-            "email_graph_client_secret"
+            "email_graph_client_secret",
+            "flowroute_sms_access_key",
+            "flowroute_sms_secret_key"
     };
 
     public static final class StartupSelfCheckResult {
@@ -117,6 +131,89 @@ public final class tenant_settings {
 
     public static tenant_settings defaultStore() {
         return new tenant_settings();
+    }
+
+    public static final class PasswordPolicy {
+        public final boolean enabled;
+        public final int minLength;
+        public final boolean requireUppercase;
+        public final boolean requireLowercase;
+        public final boolean requireNumber;
+        public final boolean requireSymbol;
+
+        public PasswordPolicy(boolean enabled,
+                              int minLength,
+                              boolean requireUppercase,
+                              boolean requireLowercase,
+                              boolean requireNumber,
+                              boolean requireSymbol) {
+            this.enabled = enabled;
+            this.minLength = Math.max(1, minLength);
+            this.requireUppercase = requireUppercase;
+            this.requireLowercase = requireLowercase;
+            this.requireNumber = requireNumber;
+            this.requireSymbol = requireSymbol;
+        }
+
+        public List<String> validate(char[] password) {
+            ArrayList<String> issues = new ArrayList<String>();
+            if (!enabled) return issues;
+
+            char[] pw = password == null ? new char[0] : password;
+            if (pw.length < minLength) {
+                issues.add("Password must be at least " + minLength + " characters.");
+            }
+
+            boolean hasUpper = false;
+            boolean hasLower = false;
+            boolean hasDigit = false;
+            boolean hasSymbol = false;
+
+            for (int i = 0; i < pw.length; i++) {
+                char ch = pw[i];
+                if (Character.isUpperCase(ch)) hasUpper = true;
+                else if (Character.isLowerCase(ch)) hasLower = true;
+                else if (Character.isDigit(ch)) hasDigit = true;
+                else if (!Character.isWhitespace(ch)) hasSymbol = true;
+            }
+
+            if (requireUppercase && !hasUpper) issues.add("Password must include at least one uppercase letter.");
+            if (requireLowercase && !hasLower) issues.add("Password must include at least one lowercase letter.");
+            if (requireNumber && !hasDigit) issues.add("Password must include at least one number.");
+            if (requireSymbol && !hasSymbol) issues.add("Password must include at least one symbol.");
+            return issues;
+        }
+    }
+
+    public PasswordPolicy readPasswordPolicy(String tenantUuid) {
+        return passwordPolicyFromSettings(read(tenantUuid));
+    }
+
+    public PasswordPolicy passwordPolicyFromSettings(Map<String, String> cfg) {
+        Map<String, String> safeCfg = cfg == null ? Map.of() : cfg;
+
+        boolean enabled = truthy(safeCfg.get("password_policy_enabled"));
+        int minLength = parseInt(safeCfg.get("password_policy_min_length"), 12);
+        if (minLength < 8 || minLength > 128) minLength = 12;
+
+        boolean requireUppercase = truthy(safeCfg.get("password_policy_require_uppercase"));
+        boolean requireLowercase = truthy(safeCfg.get("password_policy_require_lowercase"));
+        boolean requireNumber = truthy(safeCfg.get("password_policy_require_number"));
+        boolean requireSymbol = truthy(safeCfg.get("password_policy_require_symbol"));
+
+        return new PasswordPolicy(
+                enabled,
+                minLength,
+                requireUppercase,
+                requireLowercase,
+                requireNumber,
+                requireSymbol
+        );
+    }
+
+    public List<String> validatePasswordAgainstPolicy(String tenantUuid, char[] password) {
+        PasswordPolicy policy = readPasswordPolicy(tenantUuid);
+        return policy.validate(password);
     }
 
     public LinkedHashMap<String, String> read(String tenantUuid) {
@@ -276,6 +373,12 @@ public final class tenant_settings {
         d.put("theme_light_start_hour", "7");
         d.put("theme_dark_start_hour", "19");
         d.put("theme_text_size_default", "md");
+        d.put("password_policy_enabled", "false");
+        d.put("password_policy_min_length", "12");
+        d.put("password_policy_require_uppercase", "false");
+        d.put("password_policy_require_lowercase", "false");
+        d.put("password_policy_require_number", "false");
+        d.put("password_policy_require_symbol", "false");
         d.put("secret_rotation_storage_at", "");
         d.put("secret_rotation_clio_at", "");
         d.put("storage_connection_status", "unknown");
@@ -310,6 +413,12 @@ public final class tenant_settings {
         d.put("email_graph_client_secret", "");
         d.put("email_graph_sender_user", "");
         d.put("email_graph_scope", "https://graph.microsoft.com/.default");
+        d.put("two_factor_policy", "off");
+        d.put("two_factor_default_engine", "email_pin");
+        d.put("flowroute_sms_access_key", "");
+        d.put("flowroute_sms_secret_key", "");
+        d.put("flowroute_sms_from_number", "");
+        d.put("flowroute_sms_api_base_url", "https://api.flowroute.com/v2.2/messages");
         return d;
     }
 
@@ -333,14 +442,50 @@ public final class tenant_settings {
         if ("feature_advanced_assembly".equals(key) || "feature_async_sync".equals(key)
                 || "clio_enabled".equals(key) || "theme_use_location".equals(key)
                 || "email_smtp_auth".equals(key) || "email_smtp_starttls".equals(key)
-                || "email_smtp_ssl".equals(key)) {
+                || "email_smtp_ssl".equals(key) || "password_policy_enabled".equals(key)
+                || "password_policy_require_uppercase".equals(key)
+                || "password_policy_require_lowercase".equals(key)
+                || "password_policy_require_number".equals(key)
+                || "password_policy_require_symbol".equals(key)) {
             return truthy(v) ? "true" : "false";
+        }
+
+        if ("password_policy_min_length".equals(key)) {
+            int n = parseInt(v, 12);
+            if (n < 8 || n > 128) return "12";
+            return String.valueOf(n);
         }
 
         if ("email_provider".equals(key)) {
             String mode = v.toLowerCase(Locale.ROOT);
             if (!"disabled".equals(mode) && !"smtp".equals(mode) && !"microsoft_graph".equals(mode)) return "disabled";
             return mode;
+        }
+
+        if ("two_factor_policy".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if (!"off".equals(mode) && !"optional".equals(mode) && !"required".equals(mode)) return "off";
+            return mode;
+        }
+
+        if ("two_factor_default_engine".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if (!"email_pin".equals(mode) && !"flowroute_sms".equals(mode)) return "email_pin";
+            return mode;
+        }
+
+        if ("flowroute_sms_api_base_url".equals(key)) {
+            String lower = v.toLowerCase(Locale.ROOT);
+            if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+                return "https://api.flowroute.com/v2.2/messages";
+            }
+            return v;
+        }
+
+        if ("flowroute_sms_from_number".equals(key)) {
+            String s = v.replaceAll("[^0-9+]", "");
+            if (s.length() > 20) s = s.substring(0, 20);
+            return s;
         }
 
         if ("theme_mode_default".equals(key)) {
@@ -538,6 +683,22 @@ public final class tenant_settings {
                     && !safe(cfg.get("email_graph_sender_user")).isBlank();
             if (!ready) {
                 failures.add("tenant=" + safeFileToken(tenantUuid) + " microsoft graph email provider enabled with invalid credentials");
+            }
+        }
+
+        String twoFactorPolicy = safe(cfg.get("two_factor_policy")).trim().toLowerCase(Locale.ROOT);
+        String twoFactorEngine = safe(cfg.get("two_factor_default_engine")).trim().toLowerCase(Locale.ROOT);
+        if (!"required".equals(twoFactorPolicy)) return;
+        if ("flowroute_sms".equals(twoFactorEngine)) {
+            if (safe(cfg.get("flowroute_sms_access_key")).isBlank()
+                    || safe(cfg.get("flowroute_sms_secret_key")).isBlank()
+                    || safe(cfg.get("flowroute_sms_from_number")).isBlank()) {
+                failures.add("tenant=" + safeFileToken(tenantUuid) + " required two-factor flowroute sms enabled with invalid credentials");
+            }
+        } else {
+            boolean emailReady = "smtp".equals(emailProvider) || "microsoft_graph".equals(emailProvider);
+            if (!emailReady) {
+                failures.add("tenant=" + safeFileToken(tenantUuid) + " required two-factor email pin enabled without notification email provider");
             }
         }
     }

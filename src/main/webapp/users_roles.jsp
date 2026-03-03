@@ -3,6 +3,7 @@
 <%@ page import="java.util.*" %>
 
 <%@ page import="net.familylawandprobate.controversies.tenants" %>
+<%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles.UserRec" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles.RoleRec" %>
@@ -69,6 +70,17 @@
     String ru = u_safe(roleUuid).trim();
     String lbl = roleLabels.get(ru);
     return (lbl == null) ? "" : lbl;
+  }
+
+  private static String u_twoFactorSummary(UserRec u) {
+    if (u == null) return "Off";
+    if (!u.twoFactorEnabled) return "Off";
+    String engine = u_safe(u.twoFactorEngine).trim().toLowerCase(Locale.ROOT);
+    if ("flowroute_sms".equals(engine)) {
+      return u.twoFactorPhone.isBlank() ? "On (Flowroute SMS)" : ("On (Flowroute SMS " + u.twoFactorPhone + ")");
+    }
+    if ("email_pin".equals(engine)) return "On (Email PIN)";
+    return "On (Inherit tenant engine)";
   }
 %>
 
@@ -189,12 +201,13 @@
         String roleUuid = u_safe(request.getParameter("newUserRoleUuid")).trim();
         boolean enabled = u_checked(request.getParameter("newUserEnabled"));
         String pw = u_safe(request.getParameter("newUserPassword"));
+        boolean bypassPasswordPolicy = u_checked(request.getParameter("newUserBypassPasswordPolicy"));
 
         if (email.isBlank()) error = "Email address is required.";
         else if (roleUuid.isBlank()) error = "Role is required.";
         else if (pw.isBlank()) error = "Password is required.";
         else {
-          UserRec u = store.createUser(targetTenantUuid, email, roleUuid, enabled, pw.toCharArray());
+          UserRec u = store.createUser(targetTenantUuid, email, roleUuid, enabled, pw.toCharArray(), bypassPasswordPolicy);
           message = "User created.";
           if (u != null) selectedUserUuid = u_safe(u.uuid);
         }
@@ -204,26 +217,31 @@
         String email = u_safe(request.getParameter("editUserEmail")).trim();
         String roleUuid = u_safe(request.getParameter("editUserRoleUuid")).trim();
         boolean enabled = u_checked(request.getParameter("editUserEnabled"));
+        boolean twoFactorEnabled = u_checked(request.getParameter("editUserTwoFactorEnabled"));
+        String twoFactorEngine = u_safe(request.getParameter("editUserTwoFactorEngine")).trim();
+        String twoFactorPhone = u_safe(request.getParameter("editUserTwoFactorPhone")).trim();
 
         if (userUuid.isBlank()) error = "Select a user to update.";
         else {
-          boolean c1 = false, c2 = false, c3 = false;
+          boolean c1 = false, c2 = false, c3 = false, c4 = false;
           if (!email.isBlank()) c1 = store.updateUserEmail(targetTenantUuid, userUuid, email);
           if (!roleUuid.isBlank()) c2 = store.updateUserRole(targetTenantUuid, userUuid, roleUuid);
           c3 = store.updateUserEnabled(targetTenantUuid, userUuid, enabled);
+          c4 = store.updateUserTwoFactorSettings(targetTenantUuid, userUuid, twoFactorEnabled, twoFactorEngine, twoFactorPhone);
 
-          message = (c1 || c2 || c3) ? "User updated." : "No changes.";
+          message = (c1 || c2 || c3 || c4) ? "User updated." : "No changes.";
           selectedUserUuid = userUuid;
         }
 
       } else if ("resetUserPassword".equalsIgnoreCase(action)) {
         String userUuid = u_safe(request.getParameter("pwUserUuid")).trim();
         String pw = u_safe(request.getParameter("pwNewPassword"));
+        boolean bypassPasswordPolicy = u_checked(request.getParameter("pwBypassPasswordPolicy"));
 
         if (userUuid.isBlank()) error = "Select a user.";
         else if (pw.isBlank()) error = "New password is required.";
         else {
-          boolean changed = store.updateUserPassword(targetTenantUuid, userUuid, pw.toCharArray());
+          boolean changed = store.updateUserPassword(targetTenantUuid, userUuid, pw.toCharArray(), bypassPasswordPolicy);
           message = changed ? "Password updated." : "No changes.";
           selectedUserUuid = userUuid;
         }
@@ -267,6 +285,11 @@
   boolean selectedUserIsBootstrap = (selectedUser != null && "tenant_admin".equalsIgnoreCase(u_safe(selectedUser.emailAddress).trim()));
 
   String targetTenantLabel = (targetTenant != null) ? u_safe(targetTenant.label) : "";
+  Map<String, String> tenantSecurityCfg = tenant_settings.defaultStore().read(targetTenantUuid);
+  String tenantTwoFactorPolicy = u_safe(tenantSecurityCfg.get("two_factor_policy")).trim().toLowerCase(Locale.ROOT);
+  if (!"optional".equals(tenantTwoFactorPolicy) && !"required".equals(tenantTwoFactorPolicy)) tenantTwoFactorPolicy = "off";
+  String tenantTwoFactorEngine = u_safe(tenantSecurityCfg.get("two_factor_default_engine")).trim().toLowerCase(Locale.ROOT);
+  if (!"flowroute_sms".equals(tenantTwoFactorEngine)) tenantTwoFactorEngine = "email_pin";
 %>
 
 <div class="container main">
@@ -341,22 +364,24 @@
           <div>
             <h2>Users</h2>
             <div class="meta">Create users, enable/disable them, reset passwords, and assign roles.</div>
+            <div class="meta">Tenant 2FA policy: <strong><%= u_esc(tenantTwoFactorPolicy) %></strong> • default engine: <strong><%= u_esc(tenantTwoFactorEngine) %></strong></div>
           </div>
         </div>
 
         <div class="table-wrap">
           <table class="table">
             <thead>
-              <tr><th>Email</th><th>Role</th><th>Enabled</th></tr>
+              <tr><th>Email</th><th>Role</th><th>Enabled</th><th>2FA</th></tr>
             </thead>
             <tbody>
               <% if (users.isEmpty()) { %>
-                <tr><td colspan="3"><small>No users found.</small></td></tr>
+                <tr><td colspan="4"><small>No users found.</small></td></tr>
               <% } else { for (UserRec u : users) { if (u == null) continue; %>
                 <tr>
                   <td><%= u_esc(u.emailAddress) %></td>
                   <td><%= u_esc(u_roleLabel(roleLabels, u.roleUuid)) %></td>
                   <td><%= u.enabled ? "<span class=\"badge\">Yes</span>" : "<span class=\"badge\">No</span>" %></td>
+                  <td><%= u_esc(u_twoFactorSummary(u)) %></td>
                 </tr>
               <% } } %>
             </tbody>
@@ -390,6 +415,11 @@
             <span>Initial password</span>
             <input type="password" name="newUserPassword" required />
           </label>
+
+          <div class="field-row">
+            <input type="checkbox" id="newUserBypassPasswordPolicy" name="newUserBypassPasswordPolicy" />
+            <label for="newUserBypassPasswordPolicy"><span style="margin:0; color:var(--text); font-weight:600;">Override password policy for this user</span></label>
+          </div>
 
           <div class="field-row">
             <input type="checkbox" id="newUserEnabled" name="newUserEnabled" checked />
@@ -455,6 +485,27 @@
               <% if (selectedUserIsBootstrap) { %><small>(bootstrap user is enforced enabled)</small><% } %>
             </div>
 
+            <label>
+              <span>Two-factor engine</span>
+              <select name="editUserTwoFactorEngine">
+                <option value="inherit" <%= "inherit".equalsIgnoreCase(u_safe(selectedUser.twoFactorEngine)) ? "selected" : "" %>>Inherit tenant default</option>
+                <option value="email_pin" <%= "email_pin".equalsIgnoreCase(u_safe(selectedUser.twoFactorEngine)) ? "selected" : "" %>>Email PIN</option>
+                <option value="flowroute_sms" <%= "flowroute_sms".equalsIgnoreCase(u_safe(selectedUser.twoFactorEngine)) ? "selected" : "" %>>Flowroute SMS</option>
+              </select>
+            </label>
+
+            <label>
+              <span>Two-factor phone (for SMS engine)</span>
+              <input type="text" name="editUserTwoFactorPhone" value="<%= u_esc(u_safe(selectedUser.twoFactorPhone)) %>" placeholder="+12065550111" />
+            </label>
+
+            <div class="field-row">
+              <input type="checkbox" id="editUserTwoFactorEnabled" name="editUserTwoFactorEnabled"
+                     <%= selectedUser.twoFactorEnabled ? "checked" : "" %> />
+              <label for="editUserTwoFactorEnabled"><span style="margin:0; color:var(--text); font-weight:600;">User opt-in two-factor</span></label>
+              <% if ("required".equals(tenantTwoFactorPolicy)) { %><small>(tenant policy currently forces two-factor for all users)</small><% } %>
+            </div>
+
             <div class="actions">
               <button class="btn" type="submit" <%= roles.isEmpty() ? "disabled" : "" %>>Save user</button>
             </div>
@@ -470,6 +521,11 @@
               <span>Reset password</span>
               <input type="password" name="pwNewPassword" placeholder="New password…" required />
             </label>
+
+            <div class="field-row">
+              <input type="checkbox" id="pwBypassPasswordPolicy" name="pwBypassPasswordPolicy" />
+              <label for="pwBypassPasswordPolicy"><span style="margin:0; color:var(--text); font-weight:600;">Override password policy for this change</span></label>
+            </div>
 
             <div class="actions">
               <button class="btn" type="submit">Update password</button>

@@ -145,9 +145,15 @@
         MenuGroup g = new MenuGroup("");
         g.items.add(new MenuNode("Home", "/index.jsp"));
         g.items.add(new MenuNode("Cases", "/cases.jsp"));
+        g.items.add(new MenuNode("Omnichannel Threads", "/omnichannel.jsp"));
+        g.items.add(new MenuNode("Knowledge Wiki", "/wiki.jsp"));
         g.items.add(new MenuNode("Texas Law", "/texas_law.jsp"));
         MenuNode settings = new MenuNode("Settings", "");
         settings.children.add(new MenuNode("Users & Security", "/users_roles.jsp"));
+        settings.children.add(new MenuNode("Change E-Mail Address", "/change_email.jsp"));
+        settings.children.add(new MenuNode("Change Password", "/change_password.jsp"));
+        settings.children.add(new MenuNode("Business Processes", "/business_processes.jsp"));
+        settings.children.add(new MenuNode("BPM Reviews", "/business_process_reviews.jsp"));
         g.items.add(settings);
         g.items.add(new MenuNode("Tenant Fields", "/tenant_fields.jsp"));
         g.items.add(new MenuNode("Assemble a Form", "/forms.jsp"));
@@ -159,6 +165,8 @@
         help.children.add(new MenuNode("Getting Started (Legal Team)", "/help_getting_started.jsp"));
         help.children.add(new MenuNode("Case Workflow Guide", "/help_case_workflow.jsp"));
         help.children.add(new MenuNode("Form Assembly Guide", "/help_form_assembly.jsp"));
+        help.children.add(new MenuNode("Threads Guide (Novice)", "/help_threads_novice.jsp"));
+        help.children.add(new MenuNode("Threads Guide (Expert)", "/help_threads_expert.jsp"));
         help.children.add(new MenuNode("Token Guide", "/token_guide.jsp"));
         help.children.add(new MenuNode("Markup Notation", "/markup_notation.jsp"));
         g.items.add(help);

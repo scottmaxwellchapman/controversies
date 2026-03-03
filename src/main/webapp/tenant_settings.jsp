@@ -159,6 +159,8 @@
   String loadedClioStatus = tsSafe(settings.get("clio_connection_status")).trim().toLowerCase(Locale.ROOT);
   String loadedEmailProvider = tsSafe(settings.get("email_provider")).trim().toLowerCase(Locale.ROOT);
   String loadedEmailStatus = tsSafe(settings.get("email_connection_status")).trim().toLowerCase(Locale.ROOT);
+  String loadedTwoFactorPolicy = tsSafe(settings.get("two_factor_policy")).trim().toLowerCase(Locale.ROOT);
+  String loadedTwoFactorEngine = tsSafe(settings.get("two_factor_default_engine")).trim().toLowerCase(Locale.ROOT);
   if (loadedStorageBackend.isBlank()) setupChecklist.add("Choose and save a storage backend.");
   if (!"ok".equals(loadedStorageStatus)) setupChecklist.add("Run 'Test Storage Connection' until status is OK.");
   if (tsSafe(settings.get("clio_base_url")).isBlank()) setupChecklist.add("Enter Clio Base URL if this tenant uses Clio sync.");
@@ -166,6 +168,24 @@
   if (!"disabled".equals(loadedEmailProvider) && !"ok".equals(loadedEmailStatus)) {
     setupChecklist.add("Run 'Test Email Connection' after email provider credentials are configured.");
   }
+  if ("required".equals(loadedTwoFactorPolicy)) {
+    if ("flowroute_sms".equals(loadedTwoFactorEngine)) {
+      if (tsSafe(settings.get("flowroute_sms_access_key")).isBlank()
+              || tsSafe(settings.get("flowroute_sms_secret_key")).isBlank()
+              || tsSafe(settings.get("flowroute_sms_from_number")).isBlank()) {
+        setupChecklist.add("Required two-factor is set to Flowroute SMS, but Flowroute credentials are incomplete.");
+      }
+    } else {
+      if ("disabled".equals(loadedEmailProvider)) {
+        setupChecklist.add("Required two-factor is set to Email PIN, but notification email is disabled.");
+      }
+    }
+  }
+  String activeTab = tsSafe(request.getParameter("tab")).trim().toLowerCase(Locale.ROOT);
+  if (!"experience".equals(activeTab) && !"security".equals(activeTab) && !"operations".equals(activeTab)) {
+    activeTab = "integrations";
+  }
+  String tabSuffix = "&tab=" + activeTab;
 
   if ("POST".equalsIgnoreCase(request.getMethod())) {
     String action = tsSafe(request.getParameter("action")).trim();
@@ -177,7 +197,7 @@
         session.setAttribute(S_API_NEW_SECRET, generated.apiSecret);
         session.setAttribute(S_API_NEW_LABEL, generated.credential == null ? "" : tsSafe(generated.credential.label));
         logs.logVerbose("tenant_settings_api_credential_created", tenantUuid, userUuid, "", "", Map.of("label", apiLabel));
-        response.sendRedirect(ctx + "/tenant_settings.jsp?status=api_credential_created");
+        response.sendRedirect(ctx + "/tenant_settings.jsp?status=api_credential_created" + tabSuffix);
         return;
       } catch (Exception ex) {
         error = "Unable to create API credential: " + tsSafe(ex.getMessage());
@@ -190,7 +210,7 @@
         boolean changed = apiCredentialStore.revoke(tenantUuid, credentialId);
         if (changed) {
           logs.logVerbose("tenant_settings_api_credential_revoked", tenantUuid, userUuid, "", "", Map.of("credential_id", credentialId));
-          response.sendRedirect(ctx + "/tenant_settings.jsp?status=api_credential_revoked");
+          response.sendRedirect(ctx + "/tenant_settings.jsp?status=api_credential_revoked" + tabSuffix);
           return;
         }
         error = "API credential not found or already revoked.";
@@ -208,7 +228,7 @@
           java.util.Arrays.asList(tsSafe(request.getParameter("taxonomy_status")))
         );
         logs.logVerbose("tenant_settings_taxonomy_updated", tenantUuid, userUuid, "", "", Map.of("action", "add_taxonomy"));
-        response.sendRedirect(ctx + "/tenant_settings.jsp?status=taxonomy_saved");
+        response.sendRedirect(ctx + "/tenant_settings.jsp?status=taxonomy_saved" + tabSuffix);
         return;
       } catch (Exception ex) {
         error = "Unable to update taxonomy: " + tsSafe(ex.getMessage());
@@ -272,12 +292,30 @@
     String themeLightStartHour = tsHour(request.getParameter("theme_light_start_hour"), 7);
     String themeDarkStartHour = tsHour(request.getParameter("theme_dark_start_hour"), 19);
     String themeTextSizeDefault = tsTextSize(request.getParameter("theme_text_size_default"));
+    boolean passwordPolicyEnabled = tsChecked(request.getParameter("password_policy_enabled"));
+    String passwordPolicyMinLength = tsIntRange(request.getParameter("password_policy_min_length"), 12, 8, 128);
+    boolean passwordPolicyRequireUppercase = tsChecked(request.getParameter("password_policy_require_uppercase"));
+    boolean passwordPolicyRequireLowercase = tsChecked(request.getParameter("password_policy_require_lowercase"));
+    boolean passwordPolicyRequireNumber = tsChecked(request.getParameter("password_policy_require_number"));
+    boolean passwordPolicyRequireSymbol = tsChecked(request.getParameter("password_policy_require_symbol"));
+    String twoFactorPolicy = tsSafe(request.getParameter("two_factor_policy")).trim().toLowerCase(Locale.ROOT);
+    if (!"optional".equals(twoFactorPolicy) && !"required".equals(twoFactorPolicy)) twoFactorPolicy = "off";
+    String twoFactorDefaultEngine = tsSafe(request.getParameter("two_factor_default_engine")).trim().toLowerCase(Locale.ROOT);
+    if (!"flowroute_sms".equals(twoFactorDefaultEngine)) twoFactorDefaultEngine = "email_pin";
+    String flowrouteSmsFromNumber = tsSafe(request.getParameter("flowroute_sms_from_number")).trim();
+    flowrouteSmsFromNumber = flowrouteSmsFromNumber.replaceAll("[^0-9+]", "");
+    String flowrouteSmsAccessKey = tsSafe(request.getParameter("flowroute_sms_access_key")).trim();
+    String flowrouteSmsSecretKey = tsSafe(request.getParameter("flowroute_sms_secret_key")).trim();
+    String flowrouteSmsApiBaseUrl = tsSafe(request.getParameter("flowroute_sms_api_base_url")).trim();
+    if (flowrouteSmsApiBaseUrl.isBlank()) flowrouteSmsApiBaseUrl = "https://api.flowroute.com/v2.2/messages";
 
     boolean saveStorageSecret = tsChecked(request.getParameter("save_storage_secret"));
     boolean saveStorageEncryptionKey = tsChecked(request.getParameter("save_storage_encryption_key"));
     boolean saveClioSecret = tsChecked(request.getParameter("save_clio_secret"));
     boolean saveEmailSmtpPassword = tsChecked(request.getParameter("save_email_smtp_password"));
     boolean saveEmailGraphClientSecret = tsChecked(request.getParameter("save_email_graph_client_secret"));
+    boolean saveFlowrouteSmsAccessKey = tsChecked(request.getParameter("save_flowroute_sms_access_key"));
+    boolean saveFlowrouteSmsSecretKey = tsChecked(request.getParameter("save_flowroute_sms_secret_key"));
 
     settings.put("storage_backend", storageBackend);
     settings.put("storage_endpoint", storageEndpoint);
@@ -321,12 +359,24 @@
     settings.put("theme_light_start_hour", themeLightStartHour);
     settings.put("theme_dark_start_hour", themeDarkStartHour);
     settings.put("theme_text_size_default", themeTextSizeDefault);
+    settings.put("password_policy_enabled", passwordPolicyEnabled ? "true" : "false");
+    settings.put("password_policy_min_length", passwordPolicyMinLength);
+    settings.put("password_policy_require_uppercase", passwordPolicyRequireUppercase ? "true" : "false");
+    settings.put("password_policy_require_lowercase", passwordPolicyRequireLowercase ? "true" : "false");
+    settings.put("password_policy_require_number", passwordPolicyRequireNumber ? "true" : "false");
+    settings.put("password_policy_require_symbol", passwordPolicyRequireSymbol ? "true" : "false");
+    settings.put("two_factor_policy", twoFactorPolicy);
+    settings.put("two_factor_default_engine", twoFactorDefaultEngine);
+    settings.put("flowroute_sms_from_number", flowrouteSmsFromNumber);
+    settings.put("flowroute_sms_api_base_url", flowrouteSmsApiBaseUrl);
 
     if (saveStorageSecret && !storageSecret.isBlank()) settings.put("storage_secret", storageSecret);
     if (saveStorageEncryptionKey && !storageEncryptionKey.isBlank()) settings.put("storage_encryption_key", storageEncryptionKey);
     if (saveClioSecret && !clioClientSecret.isBlank()) settings.put("clio_client_secret", clioClientSecret);
     if (saveEmailSmtpPassword && !emailSmtpPassword.isBlank()) settings.put("email_smtp_password", emailSmtpPassword);
     if (saveEmailGraphClientSecret && !emailGraphClientSecret.isBlank()) settings.put("email_graph_client_secret", emailGraphClientSecret);
+    if (saveFlowrouteSmsAccessKey && !flowrouteSmsAccessKey.isBlank()) settings.put("flowroute_sms_access_key", flowrouteSmsAccessKey);
+    if (saveFlowrouteSmsSecretKey && !flowrouteSmsSecretKey.isBlank()) settings.put("flowroute_sms_secret_key", flowrouteSmsSecretKey);
 
     String effectiveStorageAccessKey = tsSafe(settings.get("storage_access_key")).trim();
     String effectiveStorageSecret = !storageSecret.isBlank() ? storageSecret : tsSafe(settings.get("storage_secret")).trim();
@@ -334,6 +384,8 @@
     String effectiveClioSecret = !clioClientSecret.isBlank() ? clioClientSecret : tsSafe(settings.get("clio_client_secret")).trim();
     String effectiveEmailSmtpPassword = !emailSmtpPassword.isBlank() ? emailSmtpPassword : tsSafe(settings.get("email_smtp_password")).trim();
     String effectiveEmailGraphClientSecret = !emailGraphClientSecret.isBlank() ? emailGraphClientSecret : tsSafe(settings.get("email_graph_client_secret")).trim();
+    String effectiveFlowrouteSmsAccessKey = !flowrouteSmsAccessKey.isBlank() ? flowrouteSmsAccessKey : tsSafe(settings.get("flowroute_sms_access_key")).trim();
+    String effectiveFlowrouteSmsSecretKey = !flowrouteSmsSecretKey.isBlank() ? flowrouteSmsSecretKey : tsSafe(settings.get("flowroute_sms_secret_key")).trim();
 
     if ("test_storage_connection".equalsIgnoreCase(action)) {
       List<String> storageFailures = new ArrayList<String>();
@@ -488,6 +540,25 @@
         valid = false;
         error = "Email provider settings are invalid: " + String.join("; ", emailValidation.issues) + ".";
       }
+      if ("required".equals(twoFactorPolicy)) {
+        if ("flowroute_sms".equals(twoFactorDefaultEngine)) {
+          if (effectiveFlowrouteSmsAccessKey.isBlank()
+                  || effectiveFlowrouteSmsSecretKey.isBlank()
+                  || flowrouteSmsFromNumber.isBlank()) {
+            valid = false;
+            error = "Required two-factor with Flowroute SMS needs access key, secret key, and from number.";
+          }
+          if (!flowrouteSmsApiBaseUrl.startsWith("http://") && !flowrouteSmsApiBaseUrl.startsWith("https://")) {
+            valid = false;
+            error = "Flowroute API endpoint must start with http:// or https://.";
+          }
+        } else {
+          if ("disabled".equals(emailProvider) || !emailValidation.ok) {
+            valid = false;
+            error = "Required two-factor with Email PIN needs a valid notification email provider configuration.";
+          }
+        }
+      }
 
       if (!valid) {
         logs.logVerbose("tenant_settings_validation_failed", tenantUuid, userUuid, "", "", Map.of("action", action, "error", tsSafe(error)));
@@ -515,6 +586,12 @@
           details.put("theme_mode_default", tsSafe(settings.get("theme_mode_default")));
           details.put("theme_use_location", tsSafe(settings.get("theme_use_location")));
           details.put("theme_text_size_default", tsSafe(settings.get("theme_text_size_default")));
+          details.put("password_policy_enabled", tsSafe(settings.get("password_policy_enabled")));
+          details.put("password_policy_min_length", tsSafe(settings.get("password_policy_min_length")));
+          details.put("password_policy_require_uppercase", tsSafe(settings.get("password_policy_require_uppercase")));
+          details.put("password_policy_require_lowercase", tsSafe(settings.get("password_policy_require_lowercase")));
+          details.put("password_policy_require_number", tsSafe(settings.get("password_policy_require_number")));
+          details.put("password_policy_require_symbol", tsSafe(settings.get("password_policy_require_symbol")));
           details.put("storage_connection_status", tsSafe(settings.get("storage_connection_status")));
           details.put("storage_encryption_mode", tsSafe(settings.get("storage_encryption_mode")));
           details.put("storage_s3_sse_mode", tsSafe(settings.get("storage_s3_sse_mode")));
@@ -525,22 +602,29 @@
           details.put("email_connection_status", tsSafe(settings.get("email_connection_status")));
           details.put("email_queue_batch_size", tsSafe(settings.get("email_queue_batch_size")));
           details.put("email_queue_max_attempts", tsSafe(settings.get("email_queue_max_attempts")));
+          details.put("two_factor_policy", tsSafe(settings.get("two_factor_policy")));
+          details.put("two_factor_default_engine", tsSafe(settings.get("two_factor_default_engine")));
+          details.put("flowroute_sms_from_number_set", tsSafe(settings.get("flowroute_sms_from_number")).isBlank() ? "no" : "yes");
           details.put("storage_secret_saved", tsSafe(settings.get("storage_secret")).isBlank() ? "no" : "yes");
           details.put("storage_encryption_key_saved", tsSafe(settings.get("storage_encryption_key")).isBlank() ? "no" : "yes");
           details.put("clio_client_secret_saved", tsSafe(settings.get("clio_client_secret")).isBlank() ? "no" : "yes");
           details.put("email_smtp_password_saved", tsSafe(settings.get("email_smtp_password")).isBlank() ? "no" : "yes");
           details.put("email_graph_client_secret_saved", tsSafe(settings.get("email_graph_client_secret")).isBlank() ? "no" : "yes");
+          details.put("flowroute_sms_access_key_saved", tsSafe(settings.get("flowroute_sms_access_key")).isBlank() ? "no" : "yes");
+          details.put("flowroute_sms_secret_key_saved", tsSafe(settings.get("flowroute_sms_secret_key")).isBlank() ? "no" : "yes");
           details.put("save_storage_secret_requested", saveStorageSecret ? "true" : "false");
           details.put("save_storage_encryption_key_requested", saveStorageEncryptionKey ? "true" : "false");
           details.put("save_clio_secret_requested", saveClioSecret ? "true" : "false");
           details.put("save_email_smtp_password_requested", saveEmailSmtpPassword ? "true" : "false");
           details.put("save_email_graph_client_secret_requested", saveEmailGraphClientSecret ? "true" : "false");
+          details.put("save_flowroute_sms_access_key_requested", saveFlowrouteSmsAccessKey ? "true" : "false");
+          details.put("save_flowroute_sms_secret_key_requested", saveFlowrouteSmsSecretKey ? "true" : "false");
           logs.logVerbose("tenant_settings_changed", tenantUuid, userUuid, "", "", details);
 
           String status = "saved";
           if ("rotate_storage_secret".equalsIgnoreCase(action)) status = "rotated_storage";
           if ("rotate_clio_secret".equalsIgnoreCase(action)) status = "rotated_clio";
-          response.sendRedirect(ctx + "/tenant_settings.jsp?status=" + status);
+          response.sendRedirect(ctx + "/tenant_settings.jsp?status=" + status + tabSuffix);
           return;
         } catch (Exception ex) {
           error = "Unable to save tenant settings.";
@@ -573,8 +657,14 @@
   String maskedStorageAccessKey = tsSafe(settings.get("storage_access_key")).isBlank() ? "" : "********";
   String maskedEmailSmtpPassword = tsSafe(settings.get("email_smtp_password")).isBlank() ? "" : "********";
   String maskedEmailGraphClientSecret = tsSafe(settings.get("email_graph_client_secret")).isBlank() ? "" : "********";
+  String maskedFlowrouteSmsAccessKey = tsSafe(settings.get("flowroute_sms_access_key")).isBlank() ? "" : "********";
+  String maskedFlowrouteSmsSecretKey = tsSafe(settings.get("flowroute_sms_secret_key")).isBlank() ? "" : "********";
   String emailProviderMode = tsSafe(settings.get("email_provider")).trim().toLowerCase(Locale.ROOT);
   if (!"smtp".equals(emailProviderMode) && !"microsoft_graph".equals(emailProviderMode)) emailProviderMode = "disabled";
+  String twoFactorPolicyMode = tsSafe(settings.get("two_factor_policy")).trim().toLowerCase(Locale.ROOT);
+  if (!"optional".equals(twoFactorPolicyMode) && !"required".equals(twoFactorPolicyMode)) twoFactorPolicyMode = "off";
+  String twoFactorDefaultEngineMode = tsSafe(settings.get("two_factor_default_engine")).trim().toLowerCase(Locale.ROOT);
+  if (!"flowroute_sms".equals(twoFactorDefaultEngineMode)) twoFactorDefaultEngineMode = "email_pin";
   String clioMode = tsSafe(settings.get("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
   if (!"private".equals(clioMode)) clioMode = "public";
   String themeMode = tsThemeMode(settings.get("theme_mode_default"));
@@ -583,6 +673,7 @@
   String themeLongitudeSaved = tsSafe(settings.get("theme_longitude")).trim();
   String themeLightHourSaved = tsHour(settings.get("theme_light_start_hour"), 7);
   String themeDarkHourSaved = tsHour(settings.get("theme_dark_start_hour"), 19);
+  String passwordPolicyMinLengthSaved = tsIntRange(settings.get("password_policy_min_length"), 12, 8, 128);
   List<api_credentials.CredentialRec> apiCredentials = new ArrayList<api_credentials.CredentialRec>();
   try { apiCredentials = apiCredentialStore.list(tenantUuid); } catch (Exception ignored) {}
   document_taxonomy.Taxonomy tx = new document_taxonomy.Taxonomy();
@@ -618,12 +709,22 @@
   <% } %>
 </section>
 
-<section class="card" style="margin-top:12px;" id="document-taxonomy">
+<section class="card" style="margin-top:12px;">
+  <div class="tabs" id="tenantSettingsTabs" data-default-tab="<%= tsEsc(activeTab) %>" role="tablist" aria-label="Tenant settings sections">
+    <button type="button" class="tab" data-ts-tab-btn="integrations">Integrations</button>
+    <button type="button" class="tab" data-ts-tab-btn="experience">Experience</button>
+    <button type="button" class="tab" data-ts-tab-btn="security">Security</button>
+    <button type="button" class="tab" data-ts-tab-btn="operations">Operations</button>
+  </div>
+</section>
+
+<section class="card" style="margin-top:12px;" id="document-taxonomy" data-ts-panel="operations">
   <h2 style="margin-top:0;">Manage Document Taxonomy</h2>
   <div class="meta" style="margin-bottom:10px;">These values drive Category/Subcategory/Status options on the Documents page.</div>
   <form class="form" method="post" action="<%= ctx %>/tenant_settings.jsp">
     <input type="hidden" name="csrfToken" value="<%= tsEsc(csrfToken) %>" />
     <input type="hidden" name="action" value="add_taxonomy" />
+    <input type="hidden" name="tab" id="tenantSettingsTabFieldTaxonomy" value="<%= tsEsc(activeTab) %>" />
     <div class="grid grid-3">
       <label>Category
         <input type="text" name="taxonomy_category" />
@@ -647,8 +748,9 @@
 <form class="form" method="post" action="<%= ctx %>/tenant_settings.jsp">
   <input type="hidden" name="csrfToken" value="<%= tsEsc(csrfToken) %>" />
   <input type="hidden" name="api_credential_id" value="" />
+  <input type="hidden" name="tab" id="tenantSettingsTabFieldMain" value="<%= tsEsc(activeTab) %>" />
 
-  <section class="card" style="margin-top:12px;">
+  <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
     <h2 style="margin-top:0;">Setup Guide (Quick + Advanced)</h2>
     <div class="meta" style="margin-bottom:8px;">For first-time setup: complete Storage, Clio (if used), and Notification Email (if used), then run each test and Save Settings. Experienced admins can update only the fields they need and run targeted tests.</div>
     <div class="grid grid-2">
@@ -675,7 +777,7 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;">
+  <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
     <h2 style="margin-top:0;">Storage Backend</h2>
     <div class="meta" style="margin-bottom:10px;">Configure where assembled documents are stored. Keep secret fields blank to retain currently saved values.</div>
 
@@ -727,7 +829,7 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;">
+  <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
     <h2 style="margin-top:0;">Clio Connection</h2>
 
     <label>Auth Mode
@@ -768,7 +870,7 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;">
+  <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
     <h2 style="margin-top:0;">Notification Email (Queue + Transport)</h2>
     <div class="meta" style="margin-bottom:10px;">Configure tenant-level notification email delivery with SMTP or Microsoft Graph. Technical queue/timeout settings are tenant-admin tunable.</div>
 
@@ -864,7 +966,7 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;">
+  <section class="card" style="margin-top:12px;" data-ts-panel="experience">
     <h2 style="margin-top:0;">Appearance & Theme</h2>
     <div class="meta" style="margin-bottom:10px;">
       Default tenant theme behavior for all pages. End users can still manually override in the navigation bar.
@@ -901,7 +1003,7 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;">
+  <section class="card" style="margin-top:12px;" data-ts-panel="experience">
     <h2 style="margin-top:0;">Feature Flags</h2>
     <div class="grid grid-2">
       <label><input type="checkbox" name="feature_advanced_assembly" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("feature_advanced_assembly"))) ? "checked" : "" %> /> Enable advanced assembly</label>
@@ -909,7 +1011,71 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;">
+  <section class="card" style="margin-top:12px;" data-ts-panel="security">
+    <h2 style="margin-top:0;">Password Policy (Optional)</h2>
+    <div class="meta" style="margin-bottom:10px;">
+      Applies to user-created and user-updated passwords by default. Tenant admins can explicitly override policy when setting passwords.
+    </div>
+    <div class="grid grid-2">
+      <label><input type="checkbox" name="password_policy_enabled" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("password_policy_enabled"))) ? "checked" : "" %> /> Enable password policy</label>
+      <label>Minimum Length
+        <input type="number" min="8" max="128" name="password_policy_min_length" value="<%= tsEsc(passwordPolicyMinLengthSaved) %>" />
+      </label>
+      <label><input type="checkbox" name="password_policy_require_uppercase" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("password_policy_require_uppercase"))) ? "checked" : "" %> /> Require uppercase letter</label>
+      <label><input type="checkbox" name="password_policy_require_lowercase" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("password_policy_require_lowercase"))) ? "checked" : "" %> /> Require lowercase letter</label>
+      <label><input type="checkbox" name="password_policy_require_number" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("password_policy_require_number"))) ? "checked" : "" %> /> Require number</label>
+      <label><input type="checkbox" name="password_policy_require_symbol" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("password_policy_require_symbol"))) ? "checked" : "" %> /> Require symbol</label>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px;" data-ts-panel="security">
+    <h2 style="margin-top:0;">Two-Factor Authentication</h2>
+    <div class="meta" style="margin-bottom:10px;">
+      Tenant policy can force two-factor for everyone, or allow users to opt in individually in Users &amp; Roles.
+    </div>
+
+    <div class="grid grid-2">
+      <label>Tenant 2FA Policy
+        <select name="two_factor_policy">
+          <option value="off" <%= "off".equals(twoFactorPolicyMode) ? "selected" : "" %>>Off</option>
+          <option value="optional" <%= "optional".equals(twoFactorPolicyMode) ? "selected" : "" %>>Optional (user opt-in)</option>
+          <option value="required" <%= "required".equals(twoFactorPolicyMode) ? "selected" : "" %>>Required (force for all users)</option>
+        </select>
+      </label>
+      <label>Default Engine
+        <select name="two_factor_default_engine">
+          <option value="email_pin" <%= "email_pin".equals(twoFactorDefaultEngineMode) ? "selected" : "" %>>Email 6-digit PIN</option>
+          <option value="flowroute_sms" <%= "flowroute_sms".equals(twoFactorDefaultEngineMode) ? "selected" : "" %>>Flowroute SMS</option>
+        </select>
+      </label>
+      <div class="meta" style="grid-column:1 / -1;">
+        Email PIN uses the Notification Email provider configured above. Flowroute SMS requires the tenant credentials below and per-user phone numbers.
+      </div>
+    </div>
+
+    <h3 style="margin-top:14px;">Flowroute SMS</h3>
+    <div class="grid grid-2">
+      <label>Access Key
+        <input type="password" name="flowroute_sms_access_key" value="" placeholder="<%= tsEsc(maskedFlowrouteSmsAccessKey) %>" />
+      </label>
+      <label>Secret Key
+        <input type="password" name="flowroute_sms_secret_key" value="" placeholder="<%= tsEsc(maskedFlowrouteSmsSecretKey) %>" />
+      </label>
+      <label>From Number (E.164 preferred)
+        <input type="text" name="flowroute_sms_from_number" value="<%= tsEsc(tsSafe(settings.get("flowroute_sms_from_number"))) %>" placeholder="+12065550100" />
+      </label>
+      <label>API Endpoint
+        <input type="text" name="flowroute_sms_api_base_url" value="<%= tsEsc(tsSafe(settings.get("flowroute_sms_api_base_url"))) %>" placeholder="https://api.flowroute.com/v2.2/messages" />
+      </label>
+    </div>
+
+    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+      <label><input type="checkbox" name="save_flowroute_sms_access_key" value="1" /> Persist entered Flowroute access key on Save</label>
+      <label><input type="checkbox" name="save_flowroute_sms_secret_key" value="1" /> Persist entered Flowroute secret key on Save</label>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px;" data-ts-panel="operations">
     <h2 style="margin-top:0;">API Credentials</h2>
     <div class="meta" style="margin-bottom:10px;">
       Tenant-scoped automation credentials for n8n/OpenClaw. Use headers <code>X-Tenant-UUID</code>, <code>X-API-Key</code>, and <code>X-API-Secret</code>.
@@ -949,7 +1115,7 @@
     <% } %>
   </section>
 
-  <section class="card" style="margin-top:12px;">
+  <section class="card" style="margin-top:12px;" data-ts-panel="security">
     <h2 style="margin-top:0;">Security Controls</h2>
     <div class="grid grid-2">
       <div>Storage secret last rotated: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("secret_rotation_storage_at")))) %></strong></div>
@@ -961,6 +1127,10 @@
       <div>Clio auth mode health: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_auth_health_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_auth_health_checked_at")))) %>)</div>
       <div>Email provider: <strong><%= tsEsc(tsSafe(settings.get("email_provider"))) %></strong></div>
       <div>Email connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("email_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("email_connection_checked_at")))) %>)</div>
+      <div>Two-factor policy: <strong><%= tsEsc(tsSafe(settings.get("two_factor_policy"))) %></strong></div>
+      <div>Two-factor default engine: <strong><%= tsEsc(tsSafe(settings.get("two_factor_default_engine"))) %></strong></div>
+      <div>Flowroute from number: <strong><%= tsEsc(tsSafe(settings.get("flowroute_sms_from_number")).isBlank() ? "Not set" : "Set") %></strong></div>
+      <div>Flowroute credentials: <strong><%= tsEsc(tsSafe(settings.get("flowroute_sms_access_key")).isBlank() || tsSafe(settings.get("flowroute_sms_secret_key")).isBlank() ? "Incomplete" : "Configured") %></strong></div>
       <div>Theme default: <strong><%= tsEsc(themeMode) %></strong> • text size <strong><%= tsEsc(themeTextSize) %></strong></div>
       <div>Theme auto schedule: light <strong><%= tsEsc(themeLightHourSaved) %>:00</strong>, dark <strong><%= tsEsc(themeDarkHourSaved) %>:00</strong></div>
       <div>Sensitive output policy: <strong><%= tsEsc(secret_redactor.redactValue("hidden")) %></strong></div>
@@ -972,5 +1142,42 @@
     <button type="submit" class="btn" name="action" value="save_settings">Save Settings</button>
   </section>
 </form>
+
+<script>
+(function () {
+  var tabsHost = document.getElementById("tenantSettingsTabs");
+  if (!tabsHost) return;
+  var buttons = Array.prototype.slice.call(tabsHost.querySelectorAll("[data-ts-tab-btn]"));
+  var panels = Array.prototype.slice.call(document.querySelectorAll("[data-ts-panel]"));
+  var hiddenMain = document.getElementById("tenantSettingsTabFieldMain");
+  var hiddenTaxonomy = document.getElementById("tenantSettingsTabFieldTaxonomy");
+  if (!buttons.length || !panels.length) return;
+
+  function setTab(name) {
+    var key = String(name || "").trim().toLowerCase();
+    if (!key) key = "integrations";
+    buttons.forEach(function (btn) {
+      var bKey = String(btn.getAttribute("data-ts-tab-btn") || "").toLowerCase();
+      var isActive = bKey === key;
+      btn.classList.toggle("active", isActive);
+      btn.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
+    panels.forEach(function (panel) {
+      var pKey = String(panel.getAttribute("data-ts-panel") || "").toLowerCase();
+      panel.style.display = (pKey === key) ? "" : "none";
+    });
+    if (hiddenMain) hiddenMain.value = key;
+    if (hiddenTaxonomy) hiddenTaxonomy.value = key;
+  }
+
+  buttons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      setTab(btn.getAttribute("data-ts-tab-btn"));
+    });
+  });
+
+  setTab(tabsHost.getAttribute("data-default-tab"));
+})();
+</script>
 
 <jsp:include page="footer.jsp" />

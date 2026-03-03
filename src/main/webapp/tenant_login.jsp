@@ -22,6 +22,7 @@
 <%@ page import="net.familylawandprobate.controversies.ip_lists" %>
 <%@ page import="net.familylawandprobate.controversies.case_attributes" %>
 <%@ page import="net.familylawandprobate.controversies.document_attributes" %>
+<%@ page import="net.familylawandprobate.controversies.two_factor_auth" %>
 <%@ include file="security.jspf" %>
 
 <%
@@ -48,6 +49,16 @@
 
     // CSRF session key (matches filter default)
     private static final String CSRF_SESSION_KEY = "CSRF_TOKEN";
+
+    // Pending two-factor login keys (stored in-session until challenge verifies)
+    private static final String S_2FA_CHALLENGE_ID = "auth.2fa.challenge_id";
+    private static final String S_2FA_TENANT_UUID  = "auth.2fa.tenant_uuid";
+    private static final String S_2FA_TENANT_LABEL = "auth.2fa.tenant_label";
+    private static final String S_2FA_USER_UUID    = "auth.2fa.user_uuid";
+    private static final String S_2FA_ENGINE       = "auth.2fa.engine";
+    private static final String S_2FA_MASKED_DEST  = "auth.2fa.masked_destination";
+    private static final String S_2FA_CLIENT_IP    = "auth.2fa.client_ip";
+    private static final String S_2FA_NEXT         = "auth.2fa.next";
 
     // Brute force tracking (memory) + escalation thresholds
     private static final String FAILMAP_KEY = "unifiedLogin.failMap.v1";
@@ -382,6 +393,24 @@
         } catch (Exception ignored) {}
         return "";
     }
+
+    private static void clearPending2fa(HttpSession session) {
+        if (session == null) return;
+        session.removeAttribute(S_2FA_CHALLENGE_ID);
+        session.removeAttribute(S_2FA_TENANT_UUID);
+        session.removeAttribute(S_2FA_TENANT_LABEL);
+        session.removeAttribute(S_2FA_USER_UUID);
+        session.removeAttribute(S_2FA_ENGINE);
+        session.removeAttribute(S_2FA_MASKED_DEST);
+        session.removeAttribute(S_2FA_CLIENT_IP);
+        session.removeAttribute(S_2FA_NEXT);
+    }
+
+    private static String engineLabel(String engine) {
+        String e = safe(engine).trim().toLowerCase(Locale.ROOT);
+        if ("flowroute_sms".equals(e)) return "Flowroute SMS";
+        return "Email PIN";
+    }
 %>
 
 <%
@@ -479,7 +508,21 @@
         }
     }
 
-    // Clear stale/partial auth state before presenting unified login.
+    two_factor_auth tfa = two_factor_auth.defaultStore();
+    String pendingChallengeId = safe((String) session.getAttribute(S_2FA_CHALLENGE_ID)).trim();
+    String pendingTenantUuid = safe((String) session.getAttribute(S_2FA_TENANT_UUID)).trim();
+    String pendingTenantLabel = safe((String) session.getAttribute(S_2FA_TENANT_LABEL)).trim();
+    String pendingUserUuid = safe((String) session.getAttribute(S_2FA_USER_UUID)).trim();
+    String pendingEngine = safe((String) session.getAttribute(S_2FA_ENGINE)).trim();
+    String pendingMaskedDestination = safe((String) session.getAttribute(S_2FA_MASKED_DEST)).trim();
+    String pendingClientIp = safe((String) session.getAttribute(S_2FA_CLIENT_IP)).trim();
+    String pendingNext = normalizeNext((String) session.getAttribute(S_2FA_NEXT));
+    boolean pending2fa = !pendingChallengeId.isBlank()
+            && !pendingTenantUuid.isBlank()
+            && !pendingUserUuid.isBlank()
+            && !pendingEngine.isBlank();
+
+    // Clear stale/partial full-auth state before presenting login.
     boolean hasAnyAuthState = !safe((String) session.getAttribute(S_TENANT_UUID)).trim().isBlank()
             || !safe((String) session.getAttribute(S_TENANT_LABEL)).trim().isBlank()
             || !safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim().isBlank()
@@ -510,10 +553,161 @@
         if (!clearTenantUuid.isBlank() && !clearUserUuid.isBlank() && !clearSessionId.isBlank()) {
             try { ur.deleteUserBinding(clearTenantUuid, clearUserUuid, clearSessionId); } catch (Exception ignored) {}
         }
+        clearPending2fa(session);
+        pending2fa = false;
+        pendingChallengeId = "";
+        pendingTenantUuid = "";
+        pendingTenantLabel = "";
+        pendingUserUuid = "";
+        pendingEngine = "";
+        pendingMaskedDestination = "";
+        pendingClientIp = "";
+        pendingNext = "/index.jsp";
+    }
+
+    String action = safe(request.getParameter("action")).trim();
+
+    // Handle pending two-factor actions.
+    if ("POST".equalsIgnoreCase(request.getMethod()) && "cancel_2fa".equalsIgnoreCase(action)) {
+        if (pending2fa) {
+            try { tfa.invalidateChallenge(pendingTenantUuid, pendingChallengeId); } catch (Exception ignored) {}
+        }
+        clearPending2fa(session);
+        pending2fa = false;
+        message = "Sign-in verification was canceled.";
+    }
+
+    if ("POST".equalsIgnoreCase(request.getMethod()) && "resend_2fa".equalsIgnoreCase(action)) {
+        if (!pending2fa) {
+            error = "No pending verification challenge was found. Please sign in again.";
+        } else {
+            try {
+                users_roles.UserRec pendingUser = ur.getUserByUuid(pendingTenantUuid, pendingUserUuid);
+                if (pendingUser == null || !pendingUser.enabled) {
+                    clearPending2fa(session);
+                    pending2fa = false;
+                    error = "User session changed. Please sign in again.";
+                } else {
+                    two_factor_auth.ChallengeStartResult resend = tfa.startChallenge(pendingTenantUuid, pendingUser, pendingUser.uuid, pendingClientIp.isBlank() ? clientIp : pendingClientIp);
+                    if (!resend.success || resend.challengeId.isBlank()) {
+                        error = resend.issue.isBlank() ? "Unable to resend verification code." : resend.issue;
+                    } else {
+                        session.setAttribute(S_2FA_CHALLENGE_ID, resend.challengeId);
+                        session.setAttribute(S_2FA_ENGINE, resend.engine);
+                        session.setAttribute(S_2FA_MASKED_DEST, resend.maskedDestination);
+                        pendingChallengeId = resend.challengeId;
+                        pendingEngine = resend.engine;
+                        pendingMaskedDestination = resend.maskedDestination;
+                        message = "A new verification code was sent via " + engineLabel(resend.engine) + ".";
+                    }
+                }
+            } catch (Exception ex) {
+                error = "Unable to resend verification code.";
+            }
+        }
+    }
+
+    if ("POST".equalsIgnoreCase(request.getMethod()) && "verify_2fa".equalsIgnoreCase(action)) {
+        if (!pending2fa) {
+            error = "No pending verification challenge was found. Please sign in again.";
+        } else {
+            String code = safe(request.getParameter("verificationCode"));
+            two_factor_auth.VerifyResult vr = null;
+            try {
+                vr = tfa.verifyChallenge(pendingTenantUuid, pendingUserUuid, pendingChallengeId, code, pendingClientIp.isBlank() ? clientIp : pendingClientIp);
+            } catch (Exception ex) {
+                vr = new two_factor_auth.VerifyResult(false, false, 0, "Unable to verify the code.");
+            }
+            if (vr != null && vr.success) {
+                try {
+                    users_roles.UserRec u = ur.getUserByUuid(pendingTenantUuid, pendingUserUuid);
+                    if (u == null || !u.enabled) {
+                        clearPending2fa(session);
+                        pending2fa = false;
+                        error = "User is no longer active. Please contact your tenant administrator.";
+                    } else {
+                        users_roles.RoleRec r = ur.getRoleByUuid(pendingTenantUuid, u.roleUuid);
+                        if (r == null || !r.enabled) {
+                            clearPending2fa(session);
+                            pending2fa = false;
+                            error = "User role is unavailable. Please contact your tenant administrator.";
+                        } else {
+                            users_roles.AuthResult finalAr = new users_roles.AuthResult(u, r);
+
+                            String tenantLabelForSession = pendingTenantLabel;
+                            if (tenantLabelForSession.isBlank()) {
+                                try {
+                                    tenants.Tenant t = tenantStore.getByUuid(pendingTenantUuid);
+                                    if (t != null) tenantLabelForSession = safe(t.label).trim();
+                                } catch (Exception ignored) {}
+                            }
+                            if (tenantLabelForSession.isBlank()) tenantLabelForSession = pendingTenantUuid;
+
+                            String finalRedirect = ctx + pendingNext;
+                            String finalClientIp = pendingClientIp.isBlank() ? clientIp : pendingClientIp;
+
+                            String newTenantBind = randomTokenUrlSafe(32);
+                            String newUserBind = randomTokenUrlSafe(32);
+                            setHttpOnlyCookie(request, response, TENANT_BIND_COOKIE, newTenantBind, 30 * 24 * 60 * 60);
+                            setHttpOnlyCookie(request, response, USER_BIND_COOKIE, newUserBind, 30 * 24 * 60 * 60);
+
+                            try { session.invalidate(); } catch (Exception ignored) {}
+                            HttpSession s2 = request.getSession(true);
+
+                            s2.setAttribute(S_TENANT_UUID, pendingTenantUuid);
+                            s2.setAttribute(S_TENANT_LABEL, tenantLabelForSession);
+                            s2.setAttribute(S_TENANT_SID, s2.getId());
+                            s2.setAttribute(S_TENANT_IP, finalClientIp);
+                            s2.setAttribute(S_TENANT_CB, newTenantBind);
+
+                            ur.bindToSession(s2, finalAr);
+                            s2.setAttribute(S_USER_IP, finalClientIp);
+                            s2.setAttribute(S_USER_CB, newUserBind);
+
+                            try {
+                                Binding b = new Binding(pendingTenantUuid, tenantLabelForSession, finalClientIp, s2.getId(), newTenantBind);
+                                writeBinding(bindingPath(pendingTenantUuid, s2.getId()), b);
+                            } catch (Exception ignored) {}
+
+                            try {
+                                ur.writeUserBinding(
+                                        pendingTenantUuid,
+                                        finalAr.user.uuid,
+                                        finalAr.user.emailAddress,
+                                        finalAr.role.uuid,
+                                        finalClientIp,
+                                        s2.getId(),
+                                        newUserBind
+                                );
+                            } catch (Exception ignored) {}
+
+                            response.sendRedirect(finalRedirect);
+                            return;
+                        }
+                    }
+                } catch (Exception ex) {
+                    error = "Unable to finalize sign-in.";
+                }
+            } else {
+                if (vr != null && vr.expired) {
+                    clearPending2fa(session);
+                    pending2fa = false;
+                }
+                String baseError = (vr == null || vr.issue.isBlank()) ? "Verification code is invalid." : vr.issue;
+                if (vr != null && !vr.success && vr.remainingAttempts > 0 && !vr.expired) {
+                    error = baseError + " " + vr.remainingAttempts + " attempt(s) remaining.";
+                } else {
+                    error = baseError;
+                }
+            }
+        }
     }
 
     // Handle login POST (tenant + email + password in one form)
-    if ("POST".equalsIgnoreCase(request.getMethod()) && "login".equalsIgnoreCase(request.getParameter("action"))) {
+    if ("POST".equalsIgnoreCase(request.getMethod()) && "login".equalsIgnoreCase(action)) {
+
+        clearPending2fa(session);
+        pending2fa = false;
 
         if (enabledTenants.isEmpty()) {
             error = "No enabled tenants are available.";
@@ -587,49 +781,99 @@
                         } else {
                             clearFailures(application, clientIp);
 
-                            String newTenantBind = randomTokenUrlSafe(32);
-                            String newUserBind = randomTokenUrlSafe(32);
+                            two_factor_auth.Requirement req = tfa.resolveRequirement(found.uuid, ar.user);
+                            if (req.required) {
+                                if (!req.issue.isBlank()) {
+                                    error = req.issue;
+                                } else {
+                                    two_factor_auth.ChallengeStartResult sr;
+                                    try {
+                                        sr = tfa.startChallenge(found.uuid, ar.user, ar.user.uuid, clientIp);
+                                    } catch (Exception ex) {
+                                        sr = new two_factor_auth.ChallengeStartResult(false, true, "", req.engine, "", "Unable to start two-factor verification.");
+                                    }
+                                    if (!sr.success || sr.challengeId.isBlank()) {
+                                        error = sr.issue.isBlank() ? "Unable to start two-factor verification." : sr.issue;
+                                    } else {
+                                        session.setAttribute(S_2FA_CHALLENGE_ID, sr.challengeId);
+                                        session.setAttribute(S_2FA_TENANT_UUID, found.uuid);
+                                        session.setAttribute(S_2FA_TENANT_LABEL, found.label);
+                                        session.setAttribute(S_2FA_USER_UUID, ar.user.uuid);
+                                        session.setAttribute(S_2FA_ENGINE, sr.engine);
+                                        session.setAttribute(S_2FA_MASKED_DEST, sr.maskedDestination);
+                                        session.setAttribute(S_2FA_CLIENT_IP, clientIp);
+                                        session.setAttribute(S_2FA_NEXT, next);
 
-                            setHttpOnlyCookie(request, response, TENANT_BIND_COOKIE, newTenantBind, 30 * 24 * 60 * 60);
-                            setHttpOnlyCookie(request, response, USER_BIND_COOKIE, newUserBind, 30 * 24 * 60 * 60);
+                                        pending2fa = true;
+                                        pendingChallengeId = sr.challengeId;
+                                        pendingTenantUuid = found.uuid;
+                                        pendingTenantLabel = found.label;
+                                        pendingUserUuid = ar.user.uuid;
+                                        pendingEngine = sr.engine;
+                                        pendingMaskedDestination = sr.maskedDestination;
+                                        pendingClientIp = clientIp;
+                                        pendingNext = next;
 
-                            try { session.invalidate(); } catch (Exception ignored) {}
-                            HttpSession s2 = request.getSession(true);
+                                        selectedTenantUuid = found.uuid;
+                                        email = ar.user.emailAddress;
+                                        message = "Verification code sent via " + engineLabel(sr.engine) + " to " + sr.maskedDestination + ".";
+                                    }
+                                }
+                            } else {
+                                String newTenantBind = randomTokenUrlSafe(32);
+                                String newUserBind = randomTokenUrlSafe(32);
 
-                            s2.setAttribute(S_TENANT_UUID, found.uuid);
-                            s2.setAttribute(S_TENANT_LABEL, found.label);
-                            s2.setAttribute(S_TENANT_SID, s2.getId());
-                            s2.setAttribute(S_TENANT_IP, clientIp);
-                            s2.setAttribute(S_TENANT_CB, newTenantBind);
+                                setHttpOnlyCookie(request, response, TENANT_BIND_COOKIE, newTenantBind, 30 * 24 * 60 * 60);
+                                setHttpOnlyCookie(request, response, USER_BIND_COOKIE, newUserBind, 30 * 24 * 60 * 60);
 
-                            ur.bindToSession(s2, ar);
-                            s2.setAttribute(S_USER_IP, clientIp);
-                            s2.setAttribute(S_USER_CB, newUserBind);
+                                try { session.invalidate(); } catch (Exception ignored) {}
+                                HttpSession s2 = request.getSession(true);
 
-                            try {
-                                Binding b = new Binding(found.uuid, found.label, clientIp, s2.getId(), newTenantBind);
-                                writeBinding(bindingPath(found.uuid, s2.getId()), b);
-                            } catch (Exception ignored) {}
+                                s2.setAttribute(S_TENANT_UUID, found.uuid);
+                                s2.setAttribute(S_TENANT_LABEL, found.label);
+                                s2.setAttribute(S_TENANT_SID, s2.getId());
+                                s2.setAttribute(S_TENANT_IP, clientIp);
+                                s2.setAttribute(S_TENANT_CB, newTenantBind);
 
-                            try {
-                                ur.writeUserBinding(
-                                        found.uuid,
-                                        ar.user.uuid,
-                                        ar.user.emailAddress,
-                                        ar.role.uuid,
-                                        clientIp,
-                                        s2.getId(),
-                                        newUserBind
-                                );
-                            } catch (Exception ignored) {}
+                                ur.bindToSession(s2, ar);
+                                s2.setAttribute(S_USER_IP, clientIp);
+                                s2.setAttribute(S_USER_CB, newUserBind);
 
-                            response.sendRedirect(redirectTo);
-                            return;
+                                try {
+                                    Binding b = new Binding(found.uuid, found.label, clientIp, s2.getId(), newTenantBind);
+                                    writeBinding(bindingPath(found.uuid, s2.getId()), b);
+                                } catch (Exception ignored) {}
+
+                                try {
+                                    ur.writeUserBinding(
+                                            found.uuid,
+                                            ar.user.uuid,
+                                            ar.user.emailAddress,
+                                            ar.role.uuid,
+                                            clientIp,
+                                            s2.getId(),
+                                            newUserBind
+                                    );
+                                } catch (Exception ignored) {}
+
+                                response.sendRedirect(redirectTo);
+                                return;
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    if (pending2fa) {
+        selectedTenantUuid = pendingTenantUuid;
+        try {
+            users_roles.UserRec pendingUser = ur.getUserByUuid(pendingTenantUuid, pendingUserUuid);
+            if (pendingUser != null) {
+                email = pendingUser.emailAddress;
+            }
+        } catch (Exception ignored) {}
     }
 
     boolean loggedOut = "1".equals(request.getParameter("loggedOut"));
@@ -666,49 +910,80 @@
       <div style="height:12px;"></div>
     <% } %>
 
-    <form class="form" method="post" action="<%= ctx %>/tenant_login.jsp">
-      <input type="hidden" name="action" value="login" />
-      <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-      <input type="hidden" name="next" value="<%= esc(next) %>" />
+    <% if (pending2fa) { %>
+      <form class="form" method="post" action="<%= ctx %>/tenant_login.jsp">
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="next" value="<%= esc(pendingNext) %>" />
 
-      <label>
-        <span>Tenant</span>
-        <select name="tenantUuid" required <%= enabledTenants.isEmpty() ? "disabled" : "" %>>
-          <% if (enabledTenants.size() != 1) { %>
-            <option value="" <%= selectedTenantUuid.isBlank() ? "selected" : "" %> disabled>Select a tenant…</option>
-          <% } %>
-          <%
-            for (tenants.Tenant t : enabledTenants) {
-                String tUuid = safe(t.uuid).trim();
-                String lbl = safe(t.label).trim();
-                boolean sel = !selectedTenantUuid.isBlank() && tUuid.equals(selectedTenantUuid);
-          %>
-            <option value="<%= esc(tUuid) %>" <%= sel ? "selected" : "" %>><%= esc(lbl) %></option>
-          <%
-            }
-          %>
-        </select>
-      </label>
+        <div class="alert alert-ok" style="margin-bottom:12px;">
+          Enter the 6-digit code sent via <strong><%= esc(engineLabel(pendingEngine)) %></strong>
+          to <strong><%= esc(pendingMaskedDestination) %></strong>.
+        </div>
 
-      <label>
-        <span>Email</span>
-        <input type="text" name="email" value="<%= esc(email) %>" autocomplete="username" required />
-      </label>
+        <label>
+          <span>Verification Code</span>
+          <input type="text" name="verificationCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required />
+        </label>
 
-      <label>
-        <span>Password</span>
-        <input type="password" name="password" autocomplete="current-password" required />
-      </label>
+        <div class="actions">
+          <button class="btn" type="submit" name="action" value="verify_2fa">Verify</button>
+          <button class="btn btn-ghost" type="submit" name="action" value="resend_2fa">Resend Code</button>
+          <button class="btn btn-ghost" type="submit" name="action" value="cancel_2fa">Start Over</button>
+        </div>
 
-      <div class="actions">
-        <button class="btn" type="submit" <%= enabledTenants.isEmpty() ? "disabled" : "" %>>Sign in</button>
-        <a class="btn btn-ghost" href="<%= ctx %>/index.jsp">Cancel</a>
-      </div>
+        <div class="help">
+          Security: codes expire after 10 minutes and are attempt-limited.
+        </div>
+      </form>
+    <% } else { %>
+      <form class="form" method="post" action="<%= ctx %>/tenant_login.jsp">
+        <input type="hidden" name="action" value="login" />
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="next" value="<%= esc(next) %>" />
 
-      <div class="help">
-        Security: attempts are rate-limited (temporary IP bans). Sessions are bound to IP + cookie + session id.
-      </div>
-    </form>
+        <label>
+          <span>Tenant</span>
+          <select name="tenantUuid" required <%= enabledTenants.isEmpty() ? "disabled" : "" %>>
+            <% if (enabledTenants.size() != 1) { %>
+              <option value="" <%= selectedTenantUuid.isBlank() ? "selected" : "" %> disabled>Select a tenant…</option>
+            <% } %>
+            <%
+              for (tenants.Tenant t : enabledTenants) {
+                  String tUuid = safe(t.uuid).trim();
+                  String lbl = safe(t.label).trim();
+                  boolean sel = !selectedTenantUuid.isBlank() && tUuid.equals(selectedTenantUuid);
+            %>
+              <option value="<%= esc(tUuid) %>" <%= sel ? "selected" : "" %>><%= esc(lbl) %></option>
+            <%
+              }
+            %>
+          </select>
+        </label>
+
+        <label>
+          <span>Email</span>
+          <input type="text" name="email" value="<%= esc(email) %>" autocomplete="username" required />
+        </label>
+
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" required />
+        </label>
+
+        <div class="actions">
+          <button class="btn" type="submit" <%= enabledTenants.isEmpty() ? "disabled" : "" %>>Sign in</button>
+          <a class="btn btn-ghost" href="<%= ctx %>/index.jsp">Cancel</a>
+        </div>
+
+        <div style="margin-top:8px;">
+          <a href="<%= ctx %>/forgot_password.jsp">Forgot password?</a>
+        </div>
+
+        <div class="help">
+          Security: attempts are rate-limited (temporary IP bans). Sessions are bound to IP + cookie + session id.
+        </div>
+      </form>
+    <% } %>
   </section>
 </div>
 

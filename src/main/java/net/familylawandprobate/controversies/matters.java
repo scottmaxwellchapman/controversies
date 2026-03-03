@@ -11,6 +11,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -180,6 +181,7 @@ public MatterRec(String uuid,
             all.add(rec);
             sortByLabel(all);
             writeAllLocked(tu, all);
+            publishMatterEvent(tu, "matter.created", rec);
             return rec;
         } finally {
             lock.writeLock().unlock();
@@ -211,6 +213,7 @@ public MatterRec(String uuid,
 
             List<MatterRec> all = readAllLocked(tu);
             boolean changed = false;
+            MatterRec updatedRec = null;
             List<MatterRec> out = new ArrayList<MatterRec>(all.size());
 
             for (int i = 0; i < all.size(); i++) {
@@ -238,6 +241,7 @@ public MatterRec(String uuid,
                     next.clioUpdatedAt = safe(m.clioUpdatedAt);
                     out.add(next);
                     changed = true;
+                    updatedRec = next;
                 } else {
                     out.add(m);
                 }
@@ -246,6 +250,7 @@ public MatterRec(String uuid,
             if (changed) {
                 sortByLabel(out);
                 writeAllLocked(tu, out);
+                publishMatterEvent(tu, "matter.updated", updatedRec);
             }
             return changed;
         } finally {
@@ -286,6 +291,7 @@ public MatterRec(String uuid,
 
             List<MatterRec> all = readAllLocked(tu);
             boolean changed = false;
+            MatterRec changedRec = null;
             List<MatterRec> out = new ArrayList<MatterRec>(all.size());
 
             for (int i = 0; i < all.size(); i++) {
@@ -315,6 +321,7 @@ public MatterRec(String uuid,
                     next.clioCanonicalLabel = safe(m.clioCanonicalLabel);
                     next.clioUpdatedAt = safe(m.clioUpdatedAt);
                     out.add(next);
+                    changedRec = next;
                 } else {
                     out.add(m);
                 }
@@ -323,6 +330,7 @@ public MatterRec(String uuid,
             if (changed) {
                 sortByLabel(out);
                 writeAllLocked(tu, out);
+                publishMatterEvent(tu, trashed ? "matter.trashed" : "matter.restored", changedRec);
             }
             return changed;
         } finally {
@@ -506,6 +514,7 @@ public MatterRec(String uuid,
             all.add(rec);
             sortByLabel(all);
             writeAllLocked(tu, all);
+            publishMatterEvent(tu, "matter.created", rec);
             return rec;
         } finally {
             lock.writeLock().unlock();
@@ -539,6 +548,7 @@ public MatterRec(String uuid,
 
             List<MatterRec> all = readAllLocked(tu);
             boolean changed = false;
+            MatterRec updatedRec = null;
             List<MatterRec> out = new ArrayList<MatterRec>(all.size());
 
             for (int i = 0; i < all.size(); i++) {
@@ -565,6 +575,7 @@ public MatterRec(String uuid,
                     next.clioUpdatedAt = safe(m.clioUpdatedAt);
                     out.add(next);
                     changed = true;
+                    updatedRec = next;
                 } else {
                     out.add(m);
                 }
@@ -573,6 +584,7 @@ public MatterRec(String uuid,
             if (changed) {
                 sortByLabel(out);
                 writeAllLocked(tu, out);
+                publishMatterEvent(tu, "matter.updated", updatedRec);
             }
             return changed;
         } finally {
@@ -598,6 +610,7 @@ public MatterRec(String uuid,
             ensure(tu);
             List<MatterRec> all = readAllLocked(tu);
             boolean changed = false;
+            MatterRec updatedRec = null;
             List<MatterRec> out = new ArrayList<MatterRec>(all.size());
 
             for (int i = 0; i < all.size(); i++) {
@@ -623,6 +636,7 @@ public MatterRec(String uuid,
                     next.clioUpdatedAt = safe(sourceUpdatedAt).trim();
                     out.add(next);
                     changed = true;
+                    updatedRec = next;
                 } else {
                     out.add(m);
                 }
@@ -631,10 +645,41 @@ public MatterRec(String uuid,
             if (changed) {
                 sortByLabel(out);
                 writeAllLocked(tu, out);
+                publishMatterEvent(tu, "matter.source_metadata_updated", updatedRec);
             }
             return changed;
         } finally {
             lock.writeLock().unlock();
+        }
+    }
+
+    private static void publishMatterEvent(String tenantUuid, String eventType, MatterRec rec) {
+        if (rec == null) return;
+        try {
+            LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+            payload.put("matter_uuid", safe(rec.uuid));
+            payload.put("matter_label", safe(rec.label));
+            payload.put("jurisdiction_uuid", safe(rec.jurisdictionUuid));
+            payload.put("matter_category_uuid", safe(rec.matterCategoryUuid));
+            payload.put("matter_subcategory_uuid", safe(rec.matterSubcategoryUuid));
+            payload.put("matter_status_uuid", safe(rec.matterStatusUuid));
+            payload.put("matter_substatus_uuid", safe(rec.matterSubstatusUuid));
+            payload.put("cause_docket_number", safe(rec.causeDocketNumber));
+            payload.put("county", safe(rec.county));
+            payload.put("source", safe(rec.source));
+            payload.put("source_matter_id", safe(rec.sourceMatterId));
+            payload.put("clio_canonical_label", safe(rec.clioCanonicalLabel));
+            payload.put("clio_updated_at", safe(rec.clioUpdatedAt));
+            payload.put("enabled", rec.enabled ? "true" : "false");
+            payload.put("trashed", rec.trashed ? "true" : "false");
+            business_process_manager.defaultService().triggerEvent(
+                    safe(tenantUuid),
+                    safe(eventType),
+                    payload,
+                    "",
+                    "matters.store"
+            );
+        } catch (Exception ignored) {
         }
     }
 

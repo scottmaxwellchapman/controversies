@@ -882,6 +882,8 @@ overscroll-behavior: contain;
   color: var(--muted);
   border: 1px solid transparent;
   font-weight: 550;
+  background: transparent;
+  cursor: pointer;
 }
 .tab.active{
   color: var(--text);

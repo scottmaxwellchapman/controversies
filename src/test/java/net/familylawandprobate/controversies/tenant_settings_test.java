@@ -116,6 +116,62 @@ public class tenant_settings_test {
     }
 
     @Test
+    void sanitize_supports_password_policy_fields() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("password_policy_enabled", "yes");
+        in.put("password_policy_min_length", "18");
+        in.put("password_policy_require_uppercase", "true");
+        in.put("password_policy_require_lowercase", "on");
+        in.put("password_policy_require_number", "1");
+        in.put("password_policy_require_symbol", "false");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("true", out.get("password_policy_enabled"));
+        assertEquals("18", out.get("password_policy_min_length"));
+        assertEquals("true", out.get("password_policy_require_uppercase"));
+        assertEquals("true", out.get("password_policy_require_lowercase"));
+        assertEquals("true", out.get("password_policy_require_number"));
+        assertEquals("false", out.get("password_policy_require_symbol"));
+    }
+
+    @Test
+    void sanitize_supports_two_factor_and_flowroute_fields() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("two_factor_policy", "REQUIRED");
+        in.put("two_factor_default_engine", "FLOWROUTE_SMS");
+        in.put("flowroute_sms_from_number", "+1 (206) 555-0100");
+        in.put("flowroute_sms_api_base_url", "https://api.flowroute.com/v2.2/messages");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("required", out.get("two_factor_policy"));
+        assertEquals("flowroute_sms", out.get("two_factor_default_engine"));
+        assertEquals("+12065550100", out.get("flowroute_sms_from_number"));
+        assertEquals("https://api.flowroute.com/v2.2/messages", out.get("flowroute_sms_api_base_url"));
+    }
+
+    @Test
+    void sanitize_defaults_invalid_two_factor_values() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("two_factor_policy", "always");
+        in.put("two_factor_default_engine", "totp");
+        in.put("flowroute_sms_api_base_url", "ftp://example.test");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("off", out.get("two_factor_policy"));
+        assertEquals("email_pin", out.get("two_factor_default_engine"));
+        assertEquals("https://api.flowroute.com/v2.2/messages", out.get("flowroute_sms_api_base_url"));
+    }
+
+    @Test
     void sanitize_supports_email_provider_and_tunable_settings() {
         tenant_settings store = tenant_settings.defaultStore();
 
