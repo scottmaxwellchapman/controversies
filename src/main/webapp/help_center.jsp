@@ -32,6 +32,18 @@
     </article>
 
     <article class="card" style="padding:14px; margin:0;">
+      <h3 style="margin-top:0;">Facts (Novice)</h3>
+      <p class="muted">Step-by-step case-plan setup using Claims, Elements, and Facts.</p>
+      <a class="btn" href="<%= request.getContextPath() %>/help_facts_novice.jsp">Open Guide</a>
+    </article>
+
+    <article class="card" style="padding:14px; margin:0;">
+      <h3 style="margin-top:0;">Facts (Expert)</h3>
+      <p class="muted">Advanced API/report controls for evidence-linked facts workflows.</p>
+      <a class="btn" href="<%= request.getContextPath() %>/help_facts_expert.jsp">Open Guide</a>
+    </article>
+
+    <article class="card" style="padding:14px; margin:0;">
       <h3 style="margin-top:0;">Token + Markup Reference</h3>
       <p class="muted">Technical references for token sources, fallback behavior, and markup notation details.</p>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -73,8 +85,8 @@
         </tr>
         <tr>
           <td>Capture matter facts</td>
-          <td><a href="<%= request.getContextPath() %>/case_fields.jsp">Case Fields</a></td>
-          <td>Before drafting pleadings or notices.</td>
+          <td><a href="<%= request.getContextPath() %>/facts.jsp">Facts Case Plan</a></td>
+          <td>When structuring claims/elements/facts and linking evidence sources.</td>
         </tr>
         <tr>
           <td>Maintain reusable firm values</td>

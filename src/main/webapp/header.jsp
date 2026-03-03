@@ -145,6 +145,7 @@
         MenuGroup g = new MenuGroup("");
         g.items.add(new MenuNode("Home", "/index.jsp"));
         g.items.add(new MenuNode("Cases", "/cases.jsp"));
+        g.items.add(new MenuNode("Facts Case Plan", "/facts.jsp"));
         g.items.add(new MenuNode("Omnichannel Threads", "/omnichannel.jsp"));
         g.items.add(new MenuNode("Knowledge Wiki", "/wiki.jsp"));
         g.items.add(new MenuNode("Texas Law", "/texas_law.jsp"));
@@ -165,6 +166,8 @@
         help.children.add(new MenuNode("Getting Started (Legal Team)", "/help_getting_started.jsp"));
         help.children.add(new MenuNode("Case Workflow Guide", "/help_case_workflow.jsp"));
         help.children.add(new MenuNode("Form Assembly Guide", "/help_form_assembly.jsp"));
+        help.children.add(new MenuNode("Facts Guide (Novice)", "/help_facts_novice.jsp"));
+        help.children.add(new MenuNode("Facts Guide (Expert)", "/help_facts_expert.jsp"));
         help.children.add(new MenuNode("Threads Guide (Novice)", "/help_threads_novice.jsp"));
         help.children.add(new MenuNode("Threads Guide (Expert)", "/help_threads_expert.jsp"));
         help.children.add(new MenuNode("Token Guide", "/token_guide.jsp"));

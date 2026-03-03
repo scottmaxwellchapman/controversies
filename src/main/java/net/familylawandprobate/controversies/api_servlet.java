@@ -309,6 +309,9 @@ public final class api_servlet extends HttpServlet {
         LinkedHashMap<String, Object> omnichannel = executeOmnichannelOperation(operation, params, tenantUuid);
         if (omnichannel != null) return omnichannel;
 
+        LinkedHashMap<String, Object> facts = executeFactsOperation(operation, params, tenantUuid);
+        if (facts != null) return facts;
+
         switch (operation) {
             case "auth.whoami": {
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
@@ -2260,6 +2263,337 @@ public final class api_servlet extends HttpServlet {
         }
     }
 
+    private static LinkedHashMap<String, Object> executeFactsOperation(String operation,
+                                                                        Map<String, Object> params,
+                                                                        String tenantUuid) throws Exception {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (!op.startsWith("facts.")) return null;
+
+        matter_facts store = matter_facts.defaultStore();
+        String matterUuid = str(params, "matter_uuid");
+
+        switch (op) {
+            case "facts.tree.get": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                boolean includeTrashed = boolVal(params, "include_trashed", false);
+                List<matter_facts.ClaimRec> claims = store.listClaims(tenantUuid, matterUuid);
+                List<matter_facts.ElementRec> elements = store.listElements(tenantUuid, matterUuid, "");
+                List<matter_facts.FactRec> facts = store.listFacts(tenantUuid, matterUuid, "", "");
+
+                ArrayList<LinkedHashMap<String, Object>> claimItems = new ArrayList<LinkedHashMap<String, Object>>();
+                for (matter_facts.ClaimRec row : claims) {
+                    if (row == null) continue;
+                    if (!includeTrashed && row.trashed) continue;
+                    claimItems.add(factsClaimMap(row));
+                }
+
+                ArrayList<LinkedHashMap<String, Object>> elementItems = new ArrayList<LinkedHashMap<String, Object>>();
+                for (matter_facts.ElementRec row : elements) {
+                    if (row == null) continue;
+                    if (!includeTrashed && row.trashed) continue;
+                    elementItems.add(factsElementMap(row));
+                }
+
+                ArrayList<LinkedHashMap<String, Object>> factItems = new ArrayList<LinkedHashMap<String, Object>>();
+                for (matter_facts.FactRec row : facts) {
+                    if (row == null) continue;
+                    if (!includeTrashed && row.trashed) continue;
+                    factItems.add(factsFactMap(row));
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("matter_uuid", matterUuid);
+                out.put("claims", claimItems);
+                out.put("elements", elementItems);
+                out.put("facts", factItems);
+                out.put("claim_count", claimItems.size());
+                out.put("element_count", elementItems.size());
+                out.put("fact_count", factItems.size());
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.claims.list": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                boolean includeTrashed = boolVal(params, "include_trashed", false);
+                List<matter_facts.ClaimRec> rows = store.listClaims(tenantUuid, matterUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (matter_facts.ClaimRec row : rows) {
+                    if (row == null) continue;
+                    if (!includeTrashed && row.trashed) continue;
+                    items.add(factsClaimMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.claims.get": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                matter_facts.ClaimRec row = store.getClaim(tenantUuid, matterUuid, str(params, "claim_uuid"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("claim", factsClaimMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.claims.create": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                matter_facts.ClaimRec row = store.createClaim(
+                        tenantUuid,
+                        matterUuid,
+                        str(params, "title"),
+                        str(params, "summary"),
+                        intVal(params, "sort_order", 0),
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("claim", factsClaimMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.claims.update": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                matter_facts.ClaimRec current = store.getClaim(tenantUuid, matterUuid, str(params, "claim_uuid"));
+                if (current == null) throw new IllegalArgumentException("Claim not found.");
+                matter_facts.ClaimRec in = new matter_facts.ClaimRec();
+                in.uuid = safe(current.uuid);
+                in.title = hasParam(params, "title") ? str(params, "title") : safe(current.title);
+                in.summary = hasParam(params, "summary") ? str(params, "summary") : safe(current.summary);
+                in.sortOrder = hasParam(params, "sort_order") ? intVal(params, "sort_order", current.sortOrder) : current.sortOrder;
+                boolean changed = store.updateClaim(tenantUuid, matterUuid, in, str(params, "actor_user_uuid"));
+                matter_facts.ClaimRec row = store.getClaim(tenantUuid, matterUuid, in.uuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("claim", factsClaimMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.claims.set_trashed": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                String claimUuid = str(params, "claim_uuid");
+                boolean trashed = boolVal(params, "trashed", true);
+                boolean changed = store.setClaimTrashed(
+                        tenantUuid,
+                        matterUuid,
+                        claimUuid,
+                        trashed,
+                        str(params, "actor_user_uuid")
+                );
+                matter_facts.ClaimRec row = store.getClaim(tenantUuid, matterUuid, claimUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("claim", factsClaimMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.elements.list": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                boolean includeTrashed = boolVal(params, "include_trashed", false);
+                List<matter_facts.ElementRec> rows = store.listElements(tenantUuid, matterUuid, str(params, "claim_uuid"));
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (matter_facts.ElementRec row : rows) {
+                    if (row == null) continue;
+                    if (!includeTrashed && row.trashed) continue;
+                    items.add(factsElementMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.elements.get": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                matter_facts.ElementRec row = store.getElement(tenantUuid, matterUuid, str(params, "element_uuid"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("element", factsElementMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.elements.create": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                matter_facts.ElementRec row = store.createElement(
+                        tenantUuid,
+                        matterUuid,
+                        str(params, "claim_uuid"),
+                        str(params, "title"),
+                        str(params, "notes"),
+                        intVal(params, "sort_order", 0),
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("element", factsElementMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.elements.update": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                matter_facts.ElementRec current = store.getElement(tenantUuid, matterUuid, str(params, "element_uuid"));
+                if (current == null) throw new IllegalArgumentException("Element not found.");
+                matter_facts.ElementRec in = new matter_facts.ElementRec();
+                in.uuid = safe(current.uuid);
+                in.claimUuid = hasParam(params, "claim_uuid") ? str(params, "claim_uuid") : safe(current.claimUuid);
+                in.title = hasParam(params, "title") ? str(params, "title") : safe(current.title);
+                in.notes = hasParam(params, "notes") ? str(params, "notes") : safe(current.notes);
+                in.sortOrder = hasParam(params, "sort_order") ? intVal(params, "sort_order", current.sortOrder) : current.sortOrder;
+                boolean changed = store.updateElement(tenantUuid, matterUuid, in, str(params, "actor_user_uuid"));
+                matter_facts.ElementRec row = store.getElement(tenantUuid, matterUuid, in.uuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("element", factsElementMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.elements.set_trashed": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                String elementUuid = str(params, "element_uuid");
+                boolean trashed = boolVal(params, "trashed", true);
+                boolean changed = store.setElementTrashed(
+                        tenantUuid,
+                        matterUuid,
+                        elementUuid,
+                        trashed,
+                        str(params, "actor_user_uuid")
+                );
+                matter_facts.ElementRec row = store.getElement(tenantUuid, matterUuid, elementUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("element", factsElementMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.facts.list": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                boolean includeTrashed = boolVal(params, "include_trashed", false);
+                List<matter_facts.FactRec> rows = store.listFacts(
+                        tenantUuid,
+                        matterUuid,
+                        str(params, "claim_uuid"),
+                        str(params, "element_uuid")
+                );
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (matter_facts.FactRec row : rows) {
+                    if (row == null) continue;
+                    if (!includeTrashed && row.trashed) continue;
+                    items.add(factsFactMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.facts.get": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                matter_facts.FactRec row = store.getFact(tenantUuid, matterUuid, str(params, "fact_uuid"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("fact", factsFactMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.facts.create": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                matter_facts.FactRec row = store.createFact(
+                        tenantUuid,
+                        matterUuid,
+                        str(params, "claim_uuid"),
+                        str(params, "element_uuid"),
+                        str(params, "summary"),
+                        str(params, "detail"),
+                        str(params, "internal_notes"),
+                        str(params, "status"),
+                        str(params, "strength"),
+                        str(params, "document_uuid"),
+                        str(params, "part_uuid"),
+                        str(params, "version_uuid"),
+                        intVal(params, "page_number", 0),
+                        intVal(params, "sort_order", 0),
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("fact", factsFactMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.facts.update":
+            case "facts.facts.link_document": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                String factUuid = str(params, "fact_uuid");
+                matter_facts.FactRec current = store.getFact(tenantUuid, matterUuid, factUuid);
+                if (current == null) throw new IllegalArgumentException("Fact not found.");
+                matter_facts.FactRec in = new matter_facts.FactRec();
+                in.uuid = safe(current.uuid);
+                in.claimUuid = hasParam(params, "claim_uuid") ? str(params, "claim_uuid") : safe(current.claimUuid);
+                in.elementUuid = hasParam(params, "element_uuid") ? str(params, "element_uuid") : safe(current.elementUuid);
+                in.summary = hasParam(params, "summary") ? str(params, "summary") : safe(current.summary);
+                in.detail = hasParam(params, "detail") ? str(params, "detail") : safe(current.detail);
+                in.internalNotes = hasParam(params, "internal_notes") ? str(params, "internal_notes") : safe(current.internalNotes);
+                in.status = hasParam(params, "status") ? str(params, "status") : safe(current.status);
+                in.strength = hasParam(params, "strength") ? str(params, "strength") : safe(current.strength);
+                in.documentUuid = hasParam(params, "document_uuid") ? str(params, "document_uuid") : safe(current.documentUuid);
+                in.partUuid = hasParam(params, "part_uuid") ? str(params, "part_uuid") : safe(current.partUuid);
+                in.versionUuid = hasParam(params, "version_uuid") ? str(params, "version_uuid") : safe(current.versionUuid);
+                in.pageNumber = hasParam(params, "page_number") ? intVal(params, "page_number", current.pageNumber) : current.pageNumber;
+                in.sortOrder = hasParam(params, "sort_order") ? intVal(params, "sort_order", current.sortOrder) : current.sortOrder;
+                boolean changed = store.updateFact(tenantUuid, matterUuid, in, str(params, "actor_user_uuid"));
+                matter_facts.FactRec row = store.getFact(tenantUuid, matterUuid, factUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("fact", factsFactMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.facts.set_trashed": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                String factUuid = str(params, "fact_uuid");
+                boolean trashed = boolVal(params, "trashed", true);
+                boolean changed = store.setFactTrashed(
+                        tenantUuid,
+                        matterUuid,
+                        factUuid,
+                        trashed,
+                        str(params, "actor_user_uuid")
+                );
+                matter_facts.FactRec row = store.getFact(tenantUuid, matterUuid, factUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("fact", factsFactMap(row));
+                out.put("report", factsReportMap(store.reportRefs(tenantUuid, matterUuid)));
+                return out;
+            }
+
+            case "facts.report.refresh": {
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                matter_facts.ReportRec report = store.refreshMatterReport(
+                        tenantUuid,
+                        matterUuid,
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("report", factsReportMap(report));
+                return out;
+            }
+
+            default:
+                throw new UnsupportedOperationException("Unknown operation: " + op);
+        }
+    }
+
     private static AssemblerInputs resolveAssemblerInputs(String tenantUuid, Map<String, Object> params) throws Exception {
         String templateUuid = str(params, "template_uuid");
         String templateExtOrName = str(params, "template_ext_or_name");
@@ -2615,6 +2949,25 @@ public final class api_servlet extends HttpServlet {
         ops.put("matters.restore", "Restore matter/case");
         ops.put("matters.update_source_metadata", "Update source metadata (Clio, external sync)");
 
+        ops.put("facts.tree.get", "Get full Claims->Elements->Facts hierarchy for matter");
+        ops.put("facts.claims.list", "List claims for matter");
+        ops.put("facts.claims.get", "Get one claim");
+        ops.put("facts.claims.create", "Create claim (auto-refresh facts report)");
+        ops.put("facts.claims.update", "Update claim (auto-refresh facts report)");
+        ops.put("facts.claims.set_trashed", "Archive/restore claim and descendants");
+        ops.put("facts.elements.list", "List elements for matter/claim");
+        ops.put("facts.elements.get", "Get one element");
+        ops.put("facts.elements.create", "Create element (auto-refresh facts report)");
+        ops.put("facts.elements.update", "Update element (auto-refresh facts report)");
+        ops.put("facts.elements.set_trashed", "Archive/restore element and descendant facts");
+        ops.put("facts.facts.list", "List facts for matter/claim/element");
+        ops.put("facts.facts.get", "Get one fact");
+        ops.put("facts.facts.create", "Create fact with optional document/part/version/page link");
+        ops.put("facts.facts.update", "Update fact fields/link (auto-refresh facts report)");
+        ops.put("facts.facts.link_document", "Update only fact document linkage fields");
+        ops.put("facts.facts.set_trashed", "Archive/restore fact");
+        ops.put("facts.report.refresh", "Regenerate landscape facts case-plan PDF report");
+
         ops.put("case.attributes.list", "List case attribute definitions");
         ops.put("case.attributes.save", "Save case attribute definitions");
         ops.put("case.fields.get", "Read case fields");
@@ -2765,6 +3118,7 @@ curl -k -X POST "%s/execute" \\
 - Tenant settings/fields
 - Users, roles, permissions
 - Matters/cases + fields + list datasets
+- Facts case plans (Claims->Elements->Facts), source document linkage, landscape report refresh
 - Document taxonomy, attributes, documents, parts, versions
 - PDF version rendering and redaction
 - Templates, template tools, assembly, assembled forms
@@ -3040,6 +3394,65 @@ When features are added or changed in the application, matching API operations s
         out.put("required_input_keys", new ArrayList<String>(r.requiredInputKeys));
         out.put("input", new LinkedHashMap<String, String>(r.input));
         out.put("context", new LinkedHashMap<String, String>(r.context));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> factsClaimMap(matter_facts.ClaimRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("claim_uuid", safe(r.uuid));
+        out.put("title", safe(r.title));
+        out.put("summary", safe(r.summary));
+        out.put("sort_order", r.sortOrder);
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("trashed", r.trashed);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> factsElementMap(matter_facts.ElementRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("element_uuid", safe(r.uuid));
+        out.put("claim_uuid", safe(r.claimUuid));
+        out.put("title", safe(r.title));
+        out.put("notes", safe(r.notes));
+        out.put("sort_order", r.sortOrder);
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("trashed", r.trashed);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> factsFactMap(matter_facts.FactRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("fact_uuid", safe(r.uuid));
+        out.put("claim_uuid", safe(r.claimUuid));
+        out.put("element_uuid", safe(r.elementUuid));
+        out.put("summary", safe(r.summary));
+        out.put("detail", safe(r.detail));
+        out.put("internal_notes", safe(r.internalNotes));
+        out.put("status", safe(r.status));
+        out.put("strength", safe(r.strength));
+        out.put("document_uuid", safe(r.documentUuid));
+        out.put("part_uuid", safe(r.partUuid));
+        out.put("version_uuid", safe(r.versionUuid));
+        out.put("page_number", r.pageNumber);
+        out.put("sort_order", r.sortOrder);
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("trashed", r.trashed);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> factsReportMap(matter_facts.ReportRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("report_document_uuid", safe(r.reportDocumentUuid));
+        out.put("report_part_uuid", safe(r.reportPartUuid));
+        out.put("last_report_version_uuid", safe(r.lastReportVersionUuid));
+        out.put("report_generated_at", safe(r.reportGeneratedAt));
         return out;
     }
 

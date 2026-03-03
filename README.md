@@ -5,6 +5,7 @@ Controversies is a local-first legal document workflow app built on embedded Tom
 It supports:
 - Tenant and user login (with role-based permissions)
 - Case management
+- Facts case-plan management (Claims -> Elements -> Facts)
 - Omnichannel thread management (Flowroute SMS/MMS + IMAP/SMTP + Graph mailbox channels)
 - Tenant-level and case-level replacement fields
 - DOCX/DOC/RTF/ODT/TXT template assembly
@@ -19,6 +20,7 @@ It supports:
 - [Prerequisites](#prerequisites)
 - [Getting started (novice-friendly)](#getting-started-novice-friendly)
 - [Daily workflow](#daily-workflow)
+- [Facts Case Plan](#facts-case-plan)
 - [Omnichannel Threads](#omnichannel-threads)
 - [Template format support](#template-format-support)
 - [Browser auto-open behavior](#browser-auto-open-behavior)
@@ -103,6 +105,26 @@ mvn -version
 7. **Assembled Forms / Logs**: inspect output and diagnostics
 
 Main navigation is in `menu.xml` and links these pages from the header.
+
+---
+
+## Facts Case Plan
+
+The app includes a visual case-plan workspace at `facts.jsp` with:
+
+- Side-tree hierarchy: `Claims -> Elements -> Facts`
+- Fact-level status/strength tracking and user-only internal notes
+- Source-linking for each fact to document UUID, part UUID, version UUID, and page number
+- Automatic landscape PDF report generation on hierarchy updates
+- Report storage as standard matter document/part/version history
+
+API coverage for this feature includes:
+
+- `facts.tree.get`
+- `facts.claims.*`
+- `facts.elements.*`
+- `facts.facts.*`
+- `facts.report.refresh`
 
 ---
 
@@ -249,6 +271,7 @@ src/main/webapp/
   user_login.jsp
   users_roles.jsp
   cases.jsp
+  facts.jsp
   omnichannel.jsp
   omnichannel_manifest.jsp
   tenant_fields.jsp
@@ -258,6 +281,8 @@ src/main/webapp/
   business_processes.jsp
   business_process_reviews.jsp
   help_center.jsp
+  help_facts_novice.jsp
+  help_facts_expert.jsp
   help_threads_novice.jsp
   help_threads_expert.jsp
   token_guide.jsp
@@ -362,6 +387,7 @@ The settings workflow records detailed events for:
 - Validation failures on save
 - Successful setting updates
 - API operation success/failure audit entries (`api.operation.*`)
+- Facts case-plan lifecycle events (`facts.claim.*`, `facts.element.*`, `facts.fact.*`, `facts.report.*`)
 - Omnichannel thread lifecycle events (`omnichannel.thread.*`, `omnichannel.message.*`, `omnichannel.attachment.*`)
 - BPM run lifecycle and human-review queue events
 
@@ -450,6 +476,8 @@ Current API coverage includes:
   - `users.*`, `roles.*`, `roles.permission.*`, `roles.permissions.replace`
 - Case/matter workflow:
   - `matters.*`, `case.attributes.*`, `case.fields.*`, `case.list_items.*`
+- Facts case-plan workflow:
+  - `facts.tree.get`, `facts.claims.*`, `facts.elements.*`, `facts.facts.*`, `facts.report.refresh`
 - Document workflow:
   - `document.taxonomy.*`, `document.attributes.*`, `documents.*`, `document.fields.*`, `document.parts.*`, `document.versions.*`
   - `document.versions.render_page`, `document.versions.redact` (PDF version preview/redaction)
