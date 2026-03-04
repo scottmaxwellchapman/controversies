@@ -51,6 +51,92 @@
         return h;
     }
 
+    private static String normalizeMenuKey(String raw) {
+        String s = safe(raw).toLowerCase(Locale.ROOT);
+        s = s.replace("&amp;", " and ");
+        s = s.replace("&", " and ");
+        s = s.replace('_', ' ');
+        s = s.replace('-', ' ');
+        s = s.replaceAll("[^a-z0-9]+", " ").trim();
+        return s;
+    }
+
+    private static boolean containsKey(String haystack, String token) {
+        if (haystack == null || haystack.isBlank()) return false;
+        if (token == null || token.isBlank()) return false;
+        return haystack.contains(token);
+    }
+
+    private static String menuIconName(String label, String href, boolean hasChildren) {
+        String h = normalizeHref(href).toLowerCase(Locale.ROOT);
+        int query = h.indexOf('?');
+        if (query >= 0) h = h.substring(0, query);
+        String l = normalizeMenuKey(label);
+
+        // Path-first mapping keeps menu and page heading icons consistent.
+        if ("/index.jsp".equals(h)) return "home";
+        if ("/cases.jsp".equals(h) || "/case_lists.jsp".equals(h)) return "cases";
+        if ("/documents.jsp".equals(h) || "/parts.jsp".equals(h) || "/versions.jsp".equals(h) || "/pdf_redact.jsp".equals(h)) return "documents";
+        if ("/facts.jsp".equals(h)) return "facts";
+        if ("/tasks.jsp".equals(h)) return "tasks";
+        if ("/omnichannel.jsp".equals(h) || "/omnichannel_manifest.jsp".equals(h)) return "threads";
+        if ("/wiki.jsp".equals(h)) return "wiki";
+        if ("/texas_law.jsp".equals(h)) return "texas-law";
+        if ("/case_fields.jsp".equals(h) || "/tenant_fields.jsp".equals(h)) return "fields";
+        if ("/forms.jsp".equals(h) || "/assembled_forms.jsp".equals(h)) return "forms";
+        if ("/template_library.jsp".equals(h)) return "templates";
+        if ("/template_editor.jsp".equals(h) || "/markup_notation.jsp".equals(h)) return "editor";
+        if ("/users_roles.jsp".equals(h) || "/security.jsp".equals(h)) return "security";
+        if ("/user_settings.jsp".equals(h) || "/tenant_login.jsp".equals(h) || "/user_login.jsp".equals(h)) return "user";
+        if ("/change_email.jsp".equals(h)) return "email";
+        if ("/change_password.jsp".equals(h) || "/forgot_password.jsp".equals(h)) return "password";
+        if ("/custom_objects.jsp".equals(h) || "/custom_object_records.jsp".equals(h)) return "custom-objects";
+        if ("/case_attributes.jsp".equals(h) || "/document_attributes.jsp".equals(h) || "/task_attributes.jsp".equals(h)
+                || "/custom_object_attributes.jsp".equals(h) || "/attribute_editor.jsp".equals(h)) return "attributes";
+        if ("/business_processes.jsp".equals(h) || "/tenant_settings.jsp".equals(h)) return "settings";
+        if ("/business_process_reviews.jsp".equals(h)) return "reviews";
+        if ("/plugin_manager.jsp".equals(h)) return "plugins";
+        if ("/log_viewer.jsp".equals(h)) return "logs";
+        if ("/help_center.jsp".equals(h) || "/help_getting_started.jsp".equals(h) || "/token_guide.jsp".equals(h)) return "info";
+        if (h.startsWith("/help_")) return "help";
+
+        // Label fallback handles heading defaults and submenu labels without href.
+        if (containsKey(l, "home")) return "home";
+        if (containsKey(l, "case") && containsKey(l, "field")) return "fields";
+        if (containsKey(l, "case") && !containsKey(l, "workflow")) return "cases";
+        if (containsKey(l, "document")) return "documents";
+        if (containsKey(l, "fact")) return "facts";
+        if (containsKey(l, "task")) return "tasks";
+        if (containsKey(l, "thread") || containsKey(l, "omnichannel")) return "threads";
+        if (containsKey(l, "wiki") || containsKey(l, "knowledge")) return "wiki";
+        if (containsKey(l, "texas") || containsKey(l, "law")) return "texas-law";
+        if (containsKey(l, "form") && containsKey(l, "assembler")) return "form-assembler";
+        if (containsKey(l, "form") && containsKey(l, "assemble")) return "forms";
+        if (containsKey(l, "template") && containsKey(l, "editor")) return "editor";
+        if (containsKey(l, "template")) return "templates";
+        if (containsKey(l, "setting")) return "settings";
+        if (containsKey(l, "security") || (containsKey(l, "user") && containsKey(l, "role"))) return "security";
+        if (containsKey(l, "user")) return "user";
+        if (containsKey(l, "mail") || containsKey(l, "email")) return "email";
+        if (containsKey(l, "password")) return "password";
+        if (containsKey(l, "attribute")) return "attributes";
+        if (containsKey(l, "custom") && containsKey(l, "object")) return "custom-objects";
+        if (containsKey(l, "plugin")) return "plugins";
+        if (containsKey(l, "log")) return "logs";
+        if (containsKey(l, "review")) return "reviews";
+        if (containsKey(l, "help") || containsKey(l, "guide")) return "help";
+        if (containsKey(l, "token")) return "info";
+        if (hasChildren) return "settings";
+        return "";
+    }
+
+    private static String menuIconHtml(String ctx, String iconName) {
+        String icon = safe(iconName).trim();
+        if (icon.isBlank()) return "";
+        String src = safe(ctx) + "/icons/" + icon + ".svg";
+        return "<img class=\"menu-item-icon\" src=\"" + esc(src) + "\" alt=\"\" aria-hidden=\"true\" width=\"16\" height=\"16\" decoding=\"async\" />";
+    }
+
     private static DocumentBuilder secureBuilder() throws Exception {
         DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
         f.setNamespaceAware(false);
@@ -145,6 +231,7 @@
         MenuGroup g = new MenuGroup("");
         g.items.add(new MenuNode("Home", "/index.jsp"));
         g.items.add(new MenuNode("Cases", "/cases.jsp"));
+        g.items.add(new MenuNode("Contacts", "/contacts.jsp"));
         g.items.add(new MenuNode("Facts Case Plan", "/facts.jsp"));
         g.items.add(new MenuNode("Tasks", "/tasks.jsp"));
         g.items.add(new MenuNode("Omnichannel Threads", "/omnichannel.jsp"));
@@ -152,6 +239,7 @@
         g.items.add(new MenuNode("Texas Law", "/texas_law.jsp"));
         MenuNode settings = new MenuNode("Settings", "");
         settings.children.add(new MenuNode("Users & Security", "/users_roles.jsp"));
+        settings.children.add(new MenuNode("User Settings", "/user_settings.jsp"));
         settings.children.add(new MenuNode("Change E-Mail Address", "/change_email.jsp"));
         settings.children.add(new MenuNode("Change Password", "/change_password.jsp"));
         settings.children.add(new MenuNode("Business Processes", "/business_processes.jsp"));
@@ -224,6 +312,8 @@
         boolean selfActive = isHrefActive(requestUri, ctx, activeNav, href);
         boolean branchActive = isNodeActive(requestUri, ctx, activeNav, node);
         String depthClass = "depth-" + Math.max(0, depth);
+        String iconName = menuIconName(label, href, hasChildren);
+        String iconHtml = menuIconHtml(ctx, iconName);
 
         if (hasChildren) {
             out.write("<details class=\"dropdown-submenu " + depthClass + "\"" + (branchActive ? " open" : "") + ">");
@@ -231,10 +321,10 @@
             if (!href.isBlank()) {
                 String full = safe(ctx) + href;
                 out.write("<a class=\"dropdown-submenu-link " + (selfActive ? "is-active" : "") + "\" role=\"menuitem\" href=\"" + esc(full) + "\" onclick=\"event.stopPropagation();\">");
-                out.write("<span class=\"dropdown-item-label\">" + esc(label) + "</span>");
+                out.write("<span class=\"dropdown-item-label\">" + iconHtml + "<span class=\"dropdown-item-label-text\">" + esc(label) + "</span></span>");
                 out.write("</a>");
             } else {
-                out.write("<span class=\"dropdown-submenu-label\">" + esc(label) + "</span>");
+                out.write("<span class=\"dropdown-submenu-label\">" + iconHtml + "<span class=\"dropdown-item-label-text\">" + esc(label) + "</span></span>");
             }
             out.write("<span class=\"dropdown-submenu-caret\" aria-hidden=\"true\">▸</span>");
             out.write("</summary>");
@@ -249,14 +339,14 @@
 
         if (href.isBlank()) {
             out.write("<div class=\"dropdown-item dropdown-item-label-only " + depthClass + "\">");
-            out.write("<span class=\"dropdown-item-label\">" + esc(label) + "</span>");
+            out.write("<span class=\"dropdown-item-label\">" + iconHtml + "<span class=\"dropdown-item-label-text\">" + esc(label) + "</span></span>");
             out.write("</div>");
             return;
         }
 
         String full = safe(ctx) + href;
         out.write("<a class=\"dropdown-item " + depthClass + " " + (selfActive ? "is-active" : "") + "\" role=\"menuitem\" href=\"" + esc(full) + "\">");
-        out.write("<span class=\"dropdown-item-label\">" + esc(label) + "</span>");
+        out.write("<span class=\"dropdown-item-label\">" + iconHtml + "<span class=\"dropdown-item-label-text\">" + esc(label) + "</span></span>");
         out.write("</a>");
     }
 
@@ -368,6 +458,12 @@
             userUuid != null && !userUuid.isBlank() &&
             userEmail != null && !userEmail.isBlank();
     boolean navVisible = tenantLoggedIn && userLoggedIn;
+    String uiPreferenceScope = "public";
+    if (tenantLoggedIn && userLoggedIn) {
+        uiPreferenceScope = safe(tenantUuid).trim() + ":" + safe(userUuid).trim();
+    } else if (tenantLoggedIn) {
+        uiPreferenceScope = safe(tenantUuid).trim();
+    }
 
     if (navVisible && tenantUuid != null && !tenantUuid.isBlank()) {
         try {
@@ -430,6 +526,7 @@
     }
     if (!currentPath.startsWith("/")) currentPath = "/index.jsp";
 
+    String pageTitleIconName = menuIconName("", currentPath, false);
     String nextEnc = URLEncoder.encode(currentPath, StandardCharsets.UTF_8);
 
     String loginHref = ctx + "/tenant_login.jsp?next=" + nextEnc;
@@ -537,7 +634,11 @@
 <div id="uiThemeConfig"
      style="display:none;"
      data-tenant-scope="<%= esc((tenantUuid == null || tenantUuid.isBlank()) ? "public" : tenantUuid) %>"
+     data-pref-scope="<%= esc(uiPreferenceScope) %>"
+     data-context-path="<%= esc(ctx) %>"
+     data-page-icon-default="<%= esc(pageTitleIconName) %>"
      data-theme-default="<%= esc(uiThemeDefaultMode) %>"
+     data-theme-variant-default="default"
      data-theme-use-location="<%= esc(uiThemeUseLocation) %>"
      data-theme-latitude="<%= esc(uiThemeLatitude) %>"
      data-theme-longitude="<%= esc(uiThemeLongitude) %>"
@@ -554,8 +655,10 @@
     const btnBigger = document.getElementById("uiTextBigger");
     if (!root || !configEl) return;
 
-    const scope = String(configEl.getAttribute("data-tenant-scope") || "public");
+    const scope = String(configEl.getAttribute("data-pref-scope") || configEl.getAttribute("data-tenant-scope") || "public");
+    const legacyScope = String(configEl.getAttribute("data-tenant-scope") || "").trim();
     const modeDefaultRaw = String(configEl.getAttribute("data-theme-default") || "auto").toLowerCase();
+    const variantDefaultRaw = String(configEl.getAttribute("data-theme-variant-default") || "default").toLowerCase();
     const useLocationDefault = String(configEl.getAttribute("data-theme-use-location") || "true").toLowerCase() === "true";
     const latDefaultRaw = String(configEl.getAttribute("data-theme-latitude") || "").trim();
     const lonDefaultRaw = String(configEl.getAttribute("data-theme-longitude") || "").trim();
@@ -563,21 +666,31 @@
     const darkHourDefault = parseHour(configEl.getAttribute("data-theme-dark-hour"), 19);
     const textDefaultRaw = String(configEl.getAttribute("data-text-size-default") || "md").toLowerCase();
 
-    const MODE_KEY = "ui.theme.mode." + scope;
-    const ACTIVE_THEME_KEY = "ui.theme.active." + scope;
-    const GEO_CACHE_KEY = "ui.theme.geo.coords." + scope;
-    const GEO_BLOCKED_KEY = "ui.theme.geo.blocked." + scope;
+    const MODE_PREFIX = "ui.theme.mode.";
+    const ACTIVE_THEME_PREFIX = "ui.theme.active.";
+    const GEO_CACHE_PREFIX = "ui.theme.geo.coords.";
+    const GEO_BLOCKED_PREFIX = "ui.theme.geo.blocked.";
+    const VARIANT_PREFIX = "ui.theme.variant.";
+    const TEXT_SIZE_PREFIX = "ui.text.size.";
+    const MODE_KEY = MODE_PREFIX + scope;
+    const ACTIVE_THEME_KEY = ACTIVE_THEME_PREFIX + scope;
+    const GEO_CACHE_KEY = GEO_CACHE_PREFIX + scope;
+    const GEO_BLOCKED_KEY = GEO_BLOCKED_PREFIX + scope;
+    const VARIANT_KEY = VARIANT_PREFIX + scope;
     const GEO_BLOCKED_TTL_MS = 6 * 60 * 60 * 1000;
-    const TEXT_SIZE_KEY = "ui.text.size." + scope;
+    const TEXT_SIZE_KEY = TEXT_SIZE_PREFIX + scope;
     const SIZE_STEPS = ["sm", "md", "lg", "xl"];
     const MODE_STEPS = ["auto", "dark", "light"];
+    const VARIANT_STEPS = ["default", "macos", "sunset", "graphite"];
 
-    let activeMode = normalizeMode(readStorage(MODE_KEY) || modeDefaultRaw || "auto");
-    let activeTextSize = normalizeTextSize(readStorage(TEXT_SIZE_KEY) || textDefaultRaw || "md");
+    let activeMode = normalizeMode(readScopedPreference(MODE_PREFIX) || modeDefaultRaw || "auto");
+    let activeTextSize = normalizeTextSize(readScopedPreference(TEXT_SIZE_PREFIX) || textDefaultRaw || "md");
+    let activeVariant = normalizeVariant(readScopedPreference(VARIANT_PREFIX) || variantDefaultRaw || "default");
     let autoTimer = null;
     let pendingGeo = false;
     let fullAutoResolvedOnce = false;
 
+    applyVariant(activeVariant);
     applyTextSize(activeTextSize);
     updateTextButtons();
 
@@ -632,6 +745,11 @@
         return (v === "light" || v === "dark" || v === "auto") ? v : "auto";
     }
 
+    function normalizeVariant(raw) {
+        const v = String(raw || "").trim().toLowerCase();
+        return VARIANT_STEPS.indexOf(v) >= 0 ? v : "default";
+    }
+
     function normalizeTextSize(raw) {
         const v = String(raw || "").trim().toLowerCase();
         return SIZE_STEPS.indexOf(v) >= 0 ? v : "md";
@@ -667,6 +785,13 @@
         root.setAttribute("data-theme", t);
         safeWriteStorage(ACTIVE_THEME_KEY, t);
         updateThemeButton();
+    }
+
+    function applyVariant(variant) {
+        const v = normalizeVariant(variant);
+        activeVariant = v;
+        root.setAttribute("data-theme-variant", v);
+        safeWriteStorage(VARIANT_KEY, v);
     }
 
     function applyTextSize(size) {
@@ -941,9 +1066,48 @@
         try { return window.localStorage.getItem(key); } catch (ignored) { return null; }
     }
 
+    function readScopedPreference(prefix) {
+        const scoped = readStorage(prefix + scope);
+        if (scoped != null && String(scoped).trim() !== "") return scoped;
+        if (legacyScope && legacyScope !== scope) {
+            const legacy = readStorage(prefix + legacyScope);
+            if (legacy != null && String(legacy).trim() !== "") return legacy;
+        }
+        return null;
+    }
+
     function safeWriteStorage(key, value) {
         try { window.localStorage.setItem(key, String(value == null ? "" : value)); } catch (ignored) {}
     }
+})();
+</script>
+
+<script>
+(() => {
+    document.addEventListener("DOMContentLoaded", function () {
+        const configEl = document.getElementById("uiThemeConfig");
+        const mainEl = document.querySelector("main");
+        if (!configEl || !mainEl) return;
+
+        const ctx = String(configEl.getAttribute("data-context-path") || "");
+        const iconName = String(configEl.getAttribute("data-page-icon-default") || "").trim();
+        if (!iconName) return;
+
+        const heading = mainEl.querySelector("h1");
+        if (!heading || heading.querySelector(".page-title-icon")) return;
+
+        const icon = document.createElement("img");
+        icon.className = "page-title-icon";
+        icon.src = ctx + "/icons/" + encodeURIComponent(iconName) + ".svg";
+        icon.alt = "";
+        icon.setAttribute("aria-hidden", "true");
+        icon.width = 18;
+        icon.height = 18;
+        icon.decoding = "async";
+
+        heading.classList.add("page-title-with-icon");
+        heading.prepend(icon);
+    });
 })();
 </script>
 

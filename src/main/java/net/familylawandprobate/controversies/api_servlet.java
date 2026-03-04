@@ -187,6 +187,19 @@ public final class api_servlet extends HttpServlet {
                     safe(ex.getMessage())
             );
             writeError(resp, 404, "unknown_operation", safe(ex.getMessage()));
+        } catch (IllegalStateException ex) {
+            auditApiInvocation(
+                    tenantUuid,
+                    operation,
+                    safe((String) req.getAttribute(REQ_CREDENTIAL_ID)),
+                    safe(req.getRemoteAddr()),
+                    method,
+                    false,
+                    409,
+                    "conflict",
+                    safe(ex.getMessage())
+            );
+            writeError(resp, 409, "conflict", safe(ex.getMessage()));
         } catch (Exception ex) {
             LOG.log(
                     Level.WARNING,
@@ -681,6 +694,84 @@ public final class api_servlet extends HttpServlet {
                 return out;
             }
 
+            case "contacts.list": {
+                boolean includeTrashed = boolVal(params, "include_trashed", false);
+                String sourceFilter = str(params, "source").trim().toLowerCase(Locale.ROOT);
+                if (!"clio".equals(sourceFilter) && !"native".equals(sourceFilter)) sourceFilter = "";
+
+                contacts contactStore = contacts.defaultStore();
+                matter_contacts linkStore = matter_contacts.defaultStore();
+                List<contacts.ContactRec> rows = contactStore.listAll(tenantUuid);
+                List<matter_contacts.LinkRec> links = linkStore.listAll(tenantUuid);
+                LinkedHashMap<String, List<matter_contacts.LinkRec>> linksByContact = linksByContactUuid(links);
+
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (contacts.ContactRec r : rows) {
+                    if (r == null) continue;
+                    if (!includeTrashed && r.trashed) continue;
+                    boolean clio = contacts.isClioLocked(r);
+                    if ("clio".equals(sourceFilter) && !clio) continue;
+                    if ("native".equals(sourceFilter) && clio) continue;
+                    items.add(contactMap(r, linksByContact.getOrDefault(safe(r.uuid), List.of())));
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "contacts.get": {
+                String contactUuid = str(params, "contact_uuid");
+                contacts.ContactRec rec = contacts.defaultStore().getByUuid(tenantUuid, contactUuid);
+                List<matter_contacts.LinkRec> links = matter_contacts.defaultStore().listByContact(tenantUuid, contactUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("contact", contactMap(rec, links));
+                return out;
+            }
+
+            case "contacts.create": {
+                contacts.ContactRec rec = contacts.defaultStore().createNative(tenantUuid, contactInputFromParams(params));
+                String matterUuid = str(params, "matter_uuid");
+                if (!matterUuid.isBlank()) {
+                    matter_contacts.defaultStore().replaceNativeLinksForContact(tenantUuid, rec.uuid, List.of(matterUuid));
+                }
+                List<matter_contacts.LinkRec> links = matter_contacts.defaultStore().listByContact(tenantUuid, rec.uuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("contact", contactMap(rec, links));
+                return out;
+            }
+
+            case "contacts.update": {
+                String contactUuid = str(params, "contact_uuid");
+                boolean changed = contacts.defaultStore().updateNative(tenantUuid, contactUuid, contactInputFromParams(params));
+                if (hasParam(params, "matter_uuid")) {
+                    String matterUuid = str(params, "matter_uuid");
+                    if (matterUuid.isBlank()) matter_contacts.defaultStore().replaceNativeLinksForContact(tenantUuid, contactUuid, List.of());
+                    else matter_contacts.defaultStore().replaceNativeLinksForContact(tenantUuid, contactUuid, List.of(matterUuid));
+                }
+                contacts.ContactRec rec = contacts.defaultStore().getByUuid(tenantUuid, contactUuid);
+                List<matter_contacts.LinkRec> links = matter_contacts.defaultStore().listByContact(tenantUuid, contactUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("contact", contactMap(rec, links));
+                return out;
+            }
+
+            case "contacts.trash": {
+                boolean changed = contacts.defaultStore().trash(tenantUuid, str(params, "contact_uuid"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                return out;
+            }
+
+            case "contacts.restore": {
+                boolean changed = contacts.defaultStore().restore(tenantUuid, str(params, "contact_uuid"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                return out;
+            }
+
             case "case.attributes.list": {
                 case_attributes store = case_attributes.defaultStore();
                 boolean enabledOnly = boolVal(params, "enabled_only", false);
@@ -731,6 +822,9 @@ public final class api_servlet extends HttpServlet {
             case "case.fields.update": {
                 case_fields store = case_fields.defaultStore();
                 String matterUuid = str(params, "matter_uuid");
+                if (matters.defaultStore().isClioManaged(tenantUuid, matterUuid)) {
+                    throw new IllegalArgumentException(matters.clioReadOnlyMessage());
+                }
                 boolean replace = boolVal(params, "replace", false);
                 LinkedHashMap<String, String> incoming = stringMap(params.get("fields"));
                 LinkedHashMap<String, String> next = replace ? new LinkedHashMap<String, String>() : new LinkedHashMap<String, String>(store.read(tenantUuid, matterUuid));
@@ -754,6 +848,9 @@ public final class api_servlet extends HttpServlet {
             case "case.list_items.update": {
                 case_list_items store = case_list_items.defaultStore();
                 String matterUuid = str(params, "matter_uuid");
+                if (matters.defaultStore().isClioManaged(tenantUuid, matterUuid)) {
+                    throw new IllegalArgumentException(matters.clioReadOnlyMessage());
+                }
                 boolean replace = boolVal(params, "replace", false);
                 LinkedHashMap<String, String> incoming = stringMap(params.get("lists"));
                 LinkedHashMap<String, String> next = replace ? new LinkedHashMap<String, String>() : new LinkedHashMap<String, String>(store.read(tenantUuid, matterUuid));
@@ -876,6 +973,7 @@ public final class api_servlet extends HttpServlet {
 
             case "documents.update": {
                 documents store = documents.defaultStore();
+                store.requireEditable(tenantUuid, str(params, "matter_uuid"), str(params, "doc_uuid"));
                 documents.DocumentRec rec = new documents.DocumentRec();
                 rec.uuid = str(params, "doc_uuid");
                 rec.title = str(params, "title");
@@ -898,6 +996,7 @@ public final class api_servlet extends HttpServlet {
             }
 
             case "documents.trash": {
+                documents.defaultStore().requireEditable(tenantUuid, str(params, "matter_uuid"), str(params, "doc_uuid"));
                 boolean changed = documents.defaultStore().setTrashed(
                         tenantUuid,
                         str(params, "matter_uuid"),
@@ -910,6 +1009,7 @@ public final class api_servlet extends HttpServlet {
             }
 
             case "documents.restore": {
+                documents.defaultStore().requireEditable(tenantUuid, str(params, "matter_uuid"), str(params, "doc_uuid"));
                 boolean changed = documents.defaultStore().setTrashed(
                         tenantUuid,
                         str(params, "matter_uuid"),
@@ -936,6 +1036,7 @@ public final class api_servlet extends HttpServlet {
                 document_fields store = document_fields.defaultStore();
                 String matterUuid = str(params, "matter_uuid");
                 String docUuid = str(params, "doc_uuid");
+                documents.defaultStore().requireEditable(tenantUuid, matterUuid, docUuid);
                 boolean replace = boolVal(params, "replace", false);
                 LinkedHashMap<String, String> incoming = stringMap(params.get("fields"));
                 LinkedHashMap<String, String> next = replace
@@ -983,6 +1084,7 @@ public final class api_servlet extends HttpServlet {
             }
 
             case "document.parts.create": {
+                documents.defaultStore().requireEditable(tenantUuid, str(params, "matter_uuid"), str(params, "doc_uuid"));
                 document_parts.PartRec rec = document_parts.defaultStore().create(
                         tenantUuid,
                         str(params, "matter_uuid"),
@@ -1000,6 +1102,7 @@ public final class api_servlet extends HttpServlet {
             }
 
             case "document.parts.trash": {
+                documents.defaultStore().requireEditable(tenantUuid, str(params, "matter_uuid"), str(params, "doc_uuid"));
                 boolean changed = document_parts.defaultStore().setTrashed(
                         tenantUuid,
                         str(params, "matter_uuid"),
@@ -1013,6 +1116,7 @@ public final class api_servlet extends HttpServlet {
             }
 
             case "document.parts.restore": {
+                documents.defaultStore().requireEditable(tenantUuid, str(params, "matter_uuid"), str(params, "doc_uuid"));
                 boolean changed = document_parts.defaultStore().setTrashed(
                         tenantUuid,
                         str(params, "matter_uuid"),
@@ -1056,6 +1160,7 @@ public final class api_servlet extends HttpServlet {
             }
 
             case "document.versions.create": {
+                documents.defaultStore().requireEditable(tenantUuid, str(params, "matter_uuid"), str(params, "doc_uuid"));
                 part_versions.VersionRec rec = part_versions.defaultStore().create(
                         tenantUuid,
                         str(params, "matter_uuid"),
@@ -1091,28 +1196,46 @@ public final class api_servlet extends HttpServlet {
                 );
                 part_versions.VersionRec source = findPartVersion(rows, sourceVersionUuid);
                 if (source == null) throw new IllegalArgumentException("Source version not found.");
-                if (!pdf_redaction_service.isPdfVersion(source)) {
-                    throw new IllegalArgumentException("Source version is not a PDF.");
-                }
 
                 Path sourcePath = pdf_redaction_service.resolveStoragePath(source.storagePath);
-                pdf_redaction_service.requirePathWithinTenant(sourcePath, tenantUuid, "Source PDF path");
+                pdf_redaction_service.requirePathWithinTenant(sourcePath, tenantUuid, "Source version path");
                 if (sourcePath == null || !Files.isRegularFile(sourcePath)) {
-                    throw new IllegalArgumentException("Source PDF file not found.");
+                    throw new IllegalArgumentException("Source version file not found.");
+                }
+                if (!document_page_preview.isRenderable(sourcePath)) {
+                    throw new IllegalArgumentException("Preview supports PDF, DOCX, DOC, RTF, TXT, and ODT source versions.");
                 }
 
-                pdf_redaction_service.RenderedPage rendered = pdf_redaction_service.renderPage(sourcePath, page);
+                document_page_preview.RenderedPage rendered = document_page_preview.renderPage(sourcePath, page);
 
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
                 out.put("source_version", versionMap(source));
+                out.put("source_extension", document_page_preview.extension(sourcePath));
                 out.put("page_index", rendered.pageIndex);
                 out.put("page_number", rendered.pageIndex + 1);
                 out.put("total_pages", rendered.totalPages);
-                out.put("has_prev", rendered.pageIndex > 0);
-                out.put("has_next", rendered.pageIndex + 1 < rendered.totalPages);
+                out.put("total_known", rendered.totalKnown);
+                out.put("has_prev", rendered.hasPrev);
+                out.put("has_next", rendered.hasNext);
                 out.put("image_width_px", rendered.imageWidthPx);
                 out.put("image_height_px", rendered.imageHeightPx);
-                out.put("image_png_base64", encodeBase64(rendered.pngBytes));
+                out.put("image_png_base64", rendered.base64Png);
+                out.put("warning", rendered.warning);
+                out.put("engine", rendered.engine);
+                out.put("page_text", rendered.pageText);
+
+                ArrayList<LinkedHashMap<String, Object>> nav = new ArrayList<LinkedHashMap<String, Object>>();
+                for (document_page_preview.NavigationEntry n : rendered.navigation) {
+                    if (n == null) continue;
+                    LinkedHashMap<String, Object> m = new LinkedHashMap<String, Object>();
+                    m.put("type", n.type);
+                    m.put("label", n.label);
+                    m.put("page_index", n.pageIndex);
+                    m.put("target", n.target);
+                    m.put("external", n.external);
+                    nav.add(m);
+                }
+                out.put("navigation", nav);
                 return out;
             }
 
@@ -1121,6 +1244,7 @@ public final class api_servlet extends HttpServlet {
                 String docUuid = str(params, "doc_uuid");
                 String partUuid = str(params, "part_uuid");
                 String sourceVersionUuid = str(params, "source_version_uuid");
+                documents.defaultStore().requireEditable(tenantUuid, matterUuid, docUuid);
 
                 List<part_versions.VersionRec> rows = part_versions.defaultStore().listAll(
                         tenantUuid,
@@ -1474,6 +1598,127 @@ public final class api_servlet extends HttpServlet {
                 return out;
             }
 
+            case "custom_objects.create": {
+                custom_objects store = custom_objects.defaultStore();
+                String key = str(params, "key");
+                if (key.isBlank()) throw new IllegalArgumentException("key is required.");
+                if (store.getByKey(tenantUuid, key) != null) {
+                    throw new IllegalArgumentException("Custom object key already exists.");
+                }
+
+                List<custom_objects.ObjectRec> all = store.listAll(tenantUuid);
+                int defaultSort = (all.size() + 1) * 10;
+                custom_objects.ObjectRec in = new custom_objects.ObjectRec(
+                        "",
+                        key,
+                        str(params, "label"),
+                        str(params, "plural_label"),
+                        hasParam(params, "enabled") ? boolVal(params, "enabled", true) : true,
+                        hasParam(params, "published") ? boolVal(params, "published", false) : false,
+                        intVal(params, "sort_order", defaultSort),
+                        ""
+                );
+
+                ArrayList<custom_objects.ObjectRec> next = new ArrayList<custom_objects.ObjectRec>(all);
+                next.add(in);
+                store.saveAll(tenantUuid, next);
+
+                custom_objects.ObjectRec created = store.getByKey(tenantUuid, key);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("object", customObjectMap(created));
+                return out;
+            }
+
+            case "custom_objects.update": {
+                custom_objects store = custom_objects.defaultStore();
+                String objectUuid = str(params, "object_uuid");
+                if (objectUuid.isBlank()) throw new IllegalArgumentException("object_uuid is required.");
+
+                List<custom_objects.ObjectRec> all = store.listAll(tenantUuid);
+                custom_objects.ObjectRec current = null;
+                for (custom_objects.ObjectRec r : all) {
+                    if (r == null) continue;
+                    if (objectUuid.equals(safe(r.uuid).trim())) {
+                        current = r;
+                        break;
+                    }
+                }
+
+                if (current == null) {
+                    LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                    out.put("updated", false);
+                    out.put("object", customObjectMap(null));
+                    return out;
+                }
+
+                String nextKey = hasParam(params, "key") ? str(params, "key") : current.key;
+                String normalizedNextKey = store.normalizeKey(nextKey);
+                if (normalizedNextKey.isBlank()) throw new IllegalArgumentException("key is required.");
+
+                for (custom_objects.ObjectRec r : all) {
+                    if (r == null) continue;
+                    if (objectUuid.equals(safe(r.uuid).trim())) continue;
+                    if (normalizedNextKey.equals(store.normalizeKey(r.key))) {
+                        throw new IllegalArgumentException("Custom object key already exists.");
+                    }
+                }
+
+                ArrayList<custom_objects.ObjectRec> next = new ArrayList<custom_objects.ObjectRec>(all.size());
+                boolean changed = false;
+                String now = Instant.now().toString();
+
+                for (custom_objects.ObjectRec r : all) {
+                    if (r == null) continue;
+                    if (objectUuid.equals(safe(r.uuid).trim())) {
+                        custom_objects.ObjectRec updated = new custom_objects.ObjectRec(
+                                r.uuid,
+                                nextKey,
+                                hasParam(params, "label") ? str(params, "label") : r.label,
+                                hasParam(params, "plural_label") ? str(params, "plural_label") : r.pluralLabel,
+                                hasParam(params, "enabled") ? boolVal(params, "enabled", r.enabled) : r.enabled,
+                                hasParam(params, "published") ? boolVal(params, "published", r.published) : r.published,
+                                hasParam(params, "sort_order") ? intVal(params, "sort_order", r.sortOrder) : r.sortOrder,
+                                now
+                        );
+                        next.add(updated);
+                        changed = true;
+                    } else {
+                        next.add(r);
+                    }
+                }
+
+                if (changed) store.saveAll(tenantUuid, next);
+                custom_objects.ObjectRec refreshed = store.getByUuid(tenantUuid, objectUuid);
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("object", customObjectMap(refreshed));
+                return out;
+            }
+
+            case "custom_objects.delete": {
+                custom_objects store = custom_objects.defaultStore();
+                String objectUuid = str(params, "object_uuid");
+                if (objectUuid.isBlank()) throw new IllegalArgumentException("object_uuid is required.");
+
+                List<custom_objects.ObjectRec> all = store.listAll(tenantUuid);
+                ArrayList<custom_objects.ObjectRec> next = new ArrayList<custom_objects.ObjectRec>(all.size());
+                boolean changed = false;
+                for (custom_objects.ObjectRec r : all) {
+                    if (r == null) continue;
+                    if (objectUuid.equals(safe(r.uuid).trim())) {
+                        changed = true;
+                        continue;
+                    }
+                    next.add(r);
+                }
+
+                if (changed) store.saveAll(tenantUuid, next);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("deleted", changed);
+                return out;
+            }
+
             case "custom_objects.save": {
                 custom_objects store = custom_objects.defaultStore();
                 List<custom_objects.ObjectRec> rows = parseCustomObjectRows(params.get("rows"));
@@ -1705,6 +1950,65 @@ public final class api_servlet extends HttpServlet {
                 return out;
             }
 
+            case "bpm.webhooks.receive": {
+                business_process_manager bpm = business_process_manager.defaultService();
+                String processUuid = str(params, "process_uuid");
+                String webhookKey = str(params, "webhook_key");
+                if (webhookKey.isBlank()) webhookKey = str(params, "key");
+
+                String normalizedKey = safe(webhookKey).trim().toLowerCase(Locale.ROOT)
+                        .replaceAll("[^a-z0-9._-]", "_")
+                        .replaceAll("_+", "_");
+                while (normalizedKey.startsWith("_")) normalizedKey = normalizedKey.substring(1);
+                while (normalizedKey.endsWith("_")) normalizedKey = normalizedKey.substring(0, normalizedKey.length() - 1);
+
+                String eventType = str(params, "event_type");
+                if (eventType.isBlank()) {
+                    eventType = normalizedKey.isBlank() ? "webhook.received" : ("webhook." + normalizedKey);
+                }
+
+                LinkedHashMap<String, String> payload = stringMap(params.get("payload"));
+                payload.put("webhook_key", webhookKey);
+                payload.put("webhook_key_normalized", normalizedKey);
+                payload.put("webhook_event_type", eventType);
+
+                String actorUserUuid = str(params, "actor_user_uuid");
+                String source = str(params, "source");
+                if (source.isBlank()) source = "api.bpm.webhooks.receive";
+
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                if (processUuid.isBlank()) {
+                    List<business_process_manager.RunResult> rows = bpm.triggerEvent(
+                            tenantUuid,
+                            eventType,
+                            payload,
+                            actorUserUuid,
+                            source
+                    );
+                    for (business_process_manager.RunResult row : rows) {
+                        if (row == null) continue;
+                        items.add(bpmRunMap(row));
+                    }
+                } else {
+                    business_process_manager.RunResult row = bpm.triggerProcess(
+                            tenantUuid,
+                            processUuid,
+                            eventType,
+                            payload,
+                            actorUserUuid,
+                            source
+                    );
+                    items.add(bpmRunMap(row));
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("event_type", eventType);
+                out.put("webhook_key", webhookKey);
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
             case "bpm.runs.list": {
                 List<business_process_manager.RunResult> rows = business_process_manager.defaultService().listRuns(
                         tenantUuid,
@@ -1902,7 +2206,9 @@ public final class api_servlet extends HttpServlet {
 
                 Path target = resolveUnderRoot(root, rel);
                 if (!Files.isRegularFile(target)) throw new IllegalArgumentException("File not found.");
-                if (!texas_law_library.isRenderable(target)) throw new IllegalArgumentException("Viewer supports PDF and DOCX only.");
+                if (!texas_law_library.isRenderable(target)) {
+                    throw new IllegalArgumentException("Viewer supports PDF, DOCX, DOC, RTF, TXT, and ODT.");
+                }
 
                 texas_law_library.RenderedPage rendered = texas_law_library.renderPage(target, page);
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
@@ -3304,6 +3610,12 @@ public final class api_servlet extends HttpServlet {
         ops.put("matters.trash", "Trash matter/case");
         ops.put("matters.restore", "Restore matter/case");
         ops.put("matters.update_source_metadata", "Update source metadata (Clio, external sync)");
+        ops.put("contacts.list", "List contacts");
+        ops.put("contacts.get", "Get one contact");
+        ops.put("contacts.create", "Create native contact");
+        ops.put("contacts.update", "Update native contact");
+        ops.put("contacts.trash", "Archive contact");
+        ops.put("contacts.restore", "Restore archived contact");
 
         ops.put("facts.tree.get", "Get full Claims->Elements->Facts hierarchy for matter");
         ops.put("facts.claims.list", "List claims for matter");
@@ -3365,7 +3677,7 @@ public final class api_servlet extends HttpServlet {
         ops.put("document.parts.restore", "Restore document part");
         ops.put("document.versions.list", "List part versions");
         ops.put("document.versions.create", "Create part version metadata");
-        ops.put("document.versions.render_page", "Render source PDF version page as PNG base64");
+        ops.put("document.versions.render_page", "Render source PDF/word-processor version page as PNG base64 + text + navigation");
         ops.put("document.versions.redact", "Redact source PDF version and create new redacted version");
 
         ops.put("templates.list", "List templates");
@@ -3390,6 +3702,9 @@ public final class api_servlet extends HttpServlet {
 
         ops.put("custom_objects.list", "List custom objects");
         ops.put("custom_objects.get", "Get custom object");
+        ops.put("custom_objects.create", "Create custom object definition");
+        ops.put("custom_objects.update", "Update custom object definition");
+        ops.put("custom_objects.delete", "Delete custom object definition");
         ops.put("custom_objects.save", "Save custom objects list");
         ops.put("custom_objects.set_published", "Toggle custom object published flag");
         ops.put("custom_object_attributes.list", "List custom object attributes");
@@ -3421,6 +3736,7 @@ public final class api_servlet extends HttpServlet {
         ops.put("bpm.processes.save", "Create/update business process definition");
         ops.put("bpm.processes.delete", "Delete business process definition");
         ops.put("bpm.events.trigger", "Trigger one or more business process runs");
+        ops.put("bpm.webhooks.receive", "Receive webhook payload and trigger business process runs");
         ops.put("bpm.runs.list", "List business process run summaries");
         ops.put("bpm.runs.get", "Get one business process run summary");
         ops.put("bpm.runs.undo", "Undo an executed business process run");
@@ -3432,7 +3748,7 @@ public final class api_servlet extends HttpServlet {
         ops.put("texas_law.sync_now", "Trigger Texas law sync now");
         ops.put("texas_law.list_dir", "Browse Texas law data directory");
         ops.put("texas_law.search", "Search Texas law corpus");
-        ops.put("texas_law.render_page", "Render PDF/DOCX page as PNG base64 + text + navigation");
+        ops.put("texas_law.render_page", "Render PDF/word-processor page as PNG base64 + text + navigation");
 
         return ops;
     }
@@ -3547,11 +3863,100 @@ When features are added or changed in the application, matching API operations s
         out.put("source_matter_id", safe(m.sourceMatterId));
         out.put("clio_canonical_label", safe(m.clioCanonicalLabel));
         out.put("clio_updated_at", safe(m.clioUpdatedAt));
+        out.put("clio_read_only", matters.isClioManaged(m));
         out.put("jurisdiction_uuid", m.jurisdictionUuid);
         out.put("matter_category_uuid", m.matterCategoryUuid);
         out.put("matter_subcategory_uuid", m.matterSubcategoryUuid);
         out.put("matter_status_uuid", m.matterStatusUuid);
         out.put("matter_substatus_uuid", m.matterSubstatusUuid);
+        return out;
+    }
+
+    private static contacts.ContactInput contactInputFromParams(Map<String, Object> params) {
+        contacts.ContactInput in = new contacts.ContactInput();
+        if (params == null) return in;
+        in.displayName = str(params, "display_name");
+        in.givenName = str(params, "given_name");
+        in.middleName = str(params, "middle_name");
+        in.surname = str(params, "surname");
+        in.companyName = str(params, "company_name");
+        in.jobTitle = str(params, "job_title");
+        in.emailPrimary = str(params, "email_primary");
+        in.emailSecondary = str(params, "email_secondary");
+        in.emailTertiary = str(params, "email_tertiary");
+        in.businessPhone = str(params, "business_phone");
+        in.businessPhone2 = str(params, "business_phone_2");
+        in.mobilePhone = str(params, "mobile_phone");
+        in.homePhone = str(params, "home_phone");
+        in.otherPhone = str(params, "other_phone");
+        in.website = str(params, "website");
+        in.street = str(params, "street");
+        in.city = str(params, "city");
+        in.state = str(params, "state");
+        in.postalCode = str(params, "postal_code");
+        in.country = str(params, "country");
+        in.notes = str(params, "notes");
+        return in;
+    }
+
+    private static LinkedHashMap<String, List<matter_contacts.LinkRec>> linksByContactUuid(List<matter_contacts.LinkRec> links) {
+        LinkedHashMap<String, List<matter_contacts.LinkRec>> out = new LinkedHashMap<String, List<matter_contacts.LinkRec>>();
+        if (links == null) return out;
+        for (matter_contacts.LinkRec link : links) {
+            if (link == null) continue;
+            String contactUuid = safe(link.contactUuid).trim();
+            if (contactUuid.isBlank()) continue;
+            out.computeIfAbsent(contactUuid, k -> new ArrayList<matter_contacts.LinkRec>()).add(link);
+        }
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> contactMap(contacts.ContactRec c, List<matter_contacts.LinkRec> links) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (c == null) return out;
+        out.put("uuid", c.uuid);
+        out.put("enabled", c.enabled);
+        out.put("trashed", c.trashed);
+        out.put("display_name", safe(c.displayName));
+        out.put("given_name", safe(c.givenName));
+        out.put("middle_name", safe(c.middleName));
+        out.put("surname", safe(c.surname));
+        out.put("company_name", safe(c.companyName));
+        out.put("job_title", safe(c.jobTitle));
+        out.put("email_primary", safe(c.emailPrimary));
+        out.put("email_secondary", safe(c.emailSecondary));
+        out.put("email_tertiary", safe(c.emailTertiary));
+        out.put("business_phone", safe(c.businessPhone));
+        out.put("business_phone_2", safe(c.businessPhone2));
+        out.put("mobile_phone", safe(c.mobilePhone));
+        out.put("home_phone", safe(c.homePhone));
+        out.put("other_phone", safe(c.otherPhone));
+        out.put("website", safe(c.website));
+        out.put("street", safe(c.street));
+        out.put("city", safe(c.city));
+        out.put("state", safe(c.state));
+        out.put("postal_code", safe(c.postalCode));
+        out.put("country", safe(c.country));
+        out.put("notes", safe(c.notes));
+        out.put("source", safe(c.source));
+        out.put("source_contact_id", safe(c.sourceContactId));
+        out.put("clio_updated_at", safe(c.clioUpdatedAt));
+        out.put("updated_at", safe(c.updatedAt));
+        out.put("clio_read_only", contacts.isClioLocked(c));
+
+        ArrayList<LinkedHashMap<String, Object>> linkRows = new ArrayList<LinkedHashMap<String, Object>>();
+        List<matter_contacts.LinkRec> xs = links == null ? List.of() : links;
+        for (matter_contacts.LinkRec link : xs) {
+            if (link == null) continue;
+            LinkedHashMap<String, Object> row = new LinkedHashMap<String, Object>();
+            row.put("matter_uuid", safe(link.matterUuid));
+            row.put("source", safe(link.source));
+            row.put("source_matter_id", safe(link.sourceMatterId));
+            row.put("source_contact_id", safe(link.sourceContactId));
+            row.put("updated_at", safe(link.updatedAt));
+            linkRows.add(row);
+        }
+        out.put("matter_links", linkRows);
         return out;
     }
 
@@ -3571,6 +3976,10 @@ When features are added or changed in the application, matching API operations s
         out.put("created_at", r.createdAt);
         out.put("updated_at", r.updatedAt);
         out.put("trashed", r.trashed);
+        out.put("source", safe(r.source));
+        out.put("source_document_id", safe(r.sourceDocumentId));
+        out.put("source_updated_at", safe(r.sourceUpdatedAt));
+        out.put("read_only", documents.isReadOnly(r));
         return out;
     }
 

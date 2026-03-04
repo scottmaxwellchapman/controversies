@@ -14,7 +14,7 @@
   <h2 style="margin-top:0;">Operational Model</h2>
   <ul style="margin:0; padding-left:18px; line-height:1.5;">
     <li>Case plan hierarchy is matter-scoped and stored as Claims -> Elements -> Facts.</li>
-    <li>Fact records can link to document UUID, part UUID, version UUID, and page number.</li>
+    <li>Fact records can link to source document, part, version, and page number.</li>
     <li>Hierarchy updates auto-refresh a matter-linked, versioned landscape PDF report.</li>
     <li>Report versions are stored in standard document-part-version storage for auditability.</li>
   </ul>
@@ -53,7 +53,7 @@
   <h2 style="margin-top:0;">Quality Control Checklist</h2>
   <ul style="margin:0; padding-left:18px; line-height:1.5;">
     <li>Reject facts with no traceable source linkage for filing-critical elements.</li>
-    <li>Require page number entry when a source version UUID is present.</li>
+    <li>Require page number entry when a source version is linked.</li>
     <li>Use status transitions (unverified -> corroborated -> proven) to drive review queues.</li>
     <li>Monitor report version growth and archive stale facts when matters evolve.</li>
   </ul>

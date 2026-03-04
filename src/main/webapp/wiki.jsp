@@ -140,9 +140,10 @@
   String showArchivedRaw = safe(request.getParameter("show_archived")).trim();
   boolean showArchived = canEdit && boolParam(showArchivedRaw);
   String pageUuid = safe(request.getParameter("page_uuid")).trim();
+  String requestAction = safe(request.getParameter("action")).trim();
 
   if ("POST".equalsIgnoreCase(request.getMethod())) {
-    String action = safe(request.getParameter("action")).trim();
+    String action = requestAction;
     try {
       if (!canEdit) throw new IllegalArgumentException("Edit permissions are required.");
 
@@ -288,6 +289,8 @@
   }
 
   String statusMessage = statusMessage(request);
+  boolean createPaneOpen = navPages.isEmpty()
+    || ("POST".equalsIgnoreCase(request.getMethod()) && "create_page".equals(requestAction));
 %>
 
 <jsp:include page="header.jsp" />
@@ -299,10 +302,34 @@
   .wiki-nav-link.is-active { background:#f1f5f9; font-weight:600; }
   .wiki-meta-pill { display:inline-block; font-size:12px; border:1px solid #d1d5db; border-radius:999px; padding:2px 8px; margin-left:6px; color:#374151; }
   .wiki-toolbar { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
-  .wiki-toolbar button { border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
-  .wiki-editor { min-height:280px; border:1px solid #d1d5db; border-radius:8px; padding:10px; background:#fff; }
-  .wiki-editor:focus { outline:2px solid #93c5fd; outline-offset:1px; }
-  .wiki-render { border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .wiki-toolbar button {
+    border:1px solid var(--border);
+    background:var(--input-bg);
+    color:var(--text);
+    border-radius:6px;
+    padding:6px 10px;
+    cursor:pointer;
+  }
+  .wiki-toolbar button:hover { border-color:var(--accent); }
+  .wiki-toolbar button:focus-visible { outline:none; box-shadow:var(--focus); }
+  .wiki-editor {
+    min-height:280px;
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:10px;
+    background:var(--input-bg);
+    color:var(--text);
+    overflow-wrap:anywhere;
+  }
+  .wiki-editor:focus { outline:none; border-color:var(--accent); box-shadow:var(--focus); }
+  .wiki-render {
+    border:1px solid var(--stroke);
+    border-radius:8px;
+    padding:10px;
+    background:var(--surface-2);
+    color:var(--text);
+  }
+  .wiki-editor a, .wiki-render a { color:var(--accent); }
   .wiki-diff-table { width:100%; border-collapse:collapse; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px; }
   .wiki-diff-table th, .wiki-diff-table td { border:1px solid #e5e7eb; padding:4px 6px; vertical-align:top; }
   .wiki-diff-add { background:#ecfdf3; }
@@ -310,6 +337,21 @@
   .wiki-diff-ctx { background:#fff; }
   .wiki-line-no { color:#6b7280; width:56px; text-align:right; }
   .wiki-muted { color:#6b7280; font-size:13px; }
+  .wiki-expand-pane { border:1px solid #e5e7eb; border-radius:8px; background:#f8fafc; }
+  .wiki-expand-pane > summary {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:8px;
+    cursor:pointer;
+    list-style:none;
+    padding:10px 12px;
+    font-weight:600;
+  }
+  .wiki-expand-pane > summary::-webkit-details-marker { display:none; }
+  .wiki-expand-icon { font-size:12px; color:#6b7280; transition:transform 0.15s ease; }
+  .wiki-expand-pane[open] .wiki-expand-icon { transform:rotate(90deg); }
+  .wiki-expand-body { border-top:1px solid #e5e7eb; padding:10px 12px 12px; }
   @media (max-width: 980px) {
     .wiki-layout { grid-template-columns: 1fr; }
   }
@@ -358,26 +400,33 @@
 
     <% if (canEdit) { %>
     <hr style="margin:12px 0;" />
-    <h3 style="margin:0 0 8px 0;">Create Page</h3>
-    <form class="form" method="post" action="<%= ctx %>/wiki.jsp<%= showArchived ? "?show_archived=1" : "" %>">
-      <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-      <input type="hidden" name="action" value="create_page" />
-      <label><span>Title</span><input type="text" name="new_title" required /></label>
-      <label><span>Slug (optional)</span><input type="text" name="new_slug" placeholder="employment-policies" /></label>
-      <label>
-        <span>Parent Page</span>
-        <select name="new_parent_uuid">
-          <option value="">(none)</option>
-          <% for (tenant_wikis.PageRec p : navPages) { if (p == null) continue; %>
-          <option value="<%= esc(p.uuid) %>"><%= esc(p.title) %></option>
-          <% } %>
-        </select>
-      </label>
-      <label><span>Permission Key (optional)</span><input type="text" name="new_permission_key" placeholder="wiki.hr" /></label>
-      <label><span>Initial Revision Note</span><input type="text" name="new_initial_summary" placeholder="Initial draft." /></label>
-      <label><span>Initial Content (HTML optional)</span><textarea name="new_initial_html" rows="4" placeholder="<p>Start drafting here.</p>"></textarea></label>
-      <button class="btn" type="submit">Create</button>
-    </form>
+    <details class="wiki-expand-pane" <%= createPaneOpen ? "open" : "" %>>
+      <summary>
+        <span>Create Page</span>
+        <span class="wiki-expand-icon" aria-hidden="true">▶</span>
+      </summary>
+      <div class="wiki-expand-body">
+        <form class="form" method="post" action="<%= ctx %>/wiki.jsp<%= showArchived ? "?show_archived=1" : "" %>">
+          <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+          <input type="hidden" name="action" value="create_page" />
+          <label><span>Title</span><input type="text" name="new_title" required /></label>
+          <label><span>Slug (optional)</span><input type="text" name="new_slug" placeholder="employment-policies" /></label>
+          <label>
+            <span>Parent Page</span>
+            <select name="new_parent_uuid">
+              <option value="">(none)</option>
+              <% for (tenant_wikis.PageRec p : navPages) { if (p == null) continue; %>
+              <option value="<%= esc(p.uuid) %>"><%= esc(p.title) %></option>
+              <% } %>
+            </select>
+          </label>
+          <label><span>Permission Key (optional)</span><input type="text" name="new_permission_key" placeholder="wiki.hr" /></label>
+          <label><span>Initial Revision Note</span><input type="text" name="new_initial_summary" placeholder="Initial draft." /></label>
+          <label><span>Initial Content (HTML optional)</span><textarea name="new_initial_html" rows="4" placeholder="<p>Start drafting here.</p>"></textarea></label>
+          <button class="btn" type="submit">Create</button>
+        </form>
+      </div>
+    </details>
     <% } %>
   </section>
 
@@ -524,7 +573,7 @@
             <tr>
               <td><strong><%= esc(r.label) %></strong> <% if (r.current) { %><span class="wiki-meta-pill">Current</span><% } %></td>
               <td><code><%= esc(r.createdAt) %></code></td>
-              <td><%= esc(safe(r.editorEmail).isBlank() ? r.editorUuid : r.editorEmail) %></td>
+              <td><%= esc(safe(r.editorEmail).isBlank() ? "Unknown user" : r.editorEmail) %></td>
               <td><%= esc(r.summary) %></td>
               <td>
                 <a class="btn btn-ghost" href="<%= ctx %>/wiki.jsp?page_uuid=<%= enc(selectedPage.uuid) %>&revision_uuid=<%= enc(r.uuid) %><%= showArchived ? "&show_archived=1" : "" %>">View</a>

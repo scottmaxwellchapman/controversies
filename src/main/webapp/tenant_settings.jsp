@@ -13,6 +13,7 @@
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 <%@ page import="net.familylawandprobate.controversies.api_credentials" %>
+<%@ page import="net.familylawandprobate.controversies.integrations.clio.ClioIntegrationService" %>
 
 <%@ include file="security.jspf" %>
 
@@ -156,6 +157,7 @@
   List<String> setupChecklist = new ArrayList<String>();
   String loadedStorageBackend = tsSafe(settings.get("storage_backend")).trim().toLowerCase(Locale.ROOT);
   String loadedStorageStatus = tsSafe(settings.get("storage_connection_status")).trim().toLowerCase(Locale.ROOT);
+  boolean loadedClioEnabled = "true".equalsIgnoreCase(tsSafe(settings.get("clio_enabled")));
   String loadedClioStatus = tsSafe(settings.get("clio_connection_status")).trim().toLowerCase(Locale.ROOT);
   String loadedEmailProvider = tsSafe(settings.get("email_provider")).trim().toLowerCase(Locale.ROOT);
   String loadedEmailStatus = tsSafe(settings.get("email_connection_status")).trim().toLowerCase(Locale.ROOT);
@@ -163,8 +165,11 @@
   String loadedTwoFactorEngine = tsSafe(settings.get("two_factor_default_engine")).trim().toLowerCase(Locale.ROOT);
   if (loadedStorageBackend.isBlank()) setupChecklist.add("Choose and save a storage backend.");
   if (!"ok".equals(loadedStorageStatus)) setupChecklist.add("Run 'Test Storage Connection' until status is OK.");
-  if (tsSafe(settings.get("clio_base_url")).isBlank()) setupChecklist.add("Enter Clio Base URL if this tenant uses Clio sync.");
-  if (!"ok".equals(loadedClioStatus)) setupChecklist.add("Run 'Test Clio Connection' after credentials are configured.");
+  if (loadedClioEnabled && tsSafe(settings.get("clio_base_url")).isBlank()) setupChecklist.add("Enter Clio Base URL if this tenant uses Clio sync.");
+  if (loadedClioEnabled && !"ok".equals(loadedClioStatus)) setupChecklist.add("Run 'Test Clio Connection' after credentials are configured.");
+  if (loadedClioEnabled && tsSafe(settings.get("clio_matters_last_sync_at")).isBlank()) setupChecklist.add("Run 'Sync Clio Matters + Documents Now' once after enabling Clio sync.");
+  if (loadedClioEnabled && tsSafe(settings.get("clio_documents_last_sync_at")).isBlank()) setupChecklist.add("Confirm Clio documents and versions have completed at least one sync cycle.");
+  if (loadedClioEnabled && tsSafe(settings.get("clio_contacts_last_sync_at")).isBlank()) setupChecklist.add("Run 'Sync Clio Contacts Now' once after enabling Clio sync.");
   if (!"disabled".equals(loadedEmailProvider) && !"ok".equals(loadedEmailStatus)) {
     setupChecklist.add("Run 'Test Email Connection' after email provider credentials are configured.");
   }
@@ -246,6 +251,10 @@
     String storageS3SseMode = tsSafe(request.getParameter("storage_s3_sse_mode")).trim().toLowerCase(Locale.ROOT);
     if (!"aes256".equals(storageS3SseMode) && !"aws_kms".equals(storageS3SseMode)) storageS3SseMode = "none";
     String storageS3SseKmsKeyId = tsSafe(request.getParameter("storage_s3_sse_kms_key_id")).trim();
+    String storageCacheSizeFtpMb = tsIntRange(request.getParameter("storage_cache_size_ftp_mb"), 1024, 0, 1048576);
+    String storageCacheSizeFtpsMb = tsIntRange(request.getParameter("storage_cache_size_ftps_mb"), 1024, 0, 1048576);
+    String storageCacheSizeSftpMb = tsIntRange(request.getParameter("storage_cache_size_sftp_mb"), 1024, 0, 1048576);
+    String storageCacheSizeS3CompatibleMb = tsIntRange(request.getParameter("storage_cache_size_s3_compatible_mb"), 1024, 0, 1048576);
 
     String clioBaseUrl = tsSafe(request.getParameter("clio_base_url")).trim();
     String clioClientId = tsSafe(request.getParameter("clio_client_id")).trim();
@@ -255,6 +264,10 @@
     if (!"private".equals(clioAuthMode)) clioAuthMode = "public";
     String clioOauthCallbackUrl = tsSafe(request.getParameter("clio_oauth_callback_url")).trim();
     String clioPrivateRelayUrl = tsSafe(request.getParameter("clio_private_relay_url")).trim();
+    boolean clioEnabled = tsChecked(request.getParameter("clio_enabled"));
+    String clioStorageMode = tsSafe(request.getParameter("clio_storage_mode")).trim().toLowerCase(Locale.ROOT);
+    if (!"enabled".equals(clioStorageMode)) clioStorageMode = "disabled";
+    String clioMattersSyncIntervalMinutes = tsIntRange(request.getParameter("clio_matters_sync_interval_minutes"), 15, 1, 1440);
 
     String emailProvider = tsSafe(request.getParameter("email_provider")).trim().toLowerCase(Locale.ROOT);
     if (!"smtp".equals(emailProvider) && !"microsoft_graph".equals(emailProvider)) emailProvider = "disabled";
@@ -322,12 +335,19 @@
     settings.put("storage_encryption_mode", storageEncryptionMode);
     settings.put("storage_s3_sse_mode", storageS3SseMode);
     settings.put("storage_s3_sse_kms_key_id", storageS3SseKmsKeyId);
+    settings.put("storage_cache_size_ftp_mb", storageCacheSizeFtpMb);
+    settings.put("storage_cache_size_ftps_mb", storageCacheSizeFtpsMb);
+    settings.put("storage_cache_size_sftp_mb", storageCacheSizeSftpMb);
+    settings.put("storage_cache_size_s3_compatible_mb", storageCacheSizeS3CompatibleMb);
     if (!storageAccessKey.isBlank()) settings.put("storage_access_key", storageAccessKey);
     settings.put("clio_base_url", clioBaseUrl);
     settings.put("clio_client_id", clioClientId);
     settings.put("clio_auth_mode", clioAuthMode);
     settings.put("clio_oauth_callback_url", clioOauthCallbackUrl);
     settings.put("clio_private_relay_url", clioPrivateRelayUrl);
+    settings.put("clio_enabled", clioEnabled ? "true" : "false");
+    settings.put("clio_storage_mode", clioStorageMode);
+    settings.put("clio_matters_sync_interval_minutes", clioMattersSyncIntervalMinutes);
     settings.put("email_provider", emailProvider);
     settings.put("email_from_address", emailFromAddress);
     settings.put("email_from_name", emailFromName);
@@ -456,6 +476,57 @@
       details.put("clio_auth_health_status", tsSafe(settings.get("clio_auth_health_status")));
       details.put("validation_issues", clioFailures.isEmpty() ? "none" : String.join(" | ", clioFailures));
       logs.logVerbose("tenant_settings_clio_test", tenantUuid, userUuid, "", "", details);
+
+    } else if ("sync_clio_matters_now".equalsIgnoreCase(action)) {
+      try {
+        ClioIntegrationService clioService = new ClioIntegrationService();
+        int synced = clioService.syncMatters(tenantUuid, true);
+        ClioIntegrationService.DocumentSyncResult docsResult = clioService.syncDocuments(tenantUuid, true);
+        settings.putAll(store.read(tenantUuid));
+        if (docsResult.ok) {
+          message = "Clio sync completed. Synchronized " + synced + " matter(s), upserted "
+                  + docsResult.documentsUpserted + " document(s), and imported "
+                  + docsResult.versionsImported + " version(s).";
+        } else {
+          error = "Matter sync completed, but document sync had issues: " + tsSafe(docsResult.error);
+        }
+        logs.logVerbose("tenant_settings_clio_sync_now", tenantUuid, userUuid, "", "", Map.of(
+          "result", docsResult.ok ? "ok" : "failed",
+          "synced", String.valueOf(synced),
+          "documents_upserted", String.valueOf(docsResult.documentsUpserted),
+          "versions_imported", String.valueOf(docsResult.versionsImported)
+        ));
+      } catch (Exception ex) {
+        error = "Unable to sync Clio matters/documents: " + tsSafe(ex.getMessage());
+        logs.logVerbose("tenant_settings_clio_sync_now", tenantUuid, userUuid, "", "", Map.of(
+          "result", "failed",
+          "error", tsSafe(ex.getClass().getSimpleName())
+        ));
+      }
+
+    } else if ("sync_clio_contacts_now".equalsIgnoreCase(action)) {
+      try {
+        ClioIntegrationService.ContactSyncResult result = new ClioIntegrationService().syncContactsToMatters(tenantUuid, true);
+        settings.putAll(store.read(tenantUuid));
+        if (result.ok) {
+          message = "Clio contact sync completed. Upserted " + result.contactsUpserted
+                  + " contact(s) and applied " + result.linksApplied + " matter-contact link(s).";
+        } else {
+          error = "Clio contact sync completed with issues: " + tsSafe(result.error);
+        }
+        logs.logVerbose("tenant_settings_clio_contacts_sync_now", tenantUuid, userUuid, "", "", Map.of(
+          "result", result.ok ? "ok" : "failed",
+          "contacts_upserted", String.valueOf(result.contactsUpserted),
+          "links_applied", String.valueOf(result.linksApplied),
+          "link_errors", String.valueOf(result.linkErrors)
+        ));
+      } catch (Exception ex) {
+        error = "Unable to sync Clio contacts: " + tsSafe(ex.getMessage());
+        logs.logVerbose("tenant_settings_clio_contacts_sync_now", tenantUuid, userUuid, "", "", Map.of(
+          "result", "failed",
+          "error", tsSafe(ex.getClass().getSimpleName())
+        ));
+      }
 
     } else if ("test_email_connection".equalsIgnoreCase(action)) {
       LinkedHashMap<String, String> emailCfg = new LinkedHashMap<String, String>();
@@ -595,9 +666,19 @@
           details.put("storage_connection_status", tsSafe(settings.get("storage_connection_status")));
           details.put("storage_encryption_mode", tsSafe(settings.get("storage_encryption_mode")));
           details.put("storage_s3_sse_mode", tsSafe(settings.get("storage_s3_sse_mode")));
+          details.put("storage_cache_size_ftp_mb", tsSafe(settings.get("storage_cache_size_ftp_mb")));
+          details.put("storage_cache_size_ftps_mb", tsSafe(settings.get("storage_cache_size_ftps_mb")));
+          details.put("storage_cache_size_sftp_mb", tsSafe(settings.get("storage_cache_size_sftp_mb")));
+          details.put("storage_cache_size_s3_compatible_mb", tsSafe(settings.get("storage_cache_size_s3_compatible_mb")));
           details.put("clio_connection_status", tsSafe(settings.get("clio_connection_status")));
           details.put("clio_auth_mode", tsSafe(settings.get("clio_auth_mode")));
           details.put("clio_auth_health_status", tsSafe(settings.get("clio_auth_health_status")));
+          details.put("clio_enabled", tsSafe(settings.get("clio_enabled")));
+          details.put("clio_storage_mode", tsSafe(settings.get("clio_storage_mode")));
+          details.put("clio_matters_sync_interval_minutes", tsSafe(settings.get("clio_matters_sync_interval_minutes")));
+          details.put("clio_documents_last_sync_at", tsSafe(settings.get("clio_documents_last_sync_at")));
+          details.put("clio_contacts_last_sync_status", tsSafe(settings.get("clio_contacts_last_sync_status")));
+          details.put("clio_contacts_last_sync_at", tsSafe(settings.get("clio_contacts_last_sync_at")));
           details.put("email_provider", tsSafe(settings.get("email_provider")));
           details.put("email_connection_status", tsSafe(settings.get("email_connection_status")));
           details.put("email_queue_batch_size", tsSafe(settings.get("email_queue_batch_size")));
@@ -667,6 +748,12 @@
   if (!"flowroute_sms".equals(twoFactorDefaultEngineMode)) twoFactorDefaultEngineMode = "email_pin";
   String clioMode = tsSafe(settings.get("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
   if (!"private".equals(clioMode)) clioMode = "public";
+  String clioStorageModeSaved = tsSafe(settings.get("clio_storage_mode")).trim().toLowerCase(Locale.ROOT);
+  if (!"enabled".equals(clioStorageModeSaved)) clioStorageModeSaved = "disabled";
+  String clioSyncIntervalMinutesSaved = tsIntRange(settings.get("clio_matters_sync_interval_minutes"), 15, 1, 1440);
+  String clioContactsSyncStatusSaved = tsSafe(settings.get("clio_contacts_last_sync_status")).trim().toLowerCase(Locale.ROOT);
+  if (!"ok".equals(clioContactsSyncStatusSaved) && !"failed".equals(clioContactsSyncStatusSaved)) clioContactsSyncStatusSaved = "never";
+  String clioContactsSyncErrorSaved = tsSafe(settings.get("clio_contacts_last_sync_error")).trim();
   String themeMode = tsThemeMode(settings.get("theme_mode_default"));
   String themeTextSize = tsTextSize(settings.get("theme_text_size_default"));
   String themeLatitudeSaved = tsSafe(settings.get("theme_latitude")).trim();
@@ -819,7 +906,21 @@
       <label>S3 SSE KMS Key Id
         <input type="text" name="storage_s3_sse_kms_key_id" value="<%= tsEsc(tsSafe(settings.get("storage_s3_sse_kms_key_id"))) %>" placeholder="arn:aws:kms:... or key id" />
       </label>
+      <label>FTP Cache Size (MB)
+        <input type="number" min="0" max="1048576" name="storage_cache_size_ftp_mb" value="<%= tsEsc(tsIntRange(settings.get("storage_cache_size_ftp_mb"), 1024, 0, 1048576)) %>" />
+      </label>
+      <label>FTPS Cache Size (MB)
+        <input type="number" min="0" max="1048576" name="storage_cache_size_ftps_mb" value="<%= tsEsc(tsIntRange(settings.get("storage_cache_size_ftps_mb"), 1024, 0, 1048576)) %>" />
+      </label>
+      <label>SFTP Cache Size (MB)
+        <input type="number" min="0" max="1048576" name="storage_cache_size_sftp_mb" value="<%= tsEsc(tsIntRange(settings.get("storage_cache_size_sftp_mb"), 1024, 0, 1048576)) %>" />
+      </label>
+      <label>S3-Compatible Cache Size (MB)
+        <input type="number" min="0" max="1048576" name="storage_cache_size_s3_compatible_mb" value="<%= tsEsc(tsIntRange(settings.get("storage_cache_size_s3_compatible_mb"), 1024, 0, 1048576)) %>" />
+      </label>
     </div>
+
+    <div class="meta" style="margin-top:8px;">Each external source keeps a bounded local cache to reduce bandwidth costs. Set a source to <code>0</code> to disable that cache. Default is 1024 MB (1 GB) per source.</div>
 
     <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
       <button type="submit" class="btn btn-ghost" name="action" value="test_storage_connection">Test Storage Connection</button>
@@ -831,6 +932,9 @@
 
   <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
     <h2 style="margin-top:0;">Clio Connection</h2>
+    <div class="meta" style="margin-bottom:10px;">One-way sync imports Clio matters, documents, and contacts into Controversies, links contacts to matters, and keeps Clio-synced documents read-only here.</div>
+
+    <label><input type="checkbox" name="clio_enabled" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("clio_enabled"))) ? "checked" : "" %> /> Enable one-way Clio matter sync</label>
 
     <label>Auth Mode
       <select name="clio_auth_mode">
@@ -861,10 +965,36 @@
       <label>Relay/Admin Exchange Path (private mode)
         <input type="text" name="clio_private_relay_url" value="<%= tsEsc(tsSafe(settings.get("clio_private_relay_url"))) %>" placeholder="https://relay.example.com/clio/exchange or internal SOP reference" />
       </label>
+      <label>Matter + Document Sync Interval (minutes)
+        <input type="number" min="1" max="1440" name="clio_matters_sync_interval_minutes" value="<%= tsEsc(clioSyncIntervalMinutesSaved) %>" />
+      </label>
+      <label>Assembled-Form Upload to Clio
+        <select name="clio_storage_mode">
+          <option value="disabled" <%= "disabled".equals(clioStorageModeSaved) ? "selected" : "" %>>Disabled</option>
+          <option value="enabled" <%= "enabled".equals(clioStorageModeSaved) ? "selected" : "" %>>Enabled</option>
+        </select>
+      </label>
+      <label>Last Successful Matter Sync
+        <input type="text" value="<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_matters_last_sync_at")))) %>" disabled />
+      </label>
+      <label>Last Document Sync
+        <input type="text" value="<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_documents_last_sync_at")))) %>" disabled />
+      </label>
+      <label>Last Contact Sync
+        <input type="text" value="<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_contacts_last_sync_at")))) %>" disabled />
+      </label>
+      <label>Last Contact Sync Status
+        <input type="text" value="<%= tsEsc(tsStatusLabel(clioContactsSyncStatusSaved)) %>" disabled />
+      </label>
+      <label>Last Contact Sync Error
+        <input type="text" value="<%= tsEsc(clioContactsSyncErrorSaved.isBlank() ? "None" : clioContactsSyncErrorSaved) %>" disabled />
+      </label>
     </div>
 
     <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
       <button type="submit" class="btn btn-ghost" name="action" value="test_clio_connection">Test Clio Connection</button>
+      <button type="submit" class="btn btn-ghost" name="action" value="sync_clio_matters_now">Sync Clio Matters + Documents Now</button>
+      <button type="submit" class="btn btn-ghost" name="action" value="sync_clio_contacts_now">Sync Clio Contacts Now</button>
       <button type="submit" class="btn btn-ghost" name="action" value="rotate_clio_secret">Rotate Clio Secret</button>
       <label><input type="checkbox" name="save_clio_secret" value="1" /> Persist entered Clio secret on Save</label>
     </div>
@@ -1123,8 +1253,18 @@
       <div>Storage connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("storage_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("storage_connection_checked_at")))) %>)</div>
       <div>Application encryption: <strong><%= tsEsc(tsSafe(settings.get("storage_encryption_mode"))) %></strong></div>
       <div>S3 SSE mode: <strong><%= tsEsc(tsSafe(settings.get("storage_s3_sse_mode"))) %></strong></div>
+      <div>FTP cache size: <strong><%= tsEsc(tsIntRange(settings.get("storage_cache_size_ftp_mb"), 1024, 0, 1048576)) %> MB</strong></div>
+      <div>FTPS cache size: <strong><%= tsEsc(tsIntRange(settings.get("storage_cache_size_ftps_mb"), 1024, 0, 1048576)) %> MB</strong></div>
+      <div>SFTP cache size: <strong><%= tsEsc(tsIntRange(settings.get("storage_cache_size_sftp_mb"), 1024, 0, 1048576)) %> MB</strong></div>
+      <div>S3-compatible cache size: <strong><%= tsEsc(tsIntRange(settings.get("storage_cache_size_s3_compatible_mb"), 1024, 0, 1048576)) %> MB</strong></div>
       <div>Clio connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_connection_checked_at")))) %>)</div>
       <div>Clio auth mode health: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_auth_health_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_auth_health_checked_at")))) %>)</div>
+      <div>Clio sync enabled: <strong><%= "true".equalsIgnoreCase(tsSafe(settings.get("clio_enabled"))) ? "Yes" : "No" %></strong></div>
+      <div>Clio sync interval (minutes): <strong><%= tsEsc(clioSyncIntervalMinutesSaved) %></strong></div>
+      <div>Last Clio matter sync: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_matters_last_sync_at")))) %></strong></div>
+      <div>Last Clio document sync: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_documents_last_sync_at")))) %></strong></div>
+      <div>Last Clio contact sync: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_contacts_last_sync_at")))) %></strong></div>
+      <div>Clio contact sync status: <strong><%= tsEsc(tsStatusLabel(clioContactsSyncStatusSaved)) %></strong></div>
       <div>Email provider: <strong><%= tsEsc(tsSafe(settings.get("email_provider"))) %></strong></div>
       <div>Email connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("email_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("email_connection_checked_at")))) %>)</div>
       <div>Two-factor policy: <strong><%= tsEsc(tsSafe(settings.get("two_factor_policy"))) %></strong></div>

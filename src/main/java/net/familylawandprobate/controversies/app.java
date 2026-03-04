@@ -24,6 +24,7 @@ public class app {
 
         // Start background queue workers early in process lifecycle.
         notification_emails.defaultStore();
+        clio_matter_sync_scheduler.defaultService().startIfNeeded();
         texas_law_sync texasLawSync = texas_law_sync.defaultService();
         texasLawSync.triggerStartupRunIfIdle();
 
@@ -36,9 +37,9 @@ public class app {
             t.start(httpPort, httpsPort);
 
             // Launch the browser only when a desktop UI is available
-            String url = "https://localhost:" + httpsPort + "/";
+            String url = "https://localhost:" + t.getHttpsPort() + "/";
             launchBrowserIfDesktop(url);
-     
+ 
             t.await();
         } catch (Exception ex) {
             LOG.log(Level.SEVERE, null, ex);

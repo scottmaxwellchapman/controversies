@@ -220,6 +220,7 @@ public final class pdf_version_background_jobs {
         if (input == null) return;
         try {
             runPdfSandwich(input.sourcePath, input.outputPath);
+            pdf_redaction_service.preservePageAnnotations(input.sourcePath, input.outputPath);
             finalizeVersion(input);
             LOG.info("PDF OCR job complete: jobId=" + jobId + ", sourceVersion=" + input.sourceVersionUuid + ", output=" + input.outputPath);
         } catch (Exception ex) {

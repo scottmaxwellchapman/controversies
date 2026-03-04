@@ -136,16 +136,69 @@ public class api_omnichannel_bpm_extensions_test {
         boolean foundUpdateThread = false;
         boolean foundSetDocumentField = false;
         boolean foundUpdateTask = false;
+        boolean foundSetCustomObjectRecordField = false;
+        boolean foundUpdateCustomObjectRecord = false;
         for (Object row : asList(out.get("items"))) {
             if (!(row instanceof Map<?, ?> map)) continue;
             String action = safe(String.valueOf(map.get("action")));
             if ("update_thread".equals(action)) foundUpdateThread = true;
             if ("set_document_field".equals(action)) foundSetDocumentField = true;
             if ("update_task".equals(action)) foundUpdateTask = true;
+            if ("set_custom_object_record_field".equals(action)) foundSetCustomObjectRecordField = true;
+            if ("update_custom_object_record".equals(action)) foundUpdateCustomObjectRecord = true;
         }
         assertTrue(foundUpdateThread);
         assertTrue(foundSetDocumentField);
         assertTrue(foundUpdateTask);
+        assertTrue(foundSetCustomObjectRecordField);
+        assertTrue(foundUpdateCustomObjectRecord);
+    }
+
+    @Test
+    void api_supports_custom_object_definition_manipulation() throws Exception {
+        String tenant = "tenant-api-custom-objects-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        LinkedHashMap<String, Object> created = invokeApi(
+                "custom_objects.create",
+                Map.of(
+                        "key", "time_entry",
+                        "label", "Time Entry",
+                        "plural_label", "Time Entries",
+                        "enabled", true,
+                        "published", false,
+                        "sort_order", 10
+                ),
+                tenant
+        );
+        String objectUuid = nestedString(created, "object", "uuid");
+        assertFalse(objectUuid.isBlank());
+
+        LinkedHashMap<String, Object> updated = invokeApi(
+                "custom_objects.update",
+                Map.of(
+                        "object_uuid", objectUuid,
+                        "label", "Billing Time Entry",
+                        "published", true
+                ),
+                tenant
+        );
+        assertTrue(Boolean.parseBoolean(String.valueOf(updated.get("updated"))));
+        assertEquals("Billing Time Entry", nestedString(updated, "object", "label"));
+        assertTrue(Boolean.parseBoolean(String.valueOf(nestedObject(updated, "object", "published"))));
+
+        LinkedHashMap<String, Object> listed = invokeApi("custom_objects.list", Map.of(), tenant);
+        assertEquals(1, asInt(listed.get("count")));
+
+        LinkedHashMap<String, Object> deleted = invokeApi(
+                "custom_objects.delete",
+                Map.of("object_uuid", objectUuid),
+                tenant
+        );
+        assertTrue(Boolean.parseBoolean(String.valueOf(deleted.get("deleted"))));
+
+        LinkedHashMap<String, Object> afterDelete = invokeApi("custom_objects.list", Map.of(), tenant);
+        assertEquals(0, asInt(afterDelete.get("count")));
     }
 
     @SuppressWarnings("unchecked")

@@ -88,6 +88,7 @@ public final class assembled_forms {
         public final String storageObjectKey;
         public final String storageChecksumSha256;
         public final LinkedHashMap<String, String> overrides;
+        public final boolean trashed;
 
         public AssemblyRec(String uuid,
                            String matterUuid,
@@ -107,6 +108,48 @@ public final class assembled_forms {
                            String storageObjectKey,
                            String storageChecksumSha256,
                            Map<String, String> overrides) {
+            this(
+                    uuid,
+                    matterUuid,
+                    templateUuid,
+                    templateLabel,
+                    templateExt,
+                    status,
+                    createdAt,
+                    updatedAt,
+                    userUuid,
+                    userEmail,
+                    overrideCount,
+                    outputFileName,
+                    outputFileExt,
+                    outputSizeBytes,
+                    storageBackendType,
+                    storageObjectKey,
+                    storageChecksumSha256,
+                    overrides,
+                    false
+            );
+        }
+
+        public AssemblyRec(String uuid,
+                           String matterUuid,
+                           String templateUuid,
+                           String templateLabel,
+                           String templateExt,
+                           String status,
+                           String createdAt,
+                           String updatedAt,
+                           String userUuid,
+                           String userEmail,
+                           int overrideCount,
+                           String outputFileName,
+                           String outputFileExt,
+                           long outputSizeBytes,
+                           String storageBackendType,
+                           String storageObjectKey,
+                           String storageChecksumSha256,
+                           Map<String, String> overrides,
+                           boolean trashed) {
             this.uuid = safe(uuid);
             this.matterUuid = safe(matterUuid);
             this.templateUuid = safe(templateUuid);
@@ -125,6 +168,7 @@ public final class assembled_forms {
             this.storageObjectKey = safe(storageObjectKey);
             this.storageChecksumSha256 = safe(storageChecksumSha256).toLowerCase(Locale.ROOT);
             this.overrides = sanitizeOverrides(overrides);
+            this.trashed = trashed;
         }
     }
 
@@ -242,7 +286,7 @@ public final class assembled_forms {
                     AssemblyRec r = all.get(i);
                     if (r == null) continue;
                     if (preferred.equals(safe(r.uuid).trim())) {
-                        if ("in_progress".equals(r.status)) {
+                        if ("in_progress".equals(r.status) && !r.trashed) {
                             targetIdx = i;
                             current = r;
                         }
@@ -255,6 +299,7 @@ public final class assembled_forms {
                 for (int i = 0; i < all.size(); i++) {
                     AssemblyRec r = all.get(i);
                     if (r == null) continue;
+                    if (r.trashed) continue;
                     if (!"in_progress".equals(r.status)) continue;
                     if (!tid.equals(safe(r.templateUuid).trim())) continue;
                     if (!identityMatches(r, uid, eml)) continue;
@@ -364,7 +409,7 @@ public final class assembled_forms {
                     AssemblyRec r = all.get(i);
                     if (r == null) continue;
                     if (preferred.equals(safe(r.uuid).trim())) {
-                        if ("in_progress".equals(r.status)) {
+                        if ("in_progress".equals(r.status) && !r.trashed) {
                             targetIdx = i;
                             current = r;
                         }
@@ -377,6 +422,7 @@ public final class assembled_forms {
                 for (int i = 0; i < all.size(); i++) {
                     AssemblyRec r = all.get(i);
                     if (r == null) continue;
+                    if (r.trashed) continue;
                     if (!"in_progress".equals(r.status)) continue;
                     if (!tid.equals(safe(r.templateUuid).trim())) continue;
                     if (!identityMatches(r, uid, eml)) continue;
@@ -513,7 +559,8 @@ public final class assembled_forms {
                         storageBackendType,
                         storageObjectKey,
                         storageChecksumSha256,
-                        current.overrides
+                        current.overrides,
+                        current.trashed
                 );
                 all.set(i, updated);
                 sortByUpdatedDesc(all);
@@ -521,6 +568,57 @@ public final class assembled_forms {
                 return true;
             }
             return false;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public boolean setTrashed(String tenantUuid, String matterUuid, String assemblyUuid, boolean trashed) throws Exception {
+        String tu = safeFileToken(tenantUuid);
+        String mu = safeFileToken(matterUuid);
+        String au = safe(assemblyUuid).trim();
+        if (tu.isBlank() || mu.isBlank() || au.isBlank()) return false;
+
+        ReentrantReadWriteLock lock = lockFor(tu, mu);
+        lock.writeLock().lock();
+        try {
+            List<AssemblyRec> all = readAllLocked(tu, mu);
+            boolean changed = false;
+            for (int i = 0; i < all.size(); i++) {
+                AssemblyRec current = all.get(i);
+                if (current == null) continue;
+                if (!au.equals(safe(current.uuid).trim())) continue;
+                if (current.trashed == trashed) return false;
+
+                AssemblyRec updated = new AssemblyRec(
+                        current.uuid,
+                        current.matterUuid,
+                        current.templateUuid,
+                        current.templateLabel,
+                        current.templateExt,
+                        current.status,
+                        current.createdAt,
+                        Instant.now().toString(),
+                        current.userUuid,
+                        current.userEmail,
+                        current.overrideCount,
+                        current.outputFileName,
+                        current.outputFileExt,
+                        current.outputSizeBytes,
+                        current.storageBackendType,
+                        current.storageObjectKey,
+                        current.storageChecksumSha256,
+                        current.overrides,
+                        trashed
+                );
+                all.set(i, updated);
+                changed = true;
+                break;
+            }
+            if (!changed) return false;
+            sortByUpdatedDesc(all);
+            writeAllLocked(tu, mu, all);
+            return true;
         } finally {
             lock.writeLock().unlock();
         }
@@ -632,6 +730,7 @@ public final class assembled_forms {
             String outExt = text(e, "output_file_ext");
             long outSize = parseLong(text(e, "output_size_bytes"), 0L);
             LinkedHashMap<String, String> overrides = parseOverrides(e);
+            boolean trashed = "true".equalsIgnoreCase(text(e, "trashed"));
 
             if (overrideCount <= 0) overrideCount = overrides.size();
 
@@ -653,7 +752,8 @@ public final class assembled_forms {
                     text(e, "storage_backend"),
                     text(e, "storage_object_key"),
                     text(e, "storage_checksum_sha256"),
-                    overrides
+                    overrides,
+                    trashed
             );
             out.add(rec);
         }
@@ -706,6 +806,7 @@ public final class assembled_forms {
             sb.append("    <template_label>").append(xmlText(r.templateLabel)).append("</template_label>\n");
             sb.append("    <template_ext>").append(xmlText(r.templateExt)).append("</template_ext>\n");
             sb.append("    <status>").append(xmlText(normalizeStatus(r.status))).append("</status>\n");
+            sb.append("    <trashed>").append(r.trashed ? "true" : "false").append("</trashed>\n");
             sb.append("    <created_at>").append(xmlText(safe(r.createdAt).isBlank() ? now : r.createdAt)).append("</created_at>\n");
             sb.append("    <updated_at>").append(xmlText(safe(r.updatedAt).isBlank() ? now : r.updatedAt)).append("</updated_at>\n");
             sb.append("    <user_uuid>").append(xmlText(r.userUuid)).append("</user_uuid>\n");
@@ -738,6 +839,9 @@ public final class assembled_forms {
         if (rows == null) return;
         rows.sort(new Comparator<AssemblyRec>() {
             public int compare(AssemblyRec a, AssemblyRec b) {
+                boolean at = a != null && a.trashed;
+                boolean bt = b != null && b.trashed;
+                if (at != bt) return at ? 1 : -1;
                 String au = safe(a == null ? "" : a.updatedAt);
                 String bu = safe(b == null ? "" : b.updatedAt);
                 int byDate = bu.compareTo(au);
@@ -777,6 +881,7 @@ public final class assembled_forms {
         if (!normalizeBackendType(a.storageBackendType).equals(normalizeBackendType(b.storageBackendType))) return false;
         if (!safe(a.storageObjectKey).equals(safe(b.storageObjectKey))) return false;
         if (!safe(a.storageChecksumSha256).equalsIgnoreCase(safe(b.storageChecksumSha256))) return false;
+        if (a.trashed != b.trashed) return false;
         if (a.overrides.size() != b.overrides.size()) return false;
 
         for (Map.Entry<String, String> e : a.overrides.entrySet()) {

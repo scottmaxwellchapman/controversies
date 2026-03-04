@@ -41,6 +41,7 @@ public final class document_fields {
     public void write(String tenantUuid, String matterUuid, String docUuid, Map<String, String> fields) throws Exception {
         Path p = fieldsPath(tenantUuid, matterUuid, docUuid);
         if (p == null) throw new IllegalArgumentException("tenantUuid, matterUuid, and docUuid are required");
+        documents.defaultStore().requireEditable(tenantUuid, matterUuid, docUuid);
 
         LinkedHashMap<String, String> clean = sanitizeFields(fields);
         Files.createDirectories(p.getParent());

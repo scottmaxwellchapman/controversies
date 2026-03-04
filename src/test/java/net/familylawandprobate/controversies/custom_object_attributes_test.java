@@ -62,6 +62,49 @@ public class custom_object_attributes_test {
         }
     }
 
+    @Test
+    void save_supports_additional_custom_object_attribute_data_types() throws Exception {
+        String tenantUuid = "custom-object-attrs-extra-types-" + UUID.randomUUID();
+        String objectUuid = "obj-extra-" + UUID.randomUUID();
+        Path tenantDir = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();
+        deleteQuietly(tenantDir);
+
+        try {
+            custom_object_attributes store = custom_object_attributes.defaultStore();
+            store.ensure(tenantUuid, objectUuid);
+
+            List<custom_object_attributes.AttributeRec> rows = new ArrayList<custom_object_attributes.AttributeRec>();
+            rows.add(new custom_object_attributes.AttributeRec("", "opened_at", "Opened At", "datetime-local", "", false, true, 10, ""));
+            rows.add(new custom_object_attributes.AttributeRec("", "service_time", "Service Time", "time", "", false, true, 20, ""));
+            rows.add(new custom_object_attributes.AttributeRec("", "active_flag", "Active Flag", "bool", "ignored", false, true, 30, ""));
+            rows.add(new custom_object_attributes.AttributeRec("", "owner_email", "Owner Email", "email", "", false, true, 40, ""));
+            rows.add(new custom_object_attributes.AttributeRec("", "owner_phone", "Owner Phone", "phone_number", "", false, true, 50, ""));
+            rows.add(new custom_object_attributes.AttributeRec("", "record_url", "Record Url", "uri", "", false, true, 60, ""));
+            store.saveAll(tenantUuid, objectUuid, rows);
+
+            List<custom_object_attributes.AttributeRec> all = store.listAll(tenantUuid, objectUuid);
+            assertEquals(6, all.size());
+
+            assertEquals("datetime", findByKey(all, "opened_at").dataType);
+            assertEquals("time", findByKey(all, "service_time").dataType);
+            assertEquals("boolean", findByKey(all, "active_flag").dataType);
+            assertEquals("", findByKey(all, "active_flag").options);
+            assertEquals("email", findByKey(all, "owner_email").dataType);
+            assertEquals("phone", findByKey(all, "owner_phone").dataType);
+            assertEquals("url", findByKey(all, "record_url").dataType);
+        } finally {
+            deleteQuietly(tenantDir);
+        }
+    }
+
+    private static custom_object_attributes.AttributeRec findByKey(List<custom_object_attributes.AttributeRec> rows, String key) {
+        for (int i = 0; i < rows.size(); i++) {
+            custom_object_attributes.AttributeRec r = rows.get(i);
+            if (r != null && key.equals(r.key)) return r;
+        }
+        throw new IllegalStateException("Missing key: " + key);
+    }
+
     private static void deleteQuietly(Path p) {
         try {
             if (p == null || !Files.exists(p)) return;

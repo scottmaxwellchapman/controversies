@@ -298,7 +298,7 @@
       <div>
         <h1>Users & Roles</h1>
         <div class="meta">
-          Logged in tenant: <strong><%= u_esc(sessionTenantLabel.isBlank() ? sessionTenantUuid : sessionTenantLabel) %></strong>
+          Logged in tenant: <strong><%= u_esc(sessionTenantLabel.isBlank() ? "(Unnamed tenant)" : sessionTenantLabel) %></strong>
         </div>
       </div>
     </div>
@@ -335,7 +335,7 @@
                    boolean sel = tu.equals(targetTenantUuid);
             %>
               <option value="<%= u_esc(tu) %>" <%= sel ? "selected" : "" %>>
-                <%= u_esc(lbl.isBlank() ? tu : lbl) %><%= t.enabled ? "" : " (disabled)" %>
+                <%= u_esc(lbl.isBlank() ? "(Unnamed tenant)" : lbl) %><%= t.enabled ? "" : " (disabled)" %>
               </option>
             <%   }
                } %>
@@ -348,7 +348,7 @@
 
         <% if (!targetTenantUuid.isBlank()) { %>
           <div class="help">
-            Administering: <strong><%= u_esc(targetTenantLabel.isBlank() ? targetTenantUuid : targetTenantLabel) %></strong>
+            Administering: <strong><%= u_esc(targetTenantLabel.isBlank() ? "(Unnamed tenant)" : targetTenantLabel) %></strong>
           </div>
         <% } %>
       </form>

@@ -81,6 +81,37 @@
     String m = safe(ex.getMessage()).trim();
     return m.isBlank() ? ex.getClass().getSimpleName() : m;
   }
+
+  private static boolean isTrueLike(String raw) {
+    String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+    return "true".equals(v) || "1".equals(v) || "yes".equals(v) || "on".equals(v) || "y".equals(v);
+  }
+
+  private static boolean isFalseLike(String raw) {
+    String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+    return "false".equals(v) || "0".equals(v) || "no".equals(v) || "off".equals(v) || "n".equals(v);
+  }
+
+  private static String normalizeAttrValueByType(String dataType, String raw) {
+    String type = safe(dataType).trim().toLowerCase(Locale.ROOT);
+    String v = safe(raw);
+    if ("boolean".equals(type)) {
+      if (isTrueLike(v)) return "true";
+      if (isFalseLike(v)) return "false";
+      return "";
+    }
+    if ("select".equals(type)
+        || "number".equals(type)
+        || "date".equals(type)
+        || "datetime".equals(type)
+        || "time".equals(type)
+        || "email".equals(type)
+        || "phone".equals(type)
+        || "url".equals(type)) {
+      return v.trim();
+    }
+    return v;
+  }
 %>
 
 <%
@@ -177,7 +208,7 @@
             custom_object_attributes.AttributeRec def = defByKey.get(key);
             if (def == null) continue;
 
-            String val = (attrVals != null && i < attrVals.length) ? safe(attrVals[i]) : "";
+            String val = normalizeAttrValueByType(def.dataType, (attrVals != null && i < attrVals.length) ? attrVals[i] : "");
             if ("select".equals(def.dataType)) {
               List<String> opts = attrStore.optionList(def.options);
               if (!opts.isEmpty()) {
@@ -229,7 +260,7 @@
             custom_object_attributes.AttributeRec def = defByKey.get(key);
             if (def == null) continue;
 
-            String val = (attrVals != null && i < attrVals.length) ? safe(attrVals[i]) : "";
+            String val = normalizeAttrValueByType(def.dataType, (attrVals != null && i < attrVals.length) ? attrVals[i] : "");
             if ("select".equals(def.dataType)) {
               List<String> opts = attrStore.optionList(def.options);
               if (!opts.isEmpty()) {
@@ -392,8 +423,7 @@
     response.setHeader("Content-Disposition", "attachment; filename=\"" + fname.replaceAll("[^A-Za-z0-9._-]", "_") + "\"");
 
     StringBuilder csvOut = new StringBuilder(4096);
-    csvOut.append(csv("Record UUID")).append(',')
-          .append(csv("Label")).append(',')
+    csvOut.append(csv("Label")).append(',')
           .append(csv("Trashed")).append(',')
           .append(csv("Created At")).append(',')
           .append(csv("Updated At"));
@@ -407,8 +437,7 @@
     for (int i = 0; i < filtered.size(); i++) {
       custom_object_records.RecordRec r = filtered.get(i);
       if (r == null) continue;
-      csvOut.append(csv(safe(r.uuid))).append(',')
-            .append(csv(safe(r.label))).append(',')
+      csvOut.append(csv(safe(r.label))).append(',')
             .append(csv(r.trashed ? "yes" : "no")).append(',')
             .append(csv(safe(r.createdAt))).append(',')
             .append(csv(safe(r.updatedAt)));
@@ -575,8 +604,24 @@
               <textarea name="attr_def_value" rows="2"></textarea>
             <% } else if ("date".equals(def.dataType)) { %>
               <input type="date" name="attr_def_value" />
+            <% } else if ("datetime".equals(def.dataType)) { %>
+              <input type="datetime-local" name="attr_def_value" />
+            <% } else if ("time".equals(def.dataType)) { %>
+              <input type="time" name="attr_def_value" />
             <% } else if ("number".equals(def.dataType)) { %>
               <input type="number" name="attr_def_value" />
+            <% } else if ("boolean".equals(def.dataType)) { %>
+              <select name="attr_def_value">
+                <option value=""></option>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            <% } else if ("email".equals(def.dataType)) { %>
+              <input type="email" name="attr_def_value" />
+            <% } else if ("phone".equals(def.dataType)) { %>
+              <input type="tel" name="attr_def_value" />
+            <% } else if ("url".equals(def.dataType)) { %>
+              <input type="url" name="attr_def_value" />
             <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
               <select name="attr_def_value">
                 <option value=""></option>
@@ -690,8 +735,24 @@
                         <textarea name="attr_def_value" rows="2"><%= esc(vv) %></textarea>
                       <% } else if ("date".equals(def.dataType)) { %>
                         <input type="date" name="attr_def_value" value="<%= esc(vv) %>" />
+                      <% } else if ("datetime".equals(def.dataType)) { %>
+                        <input type="datetime-local" name="attr_def_value" value="<%= esc(vv) %>" />
+                      <% } else if ("time".equals(def.dataType)) { %>
+                        <input type="time" name="attr_def_value" value="<%= esc(vv) %>" />
                       <% } else if ("number".equals(def.dataType)) { %>
                         <input type="number" name="attr_def_value" value="<%= esc(vv) %>" />
+                      <% } else if ("boolean".equals(def.dataType)) { %>
+                        <select name="attr_def_value">
+                          <option value=""></option>
+                          <option value="true" <%= "true".equals(normalizeAttrValueByType("boolean", vv)) ? "selected" : "" %>>Yes</option>
+                          <option value="false" <%= "false".equals(normalizeAttrValueByType("boolean", vv)) ? "selected" : "" %>>No</option>
+                        </select>
+                      <% } else if ("email".equals(def.dataType)) { %>
+                        <input type="email" name="attr_def_value" value="<%= esc(vv) %>" />
+                      <% } else if ("phone".equals(def.dataType)) { %>
+                        <input type="tel" name="attr_def_value" value="<%= esc(vv) %>" />
+                      <% } else if ("url".equals(def.dataType)) { %>
+                        <input type="url" name="attr_def_value" value="<%= esc(vv) %>" />
                       <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
                         <select name="attr_def_value">
                           <option value=""></option>

@@ -947,27 +947,23 @@ public final class tasks {
         lines.add("");
 
         lines.add("Task Summary");
-        lines.add("Task UUID: " + safe(task == null ? "" : task.uuid));
-        lines.add("Matter UUID: " + safe(task == null ? "" : task.matterUuid));
         lines.add("Matter Label: " + safe(matter == null ? "" : matter.label));
         lines.add("Title: " + safe(task == null ? "" : task.title));
         lines.add("Status: " + safe(task == null ? "" : task.status));
         lines.add("Priority: " + safe(task == null ? "" : task.priority));
-        lines.add("Assigned User UUID(s): " + safe(task == null ? "" : task.assignedUserUuid));
+        lines.add("Assigned Users: " + (safe(task == null ? "" : task.assignedUserUuid).trim().isBlank() ? "(none)" : "(assigned)"));
         lines.add("Assignment Mode: " + safe(task == null ? "" : task.assignmentMode));
         lines.add("Due At: " + safe(task == null ? "" : task.dueAt));
         lines.add("Reminder At: " + safe(task == null ? "" : task.reminderAt));
         lines.add("Estimate Minutes: " + (task == null ? 0 : task.estimateMinutes));
-        lines.add("Parent Task UUID: " + safe(task == null ? "" : task.parentTaskUuid));
-        lines.add("Thread UUID: " + safe(task == null ? "" : task.threadUuid));
-        lines.add("Fact Link: claim=" + safe(task == null ? "" : task.claimUuid)
-                + " element=" + safe(task == null ? "" : task.elementUuid)
-                + " fact=" + safe(task == null ? "" : task.factUuid));
-        lines.add("Document Link: document=" + safe(task == null ? "" : task.documentUuid)
-                + " part=" + safe(task == null ? "" : task.partUuid)
-                + " version=" + safe(task == null ? "" : task.versionUuid)
-                + " page=" + (task == null ? 0 : task.pageNumber));
-        lines.add("Created By: " + safe(task == null ? "" : task.createdBy));
+        lines.add("Fact Link: " + ((task != null && (!safe(task.claimUuid).trim().isBlank()
+                || !safe(task.elementUuid).trim().isBlank()
+                || !safe(task.factUuid).trim().isBlank())) ? "Linked" : "(none)"));
+        lines.add("Document Link: " + ((task != null && (!safe(task.documentUuid).trim().isBlank()
+                || !safe(task.partUuid).trim().isBlank()
+                || !safe(task.versionUuid).trim().isBlank())) ? "Linked" : "(none)")
+                + " | page=" + (task == null ? 0 : task.pageNumber));
+        lines.add("Created By: " + displayActor(task == null ? "" : task.createdBy));
         lines.add("Created At: " + safe(task == null ? "" : task.createdAt));
         lines.add("Updated At: " + safe(task == null ? "" : task.updatedAt));
         lines.add("Completed At: " + safe(task == null ? "" : task.completedAt));
@@ -1001,9 +997,7 @@ public final class tasks {
                 AssignmentRec a = assignments.get(i);
                 if (a == null) continue;
                 lines.add("[" + safe(a.changedAt) + "] mode=" + safe(a.mode)
-                        + " from=" + safe(a.fromUserUuid)
-                        + " to=" + safe(a.toUserUuid)
-                        + " by=" + safe(a.changedBy));
+                        + " by=" + displayActor(a.changedBy));
                 if (!safe(a.reason).trim().isBlank()) appendWrapped(lines, "Reason: " + safe(a.reason), 110);
             }
         }
@@ -1020,8 +1014,7 @@ public final class tasks {
                         + " | status=" + safe(r.status)
                         + " | priority=" + safe(r.priority)
                         + " | estimate=" + r.estimateMinutes + "m"
-                        + " | archived=" + (r.archived ? "yes" : "no")
-                        + " | task_uuid=" + safe(r.uuid));
+                        + " | archived=" + (r.archived ? "yes" : "no"));
             }
         }
 
@@ -1631,6 +1624,13 @@ public final class tasks {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static String displayActor(String raw) {
+        String v = safe(raw).trim();
+        if (v.isBlank()) return "";
+        if (v.contains("@")) return v;
+        return "Account user";
     }
 
     private static String clampLen(String s, int max) {

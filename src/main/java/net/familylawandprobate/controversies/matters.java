@@ -38,6 +38,7 @@ import org.xml.sax.InputSource;
 public final class matters {
 
     private static final ConcurrentHashMap<String, ReentrantReadWriteLock> LOCKS = new ConcurrentHashMap<>();
+    private static final String CLIO_READ_ONLY_MESSAGE = "This case is synced from Clio and cannot be edited here. Edit it in Clio.";
 
     public static matters defaultStore() { return new matters(); }
 
@@ -135,6 +136,20 @@ public MatterRec(String uuid,
         }
     }
 
+    public static boolean isClioManaged(MatterRec rec) {
+        if (rec == null) return false;
+        return "clio".equalsIgnoreCase(safe(rec.source).trim());
+    }
+
+    public static String clioReadOnlyMessage() {
+        return CLIO_READ_ONLY_MESSAGE;
+    }
+
+    public boolean isClioManaged(String tenantUuid, String matterUuid) throws Exception {
+        MatterRec rec = getByUuid(tenantUuid, matterUuid);
+        return isClioManaged(rec);
+    }
+
     public MatterRec create(String tenantUuid,
                             String label,
                             String jurisdictionUuid,
@@ -182,6 +197,7 @@ public MatterRec(String uuid,
             sortByLabel(all);
             writeAllLocked(tu, all);
             publishMatterEvent(tu, "matter.created", rec);
+            auditMatterActivity(tu, "cases.case.created", rec);
             return rec;
         } finally {
             lock.writeLock().unlock();
@@ -221,6 +237,9 @@ public MatterRec(String uuid,
                 if (m == null) continue;
 
                 if (id.equals(safe(m.uuid).trim())) {
+                    if (isClioManaged(m)) {
+                        throw new IllegalArgumentException(CLIO_READ_ONLY_MESSAGE);
+                    }
                     MatterRec next = new MatterRec(
                             id,
                             m.enabled,
@@ -251,6 +270,7 @@ public MatterRec(String uuid,
                 sortByLabel(out);
                 writeAllLocked(tu, out);
                 publishMatterEvent(tu, "matter.updated", updatedRec);
+                auditMatterActivity(tu, "cases.case.updated", updatedRec);
             }
             return changed;
         } finally {
@@ -301,6 +321,9 @@ public MatterRec(String uuid,
                 if (id.equals(safe(m.uuid).trim())) {
                     boolean en = trashed ? false : true;
                     if (m.trashed != trashed || m.enabled != en) changed = true;
+                    if (changed && isClioManaged(m)) {
+                        throw new IllegalArgumentException(CLIO_READ_ONLY_MESSAGE);
+                    }
 
                     MatterRec next = new MatterRec(
                             m.uuid,
@@ -331,6 +354,7 @@ public MatterRec(String uuid,
                 sortByLabel(out);
                 writeAllLocked(tu, out);
                 publishMatterEvent(tu, trashed ? "matter.trashed" : "matter.restored", changedRec);
+                auditMatterActivity(tu, trashed ? "cases.case.archived" : "cases.case.restored", changedRec);
             }
             return changed;
         } finally {
@@ -515,6 +539,7 @@ public MatterRec(String uuid,
             sortByLabel(all);
             writeAllLocked(tu, all);
             publishMatterEvent(tu, "matter.created", rec);
+            auditMatterActivity(tu, "cases.case.created", rec);
             return rec;
         } finally {
             lock.writeLock().unlock();
@@ -531,7 +556,60 @@ public MatterRec(String uuid,
                           String matterSubstatusUuid,
                           String causeDocketNumber,
                           String county) throws Exception {
+        return updateDetailedInternal(
+                tenantUuid,
+                uuid,
+                label,
+                jurisdictionUuid,
+                matterCategoryUuid,
+                matterSubcategoryUuid,
+                matterStatusUuid,
+                matterSubstatusUuid,
+                causeDocketNumber,
+                county,
+                false
+        );
+    }
 
+    /**
+     * Internal sync-only update path for externally managed matters (for example Clio inbound sync).
+     */
+    public boolean updateForExternalSync(String tenantUuid,
+                                         String uuid,
+                                         String label,
+                                         String jurisdictionUuid,
+                                         String matterCategoryUuid,
+                                         String matterSubcategoryUuid,
+                                         String matterStatusUuid,
+                                         String matterSubstatusUuid,
+                                         String causeDocketNumber,
+                                         String county) throws Exception {
+        return updateDetailedInternal(
+                tenantUuid,
+                uuid,
+                label,
+                jurisdictionUuid,
+                matterCategoryUuid,
+                matterSubcategoryUuid,
+                matterStatusUuid,
+                matterSubstatusUuid,
+                causeDocketNumber,
+                county,
+                true
+        );
+    }
+
+    private boolean updateDetailedInternal(String tenantUuid,
+                                           String uuid,
+                                           String label,
+                                           String jurisdictionUuid,
+                                           String matterCategoryUuid,
+                                           String matterSubcategoryUuid,
+                                           String matterStatusUuid,
+                                           String matterSubstatusUuid,
+                                           String causeDocketNumber,
+                                           String county,
+                                           boolean allowExternalManagedOverride) throws Exception {
         String tu = safe(tenantUuid).trim();
         String id = safe(uuid).trim();
         String lbl = safe(label).trim();
@@ -556,6 +634,9 @@ public MatterRec(String uuid,
                 if (m == null) continue;
 
                 if (id.equals(safe(m.uuid).trim())) {
+                    if (isClioManaged(m) && !allowExternalManagedOverride) {
+                        throw new IllegalArgumentException(CLIO_READ_ONLY_MESSAGE);
+                    }
                     MatterRec next = new MatterRec(
                             id,
                             m.enabled,
@@ -585,6 +666,7 @@ public MatterRec(String uuid,
                 sortByLabel(out);
                 writeAllLocked(tu, out);
                 publishMatterEvent(tu, "matter.updated", updatedRec);
+                auditMatterActivity(tu, "cases.case.updated", updatedRec);
             }
             return changed;
         } finally {
@@ -646,6 +728,7 @@ public MatterRec(String uuid,
                 sortByLabel(out);
                 writeAllLocked(tu, out);
                 publishMatterEvent(tu, "matter.source_metadata_updated", updatedRec);
+                auditMatterActivity(tu, "cases.case.source_metadata_updated", updatedRec);
             }
             return changed;
         } finally {
@@ -678,6 +761,30 @@ public MatterRec(String uuid,
                     payload,
                     "",
                     "matters.store"
+            );
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void auditMatterActivity(String tenantUuid, String action, MatterRec rec) {
+        if (rec == null) return;
+        try {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("matter_uuid", safe(rec.uuid));
+            details.put("matter_label", safe(rec.label));
+            details.put("cause_docket_number", safe(rec.causeDocketNumber));
+            details.put("county", safe(rec.county));
+            details.put("source", safe(rec.source));
+            details.put("source_matter_id", safe(rec.sourceMatterId));
+            details.put("enabled", rec.enabled ? "true" : "false");
+            details.put("trashed", rec.trashed ? "true" : "false");
+            activity_log.defaultStore().logVerbose(
+                    safe(action),
+                    safe(tenantUuid),
+                    "",
+                    safe(rec.uuid),
+                    "",
+                    details
             );
         } catch (Exception ignored) {
         }

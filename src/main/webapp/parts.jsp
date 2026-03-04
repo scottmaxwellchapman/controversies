@@ -45,11 +45,14 @@ String caseUuid = safe(request.getParameter("case_uuid")).trim();
 String docUuid = safe(request.getParameter("doc_uuid")).trim();
 documents docs = documents.defaultStore();
 document_parts parts = document_parts.defaultStore();
+documents.DocumentRec doc = docs.get(tenantUuid, caseUuid, docUuid);
+boolean docReadOnly = documents.isReadOnly(doc);
 String error = null;
 if ("POST".equalsIgnoreCase(request.getMethod())) {
   String action = safe(request.getParameter("action")).trim();
   try {
     if ("create_part".equals(action)) {
+      if (docReadOnly) throw new IllegalStateException(documents.readOnlyMessage(doc));
       parts.create(tenantUuid, caseUuid, docUuid, request.getParameter("label"), request.getParameter("part_category"), request.getParameter("sequence"), request.getParameter("confidentiality"), request.getParameter("author"), request.getParameter("notes"));
       response.sendRedirect(ctx + "/parts.jsp?case_uuid=" + java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) + "&doc_uuid=" + java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8));
       return;
@@ -57,7 +60,6 @@ if ("POST".equalsIgnoreCase(request.getMethod())) {
   } catch (Exception ex) { error = safe(ex.getMessage()); }
 }
 List<document_parts.PartRec> rows = parts.listAll(tenantUuid, caseUuid, docUuid);
-documents.DocumentRec doc = docs.get(tenantUuid, caseUuid, docUuid);
 boolean hasActiveLead = false;
 for (document_parts.PartRec r : rows) {
   if (r == null || r.trashed) continue;
@@ -68,28 +70,31 @@ if (hasActiveLead && "lead".equals(requestedCategory)) requestedCategory = "atta
 %>
 <jsp:include page="header.jsp" />
 <section class="card"><h1 style="margin:0;">Document Parts</h1><div class="meta">Document: <strong><%= esc(doc == null ? "" : doc.title) %></strong></div></section>
+<% if (docReadOnly) { %>
+<section class="card" style="margin-top:12px;"><div class="alert alert-error"><%= esc(documents.readOnlyMessage(doc)) %></div></section>
+<% } %>
 <section class="card" style="margin-top:12px;">
 <form class="form" method="post" action="<%= ctx %>/parts.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>">
 <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
 <input type="hidden" name="action" value="create_part" />
 <div class="grid grid-3">
-  <div><label>Label</label><input type="text" name="label" required/></div>
+  <div><label>Label</label><input type="text" name="label" required <%= docReadOnly ? "disabled" : "" %>/></div>
   <div>
     <label>Category</label>
-    <select name="part_category">
-      <option value="lead" <%= "lead".equals(requestedCategory) ? "selected" : "" %> <%= hasActiveLead ? "disabled" : "" %>>Lead</option>
+    <select name="part_category" <%= docReadOnly ? "disabled" : "" %>>
+      <option value="lead" <%= "lead".equals(requestedCategory) ? "selected" : "" %> <%= (hasActiveLead || docReadOnly) ? "disabled" : "" %>>Lead</option>
       <option value="attachment" <%= "attachment".equals(requestedCategory) ? "selected" : "" %>>Attachment</option>
     </select>
   </div>
 </div>
-<div class="grid grid-3"><div><label>Sequence</label><input type="text" name="sequence" placeholder="1.0"/></div><div><label>Confidentiality</label><input type="text" name="confidentiality" placeholder="public/confidential/sealed"/></div><div><label>Author</label><input type="text" name="author" /></div></div>
-<div><label>Notes</label><input type="text" name="notes" /></div>
+<div class="grid grid-3"><div><label>Sequence</label><input type="text" name="sequence" placeholder="1.0" <%= docReadOnly ? "disabled" : "" %>/></div><div><label>Confidentiality</label><input type="text" name="confidentiality" placeholder="public/confidential/sealed" <%= docReadOnly ? "disabled" : "" %>/></div><div><label>Author</label><input type="text" name="author" <%= docReadOnly ? "disabled" : "" %> /></div></div>
+<div><label>Notes</label><input type="text" name="notes" <%= docReadOnly ? "disabled" : "" %> /></div>
 <% if (hasActiveLead) { %>
 <div class="meta">A Lead part already exists for this document. Additional parts must be Attachment.</div>
 <% } else { %>
 <div class="meta">Exactly one part may be categorized as Lead.</div>
 <% } %>
-<button class="btn" type="submit">Add Part</button>
+<button class="btn" type="submit" <%= docReadOnly ? "disabled" : "" %>>Add Part</button>
 </form>
 <% if (!safe(error).isBlank()) { %><div class="alert alert-error" style="margin-top:10px;"><%= esc(error) %></div><% } %>
 </section>

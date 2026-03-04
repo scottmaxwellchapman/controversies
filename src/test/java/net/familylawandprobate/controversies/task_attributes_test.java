@@ -82,6 +82,48 @@ public class task_attributes_test {
         }
     }
 
+    @Test
+    void save_supports_additional_task_attribute_data_types() throws Exception {
+        String tenantUuid = "task-attrs-extra-types-" + UUID.randomUUID();
+        Path tenantDir = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();
+        deleteQuietly(tenantDir);
+
+        try {
+            task_attributes store = task_attributes.defaultStore();
+            store.ensure(tenantUuid);
+
+            List<task_attributes.AttributeRec> rows = new ArrayList<task_attributes.AttributeRec>();
+            rows.add(new task_attributes.AttributeRec("", "next_call_at", "Next Call At", "timestamp", "", false, true, 10, ""));
+            rows.add(new task_attributes.AttributeRec("", "call_window", "Call Window", "time", "", false, true, 20, ""));
+            rows.add(new task_attributes.AttributeRec("", "requires_review", "Requires Review", "checkbox", "ignored", false, true, 30, ""));
+            rows.add(new task_attributes.AttributeRec("", "requestor_email", "Requestor Email", "email", "", false, true, 40, ""));
+            rows.add(new task_attributes.AttributeRec("", "requestor_phone", "Requestor Phone", "tel", "", false, true, 50, ""));
+            rows.add(new task_attributes.AttributeRec("", "reference_link", "Reference Link", "url", "", false, true, 60, ""));
+            store.saveAll(tenantUuid, rows);
+
+            List<task_attributes.AttributeRec> all = store.listAll(tenantUuid);
+            assertEquals(6, all.size());
+
+            assertEquals("datetime", findByKey(all, "next_call_at").dataType);
+            assertEquals("time", findByKey(all, "call_window").dataType);
+            assertEquals("boolean", findByKey(all, "requires_review").dataType);
+            assertEquals("", findByKey(all, "requires_review").options);
+            assertEquals("email", findByKey(all, "requestor_email").dataType);
+            assertEquals("phone", findByKey(all, "requestor_phone").dataType);
+            assertEquals("url", findByKey(all, "reference_link").dataType);
+        } finally {
+            deleteQuietly(tenantDir);
+        }
+    }
+
+    private static task_attributes.AttributeRec findByKey(List<task_attributes.AttributeRec> rows, String key) {
+        for (int i = 0; i < rows.size(); i++) {
+            task_attributes.AttributeRec r = rows.get(i);
+            if (r != null && key.equals(r.key)) return r;
+        }
+        throw new IllegalStateException("Missing key: " + key);
+    }
+
     private static void deleteQuietly(Path p) {
         try {
             if (p == null || !Files.exists(p)) return;

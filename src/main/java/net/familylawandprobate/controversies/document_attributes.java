@@ -44,6 +44,12 @@ public final class document_attributes {
     private static final String TYPE_NUMBER = "number";
     private static final String TYPE_DATE = "date";
     private static final String TYPE_SELECT = "select";
+    private static final String TYPE_BOOLEAN = "boolean";
+    private static final String TYPE_DATETIME = "datetime";
+    private static final String TYPE_TIME = "time";
+    private static final String TYPE_EMAIL = "email";
+    private static final String TYPE_PHONE = "phone";
+    private static final String TYPE_URL = "url";
 
     public static document_attributes defaultStore() {
         return new document_attributes();
@@ -258,6 +264,12 @@ public final class document_attributes {
         if (TYPE_NUMBER.equals(t)) return TYPE_NUMBER;
         if (TYPE_DATE.equals(t)) return TYPE_DATE;
         if (TYPE_SELECT.equals(t)) return TYPE_SELECT;
+        if (TYPE_BOOLEAN.equals(t) || "bool".equals(t) || "checkbox".equals(t)) return TYPE_BOOLEAN;
+        if (TYPE_DATETIME.equals(t) || "datetime-local".equals(t) || "timestamp".equals(t)) return TYPE_DATETIME;
+        if (TYPE_TIME.equals(t)) return TYPE_TIME;
+        if (TYPE_EMAIL.equals(t)) return TYPE_EMAIL;
+        if (TYPE_PHONE.equals(t) || "tel".equals(t) || "telephone".equals(t) || "phone_number".equals(t)) return TYPE_PHONE;
+        if (TYPE_URL.equals(t) || "uri".equals(t)) return TYPE_URL;
         return TYPE_TEXT;
     }
 

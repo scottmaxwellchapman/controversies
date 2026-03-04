@@ -84,11 +84,27 @@
     for (int i = 0; i < parts.length; i++) {
       String id = safe(parts[i]).trim();
       if (id.isBlank()) continue;
-      if (userEmailByUuid == null) { out.add(id); continue; }
+      if (userEmailByUuid == null) { out.add("(assigned user)"); continue; }
       String email = safe(userEmailByUuid.get(id)).trim();
-      out.add(email.isBlank() ? id : (email + " (" + id + ")"));
+      out.add(email.isBlank() ? "(assigned user)" : email);
     }
     return String.join(", ", out);
+  }
+
+  private static String matterLabel(String matterUuid, Map<String, String> matterLabelByUuid) {
+    String id = safe(matterUuid).trim();
+    if (id.isBlank()) return "(none)";
+    if (matterLabelByUuid == null) return "(linked matter)";
+    String label = safe(matterLabelByUuid.get(id)).trim();
+    return label.isBlank() ? "(linked matter)" : label;
+  }
+
+  private static String userRefLabel(String raw, Map<String, String> userEmailByUuid) {
+    String v = safe(raw).trim();
+    if (v.isBlank()) return "";
+    if (v.contains("@")) return v;
+    String email = userEmailByUuid == null ? "" : safe(userEmailByUuid.get(v)).trim();
+    return email.isBlank() ? "(account user)" : email;
   }
 
   private static String joinCsvIds(String[] values) {
@@ -139,10 +155,12 @@
 
   List<matters.MatterRec> mattersAll = new ArrayList<matters.MatterRec>();
   List<matters.MatterRec> mattersActive = new ArrayList<matters.MatterRec>();
+  HashMap<String, String> matterLabelByUuid = new HashMap<String, String>();
   try {
     mattersAll = matterStore.listAll(tenantUuid);
     for (int i = 0; i < mattersAll.size(); i++) {
       matters.MatterRec m = mattersAll.get(i);
+      matterLabelByUuid.put(safe(m == null ? "" : m.uuid), safe(m == null ? "" : m.label));
       if (m == null || m.trashed) continue;
       mattersActive.add(m);
     }
@@ -466,6 +484,7 @@
   int archivedCount = 0;
   int flowrouteCount = 0;
   int emailCount = 0;
+  int internalMessagesCount = 0;
   for (int i = 0; i < allTickets.size(); i++) {
     omnichannel_tickets.TicketRec t = allTickets.get(i);
     if (t == null) continue;
@@ -473,6 +492,7 @@
     String ch = safe(t.channel).toLowerCase(Locale.ROOT);
     if ("flowroute_sms".equals(ch)) flowrouteCount++;
     if (ch.startsWith("email_")) emailCount++;
+    if ("internal_messages".equals(ch)) internalMessagesCount++;
   }
 
   if (selectedTicketUuid.isBlank() && !filteredTickets.isEmpty()) {
@@ -483,6 +503,7 @@
   List<omnichannel_tickets.MessageRec> selectedMessages = new ArrayList<omnichannel_tickets.MessageRec>();
   List<omnichannel_tickets.AttachmentRec> selectedAttachments = new ArrayList<omnichannel_tickets.AttachmentRec>();
   List<omnichannel_tickets.AssignmentRec> selectedAssignments = new ArrayList<omnichannel_tickets.AssignmentRec>();
+  HashMap<String, String> messageLabelByUuid = new HashMap<String, String>();
 
   if (!selectedTicketUuid.isBlank()) {
     try {
@@ -491,6 +512,18 @@
         selectedMessages = ticketStore.listMessages(tenantUuid, selectedTicketUuid);
         selectedAttachments = ticketStore.listAttachments(tenantUuid, selectedTicketUuid);
         selectedAssignments = ticketStore.listAssignments(tenantUuid, selectedTicketUuid);
+        for (int i = 0; i < selectedMessages.size(); i++) {
+          omnichannel_tickets.MessageRec m = selectedMessages.get(i);
+          if (m == null) continue;
+          String msgId = safe(m.uuid).trim();
+          if (msgId.isBlank()) continue;
+          String created = safe(m.createdAt).trim();
+          String direction = safe(m.direction).trim();
+          String label = created;
+          if (!direction.isBlank()) label = label.isBlank() ? direction : (created + " (" + direction + ")");
+          if (label.isBlank()) label = "Linked message";
+          messageLabelByUuid.put(msgId, label);
+        }
       }
     } catch (Exception ex) {
       logWarn(application, "Unable to load selected thread details: " + shortErr(ex), ex);
@@ -501,10 +534,62 @@
 
 <jsp:include page="header.jsp" />
 
+<style>
+  .omni-pane {
+    overflow: hidden;
+    padding: 0;
+  }
+  .omni-pane > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--surface-2), color-mix(in srgb, var(--surface-2) 78%, transparent));
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 650;
+  }
+  .omni-pane > summary::-webkit-details-marker {
+    display: none;
+  }
+  .omni-pane > summary::after {
+    content: "▸";
+    color: var(--muted);
+    margin-left: auto;
+    transition: transform 0.15s ease;
+  }
+  .omni-pane[open] > summary::after {
+    transform: rotate(90deg);
+  }
+  .omni-pane[open] > summary {
+    background: linear-gradient(180deg, var(--accent-soft), color-mix(in srgb, var(--surface-2) 70%, transparent));
+  }
+  .omni-pane-body {
+    padding: 12px 14px 14px 14px;
+  }
+  .omni-pane + .omni-pane {
+    margin-top: 10px;
+  }
+  .omni-pane-count {
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-weight: 500;
+    margin-left: 6px;
+  }
+  .omni-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+  }
+</style>
+
 <section class="card">
   <h1 style="margin:0;">Omnichannel Threads</h1>
   <div class="meta" style="margin-top:6px;">
-    Unified thread workflow for Flowroute SMS/MMS, IMAP/SMTP email, and Microsoft Graph user/shared mailbox email.
+    Unified thread workflow for Flowroute SMS/MMS, IMAP/SMTP email, Microsoft Graph user/shared mailbox email,
+    and internal user-to-user messages.
     Matter-linked threads automatically produce versioned PDF reports with embedded multimedia.
   </div>
   <div class="actions" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
@@ -523,7 +608,9 @@
   <% if (error != null) { %><div class="alert alert-error" style="margin-top:12px;"><%= esc(error) %></div><% } %>
 </section>
 
-<section class="card" style="margin-top:12px;">
+<details class="card omni-pane" style="margin-top:12px;" open>
+  <summary>Filters and Metrics</summary>
+  <div class="omni-pane-body">
   <form class="form" method="get" action="<%= ctx %>/omnichannel.jsp">
     <div class="grid grid-3">
       <label>
@@ -546,6 +633,7 @@
           <option value="email_imap_smtp" <%= "email_imap_smtp".equals(channelFilter) ? "selected" : "" %>>Email (IMAP/SMTP)</option>
           <option value="email_graph_user" <%= "email_graph_user".equals(channelFilter) ? "selected" : "" %>>Email (Graph User Mailbox)</option>
           <option value="email_graph_shared" <%= "email_graph_shared".equals(channelFilter) ? "selected" : "" %>>Email (Graph Shared Mailbox)</option>
+          <option value="internal_messages" <%= "internal_messages".equals(channelFilter) ? "selected" : "" %>>Internal Messages (User-to-User)</option>
         </select>
       </label>
     </div>
@@ -582,18 +670,21 @@
     </div>
   </form>
 
-  <div class="grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:12px;">
+  <div class="omni-stats">
     <article class="card" style="margin:0; padding:12px;"><div class="meta">Total</div><div style="font-size:1.3rem; font-weight:700;"><%= totalCount %></div></article>
     <article class="card" style="margin:0; padding:12px;"><div class="meta">Active</div><div style="font-size:1.3rem; font-weight:700;"><%= activeCount %></div></article>
     <article class="card" style="margin:0; padding:12px;"><div class="meta">Archived</div><div style="font-size:1.3rem; font-weight:700;"><%= archivedCount %></div></article>
     <article class="card" style="margin:0; padding:12px;"><div class="meta">Flowroute</div><div style="font-size:1.3rem; font-weight:700;"><%= flowrouteCount %></div></article>
     <article class="card" style="margin:0; padding:12px;"><div class="meta">Email</div><div style="font-size:1.3rem; font-weight:700;"><%= emailCount %></div></article>
+    <article class="card" style="margin:0; padding:12px;"><div class="meta">Internal Messages</div><div style="font-size:1.3rem; font-weight:700;"><%= internalMessagesCount %></div></article>
     <article class="card" style="margin:0; padding:12px;"><div class="meta">Filtered</div><div style="font-size:1.3rem; font-weight:700;"><%= filteredTickets.size() %></div></article>
   </div>
-</section>
+  </div>
+</details>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Create Thread</h2>
+<details class="card omni-pane" style="margin-top:12px;">
+  <summary>Create Thread</summary>
+  <div class="omni-pane-body">
   <form method="post" class="form" action="<%= ctx %>/omnichannel.jsp">
     <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
     <input type="hidden" name="action" value="create_ticket" />
@@ -610,6 +701,7 @@
           <option value="email_imap_smtp" selected>Email (IMAP/SMTP)</option>
           <option value="email_graph_user">Email (Graph User Mailbox)</option>
           <option value="email_graph_shared">Email (Graph Shared Mailbox)</option>
+          <option value="internal_messages">Internal Messages (User-to-User)</option>
         </select>
       </label>
       <label>
@@ -742,10 +834,12 @@
 
     <button class="btn" type="submit" style="margin-top:10px;">Create Thread</button>
   </form>
-</section>
+  </div>
+</details>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Threads</h2>
+<details class="card omni-pane" style="margin-top:12px;" open>
+  <summary>Threads <span class="omni-pane-count"><%= filteredTickets.size() %> shown</span></summary>
+  <div class="omni-pane-body">
   <div class="table-wrap">
     <table class="table">
       <thead>
@@ -776,7 +870,7 @@
           <td><%= esc(safe(t.channel)) %></td>
           <td><%= esc(safe(t.status)) %> (<%= esc(safe(t.priority)) %>)</td>
           <td><%= esc(userLabel(safe(t.assignedUserUuid), userEmailByUuid)) %></td>
-          <td><%= esc(safe(t.matterUuid)) %></td>
+          <td><%= esc(matterLabel(safe(t.matterUuid), matterLabelByUuid)) %></td>
           <td><%= esc(safe(t.updatedAt)) %></td>
           <td>
             <a class="btn btn-ghost" href="<%= ctx %>/omnichannel.jsp?show=<%= enc(show) %>&q=<%= enc(q) %>&matter_filter=<%= enc(matterFilter) %>&channel_filter=<%= enc(channelFilter) %>&ticket_uuid=<%= enc(tId) %>">Open</a>
@@ -803,17 +897,19 @@
       </tbody>
     </table>
   </div>
-</section>
+  </div>
+</details>
 
 <% if (selectedTicket != null) { %>
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Selected Thread Detail</h2>
+<details class="card omni-pane" style="margin-top:12px;" open>
+  <summary>Selected Thread Detail</summary>
+  <div class="omni-pane-body">
   <div class="meta" style="margin-bottom:10px;">
-    Thread UUID: <code><%= esc(safe(selectedTicket.uuid)) %></code>
+    Channel: <code><%= esc(safe(selectedTicket.channel)) %></code>
+    | Status: <code><%= esc(safe(selectedTicket.status)) %></code>
+    | Updated: <code><%= esc(safe(selectedTicket.updatedAt)) %></code>
     <% if (!safe(selectedTicket.reportDocumentUuid).trim().isBlank()) { %>
-      | Report Document: <code><%= esc(safe(selectedTicket.reportDocumentUuid)) %></code>
-      | Report Part: <code><%= esc(safe(selectedTicket.reportPartUuid)) %></code>
-      | Latest Report Version: <code><%= esc(safe(selectedTicket.lastReportVersionUuid)) %></code>
+      | External Report: <code>Available</code>
     <% } %>
   </div>
 
@@ -831,6 +927,7 @@
           <option value="email_imap_smtp" <%= "email_imap_smtp".equals(safe(selectedTicket.channel)) ? "selected" : "" %>>Email (IMAP/SMTP)</option>
           <option value="email_graph_user" <%= "email_graph_user".equals(safe(selectedTicket.channel)) ? "selected" : "" %>>Email (Graph User Mailbox)</option>
           <option value="email_graph_shared" <%= "email_graph_shared".equals(safe(selectedTicket.channel)) ? "selected" : "" %>>Email (Graph Shared Mailbox)</option>
+          <option value="internal_messages" <%= "internal_messages".equals(safe(selectedTicket.channel)) ? "selected" : "" %>>Internal Messages (User-to-User)</option>
         </select>
       </label>
       <label>
@@ -912,10 +1009,12 @@
 
     <button class="btn" type="submit">Save Thread</button>
   </form>
-</section>
+  </div>
+</details>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Add External Message</h2>
+<details class="card omni-pane" style="margin-top:12px;">
+  <summary>Add External Message</summary>
+  <div class="omni-pane-body">
   <form method="post" class="form" action="<%= ctx %>/omnichannel.jsp">
     <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
     <input type="hidden" name="action" value="add_message" />
@@ -956,10 +1055,12 @@
 
     <button class="btn" type="submit">Add Message</button>
   </form>
-</section>
+  </div>
+</details>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Add Internal Note</h2>
+<details class="card omni-pane" style="margin-top:12px;">
+  <summary>Add Internal Note</summary>
+  <div class="omni-pane-body">
   <div class="meta" style="margin-bottom:8px;">
     Internal notes are visible to authenticated users in this app but are excluded from embedded matter PDF reports.
   </div>
@@ -973,10 +1074,12 @@
     </label>
     <button class="btn" type="submit">Save Internal Note</button>
   </form>
-</section>
+  </div>
+</details>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Add Attachment / MMS Multimedia</h2>
+<details class="card omni-pane" style="margin-top:12px;">
+  <summary>Add Attachment / MMS Multimedia</summary>
+  <div class="omni-pane-body">
   <form method="post" class="form js-attachment-form" action="<%= ctx %>/omnichannel.jsp" data-max-bytes="20971520">
     <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
     <input type="hidden" name="action" value="add_attachment" />
@@ -1012,10 +1115,12 @@
     <div class="meta">Attachments are base64-encoded client-side, stored with thread history, and embedded into linked matter PDF reports.</div>
     <button class="btn" type="submit">Upload Attachment</button>
   </form>
-</section>
+  </div>
+</details>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Assignment History</h2>
+<details class="card omni-pane" style="margin-top:12px;">
+  <summary>Assignment History <span class="omni-pane-count"><%= selectedAssignments.size() %> records</span></summary>
+  <div class="omni-pane-body">
   <div class="table-wrap">
     <table class="table">
       <thead>
@@ -1042,17 +1147,19 @@
           <td><%= esc(userLabel(safe(a.fromUserUuid), userEmailByUuid)) %></td>
           <td><%= esc(userLabel(safe(a.toUserUuid), userEmailByUuid)) %></td>
           <td><%= esc(safe(a.reason)) %></td>
-          <td><%= esc(safe(a.changedBy)) %></td>
+          <td><%= esc(userRefLabel(safe(a.changedBy), userEmailByUuid)) %></td>
         </tr>
       <%   }
          } %>
       </tbody>
     </table>
   </div>
-</section>
+  </div>
+</details>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Message Timeline</h2>
+<details class="card omni-pane" style="margin-top:12px;" open>
+  <summary>Message Timeline <span class="omni-pane-count"><%= selectedMessages.size() %> messages</span></summary>
+  <div class="omni-pane-body">
   <div class="table-wrap">
     <table class="table">
       <thead>
@@ -1075,7 +1182,7 @@
         <tr>
           <td>
             <%= esc(safe(m.createdAt)) %>
-            <div class="muted">By: <%= esc(safe(m.createdBy)) %></div>
+            <div class="muted">By: <%= esc(userRefLabel(safe(m.createdBy), userEmailByUuid)) %></div>
           </td>
           <td><%= esc(safe(m.direction)) %> <%= m.mms ? "(MMS)" : "" %></td>
           <td>
@@ -1094,10 +1201,12 @@
       </tbody>
     </table>
   </div>
-</section>
+  </div>
+</details>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Attachment / Multimedia Ledger</h2>
+<details class="card omni-pane" style="margin-top:12px;">
+  <summary>Attachment / Multimedia Ledger <span class="omni-pane-count"><%= selectedAttachments.size() %> files</span></summary>
+  <div class="omni-pane-body">
   <div class="table-wrap">
     <table class="table">
       <thead>
@@ -1105,7 +1214,7 @@
           <th>File</th>
           <th>MIME</th>
           <th>Size</th>
-          <th>Message UUID</th>
+          <th>Message</th>
           <th>Inline Media</th>
           <th>Uploaded</th>
           <th>Checksum</th>
@@ -1119,16 +1228,19 @@
            for (int i = 0; i < selectedAttachments.size(); i++) {
              omnichannel_tickets.AttachmentRec a = selectedAttachments.get(i);
              if (a == null) continue;
+             String messageRef = safe(a.messageUuid).trim();
+             String messageLabel = safe(messageLabelByUuid.get(messageRef)).trim();
+             if (messageLabel.isBlank()) messageLabel = messageRef.isBlank() ? "(not linked)" : "Linked message";
       %>
         <tr>
           <td><%= esc(safe(a.fileName)) %></td>
           <td><%= esc(safe(a.mimeType)) %></td>
           <td><%= esc(safe(a.fileSizeBytes)) %></td>
-          <td><%= esc(safe(a.messageUuid)) %></td>
+          <td><%= esc(messageLabel) %></td>
           <td><%= a.inlineMedia ? "Yes" : "No" %></td>
           <td>
             <%= esc(safe(a.uploadedAt)) %>
-            <div class="muted">By: <%= esc(safe(a.uploadedBy)) %></div>
+            <div class="muted">By: <%= esc(userRefLabel(safe(a.uploadedBy), userEmailByUuid)) %></div>
           </td>
           <td><code><%= esc(safe(a.checksumSha256)) %></code></td>
           <td>
@@ -1141,7 +1253,8 @@
       </tbody>
     </table>
   </div>
-</section>
+  </div>
+</details>
 <% } %>
 
 <script>

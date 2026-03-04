@@ -37,6 +37,19 @@ public class tenant_settings_test {
     }
 
     @Test
+    void sanitize_supports_clio_contact_sync_status_fields() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("clio_contacts_last_sync_status", "FAILED");
+        in.put("clio_contacts_last_sync_at", "2026-03-04T00:00:00Z");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("failed", out.get("clio_contacts_last_sync_status"));
+        assertEquals("2026-03-04T00:00:00Z", out.get("clio_contacts_last_sync_at"));
+    }
+
+    @Test
     void sanitize_defaults_unknown_clio_auth_mode_and_health_status() {
         tenant_settings store = tenant_settings.defaultStore();
 
@@ -48,6 +61,42 @@ public class tenant_settings_test {
 
         assertEquals("public", out.get("clio_auth_mode"));
         assertEquals("unknown", out.get("clio_auth_health_status"));
+    }
+
+    @Test
+    void sanitize_supports_clio_sync_interval_and_document_sync_timestamp() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("clio_matters_sync_interval_minutes", "30");
+        in.put("clio_documents_last_sync_at", "2026-03-01T11:22:33Z");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("30", out.get("clio_matters_sync_interval_minutes"));
+        assertEquals("2026-03-01T11:22:33Z", out.get("clio_documents_last_sync_at"));
+    }
+
+    @Test
+    void sanitize_supports_clio_sync_interval_minutes() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("clio_matters_sync_interval_minutes", "45");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("45", out.get("clio_matters_sync_interval_minutes"));
+    }
+
+    @Test
+    void sanitize_defaults_invalid_clio_sync_interval_minutes() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("clio_matters_sync_interval_minutes", "0");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("15", out.get("clio_matters_sync_interval_minutes"));
     }
 
 
@@ -65,6 +114,42 @@ public class tenant_settings_test {
         assertEquals("s3_compatible", out.get("storage_backend"));
         assertEquals("tenant_managed", out.get("storage_encryption_mode"));
         assertEquals("aws_kms", out.get("storage_s3_sse_mode"));
+    }
+
+    @Test
+    void sanitize_supports_storage_cache_sizes_for_external_backends() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_cache_size_ftp_mb", "256");
+        in.put("storage_cache_size_ftps_mb", "512");
+        in.put("storage_cache_size_sftp_mb", "768");
+        in.put("storage_cache_size_s3_compatible_mb", "1024");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("256", out.get("storage_cache_size_ftp_mb"));
+        assertEquals("512", out.get("storage_cache_size_ftps_mb"));
+        assertEquals("768", out.get("storage_cache_size_sftp_mb"));
+        assertEquals("1024", out.get("storage_cache_size_s3_compatible_mb"));
+    }
+
+    @Test
+    void sanitize_defaults_invalid_storage_cache_sizes() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_cache_size_ftp_mb", "-1");
+        in.put("storage_cache_size_ftps_mb", "9999999");
+        in.put("storage_cache_size_sftp_mb", "not-a-number");
+        in.put("storage_cache_size_s3_compatible_mb", "");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("1024", out.get("storage_cache_size_ftp_mb"));
+        assertEquals("1024", out.get("storage_cache_size_ftps_mb"));
+        assertEquals("1024", out.get("storage_cache_size_sftp_mb"));
+        assertEquals("1024", out.get("storage_cache_size_s3_compatible_mb"));
     }
 
     @Test

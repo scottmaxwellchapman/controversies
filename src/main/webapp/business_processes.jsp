@@ -73,7 +73,8 @@
 
   private static LinkedHashMap<String, String> stringMap(Object raw) {
     LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
-    if (!(raw instanceof Map<?, ?> m)) return out;
+    if (!(raw instanceof Map<?, ?>)) return out;
+    Map<?, ?> m = (Map<?, ?>) raw;
     for (Map.Entry<?, ?> e : m.entrySet()) {
       if (e == null) continue;
       String k = safe(String.valueOf(e.getKey())).trim();
@@ -85,9 +86,11 @@
 
   private static List<Map<String, Object>> objectList(Object raw) {
     ArrayList<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
-    if (!(raw instanceof List<?> xs)) return out;
+    if (!(raw instanceof List<?>)) return out;
+    List<?> xs = (List<?>) raw;
     for (Object v : xs) {
-      if (!(v instanceof Map<?, ?> m)) continue;
+      if (!(v instanceof Map<?, ?>)) continue;
+      Map<?, ?> m = (Map<?, ?>) v;
       LinkedHashMap<String, Object> row = new LinkedHashMap<String, Object>();
       for (Map.Entry<?, ?> e : m.entrySet()) {
         if (e == null) continue;
@@ -347,7 +350,6 @@
       <thead>
         <tr>
           <th>Name</th>
-          <th>UUID</th>
           <th>Enabled</th>
           <th>Triggers</th>
           <th>Steps</th>
@@ -360,7 +362,6 @@
       %>
         <tr>
           <td><%= esc(safe(p.name)) %></td>
-          <td><code><%= esc(safe(p.processUuid)) %></code></td>
           <td><%= p.enabled ? "Yes" : "No" %></td>
           <td><%= p.triggers == null ? 0 : p.triggers.size() %></td>
           <td><%= p.steps == null ? 0 : p.steps.size() %></td>

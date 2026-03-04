@@ -186,6 +186,7 @@
   } else {
     relPath = relativize(root, current);
   }
+  String currentDisplayPath = relPath.isBlank() ? "/" : ("/" + relPath);
 
   String q = safe(request.getParameter("q")).trim();
   String searchMode = safe(request.getParameter("search_mode")).trim().toLowerCase(Locale.ROOT);
@@ -229,7 +230,7 @@
       error = "Viewer file not found.";
       viewRel = "";
     } else if (!texas_law_library.isRenderable(viewedTarget)) {
-      error = "Viewer currently supports PDF and DOCX only.";
+      error = "Viewer currently supports PDF, DOCX, DOC, RTF, TXT, and ODT.";
       viewRel = "";
     } else {
       try {
@@ -280,6 +281,8 @@
   .tx-law-tabs .btn.is-active { border-color:var(--accent); box-shadow:var(--focus); }
   .tx-law-status-line { display:flex; flex-wrap:wrap; gap:10px 14px; font-size:13px; color:var(--muted); }
   .tx-law-status-line strong { color:var(--text); }
+  .tx-law-diagnostics summary { cursor:pointer; font-weight:600; color:var(--text); }
+  .tx-law-diagnostics[open] summary { margin-bottom:8px; }
   .tx-law-search { border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:8px 10px; }
   .tx-law-search summary { cursor:pointer; font-weight:600; color:var(--text); }
   .tx-law-search-form { margin-top:8px; display:grid; gap:8px; }
@@ -324,7 +327,7 @@
     <div class="tx-law-head">
       <div>
         <h1 style="margin:0;">Texas Law</h1>
-        <div class="meta">Shared material for all tenants. PDF/DOCX files open as PNG pages with navigation.</div>
+        <div class="meta">Shared material for all tenants. PDF and word-processor files open as PNG pages with navigation.</div>
       </div>
       <div class="tx-law-actions">
         <div class="tx-law-tabs">
@@ -347,22 +350,24 @@
   </section>
 
   <section class="card">
-    <div class="tx-law-status-line">
-      <span>Status: <strong><%= "true".equals(running) ? "Running" : (safe(lastStatus).isBlank() ? "Idle" : esc(lastStatus)) %></strong></span>
-      <span>Last Started: <strong><%= esc(fmtInstant(status.getProperty("last_started_at"))) %></strong></span>
-      <span>Last Completed: <strong><%= esc(fmtInstant(status.getProperty("last_completed_at"))) %></strong></span>
-      <span>Next Run: <strong><%= esc(fmtInstant(nextAt)) %></strong></span>
-      <span>Schedule: <strong><%= esc(scheduleTime.isBlank() ? "06:45" : scheduleTime) %></strong> (<%= esc(scheduleZone.isBlank() ? ZoneId.systemDefault().getId() : scheduleZone) %>)</span>
-      <span>Rules Exit: <strong><%= esc(safe(status.getProperty("rules_exit_code")).isBlank() ? "N/A" : safe(status.getProperty("rules_exit_code"))) %></strong></span>
-      <span>Codes Exit: <strong><%= esc(safe(status.getProperty("codes_exit_code")).isBlank() ? "N/A" : safe(status.getProperty("codes_exit_code"))) %></strong></span>
-    </div>
-    <% if (!lastError.isBlank()) { %>
-      <div class="alert alert-warn" style="margin-top:10px;">Last error: <%= esc(lastError) %></div>
-    <% } %>
-    <div class="meta" style="margin-top:8px;">
-      Rules root: <code><%= esc(texas_law_sync.rulesDataDir().toString()) %></code><br />
-      Codes root: <code><%= esc(texas_law_sync.codesDataDir().toString()) %></code>
-    </div>
+    <details class="tx-law-diagnostics" <%= !lastError.isBlank() ? "open" : "" %>>
+      <summary>Diagnostics</summary>
+      <div class="tx-law-status-line">
+        <span>Status: <strong><%= "true".equals(running) ? "Running" : (safe(lastStatus).isBlank() ? "Idle" : esc(lastStatus)) %></strong></span>
+        <span>Last Started: <strong><%= esc(fmtInstant(status.getProperty("last_started_at"))) %></strong></span>
+        <span>Last Completed: <strong><%= esc(fmtInstant(status.getProperty("last_completed_at"))) %></strong></span>
+        <span>Next Run: <strong><%= esc(fmtInstant(nextAt)) %></strong></span>
+        <span>Schedule: <strong><%= esc(scheduleTime.isBlank() ? "06:45" : scheduleTime) %></strong> (<%= esc(scheduleZone.isBlank() ? ZoneId.systemDefault().getId() : scheduleZone) %>)</span>
+        <span>Rules Exit: <strong><%= esc(safe(status.getProperty("rules_exit_code")).isBlank() ? "N/A" : safe(status.getProperty("rules_exit_code"))) %></strong></span>
+        <span>Codes Exit: <strong><%= esc(safe(status.getProperty("codes_exit_code")).isBlank() ? "N/A" : safe(status.getProperty("codes_exit_code"))) %></strong></span>
+      </div>
+      <% if (!lastError.isBlank()) { %>
+        <div class="alert alert-warn" style="margin-top:10px;">Last error: <%= esc(lastError) %></div>
+      <% } %>
+      <div class="meta" style="margin-top:8px;">
+        Codes root: <code><%= esc(texas_law_sync.codesDataDir().toString()) %></code>
+      </div>
+    </details>
   </section>
 
   <section class="card">
@@ -394,7 +399,10 @@
               <option value="" <%= extFilter.isBlank() ? "selected" : "" %>>All</option>
               <option value="pdf" <%= "pdf".equals(extFilter) ? "selected" : "" %>>PDF</option>
               <option value="docx" <%= "docx".equals(extFilter) ? "selected" : "" %>>DOCX</option>
+              <option value="doc" <%= "doc".equals(extFilter) ? "selected" : "" %>>DOC</option>
+              <option value="rtf" <%= "rtf".equals(extFilter) ? "selected" : "" %>>RTF</option>
               <option value="txt" <%= "txt".equals(extFilter) ? "selected" : "" %>>TXT</option>
+              <option value="odt" <%= "odt".equals(extFilter) ? "selected" : "" %>>ODT</option>
               <option value="json" <%= "json".equals(extFilter) ? "selected" : "" %>>JSON</option>
               <option value="xml" <%= "xml".equals(extFilter) ? "selected" : "" %>>XML</option>
             </select>
@@ -406,7 +414,7 @@
         </div>
       </form>
     </details>
-    <div class="tx-law-path" style="margin-top:8px;">Current: <%= esc(current.toString()) %></div>
+    <div class="tx-law-path" style="margin-top:8px;">Current: <%= esc(currentDisplayPath) %></div>
   </section>
 
   <% if (viewedPage != null && viewedTarget != null && !safe(viewedPage.base64Png).isBlank()) {
@@ -572,7 +580,7 @@
                String srParent = "";
                int slash = srRel.lastIndexOf('/');
                if (slash > 0) srParent = srRel.substring(0, slash);
-               boolean renderable = "pdf".equals(safe(sr.ext)) || "docx".equals(safe(sr.ext));
+               boolean renderable = texas_law_library.isRenderable(resolveUnderRoot(root, srRel));
           %>
             <div class="tx-law-row">
               <div>

@@ -1,11 +1,15 @@
 package net.familylawandprobate.controversies;
 
+import org.apache.pdfbox.cos.COSBase;
+import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.multipdf.PDFCloneUtility;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
 import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
 
@@ -22,6 +26,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -177,15 +182,21 @@ public final class pdf_redaction_service {
 
     public static RenderedPage renderPage(Path pdfPath, int requestedPageIndex) throws Exception {
         Path p = requirePdf(pdfPath);
-        try (PDDocument doc = PDDocument.load(p.toFile())) {
-            int total = Math.max(0, doc.getNumberOfPages());
-            if (total <= 0) throw new IllegalArgumentException("PDF has no pages.");
-            int idx = clamp(requestedPageIndex, 0, total - 1);
-            PDFRenderer renderer = new PDFRenderer(doc);
-            BufferedImage image = renderer.renderImageWithDPI(idx, DEFAULT_RENDER_DPI);
-            byte[] png = toPng(image);
-            return new RenderedPage(idx, total, image.getWidth(), image.getHeight(), png);
+        document_page_preview.RenderedPage rendered = document_page_preview.renderPage(p, requestedPageIndex);
+        int total = Math.max(0, rendered.totalPages);
+        if (total <= 0) throw new IllegalArgumentException("PDF has no pages.");
+        byte[] png = new byte[0];
+        String b64 = safe(rendered.base64Png).trim();
+        if (!b64.isBlank()) {
+            try { png = Base64.getDecoder().decode(b64); } catch (Exception ignored) {}
         }
+        return new RenderedPage(
+                rendered.pageIndex,
+                rendered.totalPages,
+                rendered.imageWidthPx,
+                rendered.imageHeightPx,
+                png
+        );
     }
 
     public static List<RedactionRectNorm> parseNormalizedPayload(String rawPayload) {
@@ -290,6 +301,7 @@ public final class pdf_redaction_service {
         if (!Files.exists(outputPdf) || Files.size(outputPdf) <= 0L) {
             throw new IllegalStateException("Redacted PDF output was not created.");
         }
+        preservePageAnnotations(input, outputPdf);
         return new RedactionRun(usedPdfRedactor, rects.size());
     }
 
@@ -330,11 +342,22 @@ public final class pdf_redaction_service {
                 rendered.flush();
             }
 
+            preservePageAnnotations(source, flattened);
             flattened.save(output.toFile());
         }
 
         if (!Files.exists(output) || Files.size(output) <= 0L) {
             throw new IllegalStateException("Flattened PDF output was not created.");
+        }
+    }
+
+    public static void preservePageAnnotations(Path sourcePdf, Path outputPdf) throws Exception {
+        Path sourcePath = requirePdf(sourcePdf);
+        Path outputPath = requirePdf(outputPdf);
+        try (PDDocument source = PDDocument.load(sourcePath.toFile());
+             PDDocument output = PDDocument.load(outputPath.toFile())) {
+            preservePageAnnotations(source, output);
+            output.save(outputPath.toFile());
         }
     }
 
@@ -422,6 +445,7 @@ public final class pdf_redaction_service {
                 }
                 rendered.flush();
             }
+            preservePageAnnotations(input, output);
             output.save(outputPdf.toFile());
         }
     }
@@ -512,6 +536,66 @@ public final class pdf_redaction_service {
         if (targetType == Double.TYPE || targetType == Double.class) return value;
         if (Number.class.isAssignableFrom(targetType)) return Double.valueOf(value);
         return null;
+    }
+
+    private static void preservePageAnnotations(PDDocument source, PDDocument output) throws Exception {
+        if (source == null || output == null) return;
+        int pages = Math.min(Math.max(0, source.getNumberOfPages()), Math.max(0, output.getNumberOfPages()));
+        if (pages <= 0) return;
+
+        PDFCloneUtility cloner = new PDFCloneUtility(output);
+        for (int pageIndex = 0; pageIndex < pages; pageIndex++) {
+            PDPage sourcePage = source.getPage(pageIndex);
+            PDPage outputPage = output.getPage(pageIndex);
+            if (sourcePage == null || outputPage == null) continue;
+            preservePageAnnotations(cloner, sourcePage, outputPage);
+        }
+    }
+
+    private static void preservePageAnnotations(PDFCloneUtility cloner, PDPage sourcePage, PDPage outputPage) throws Exception {
+        if (cloner == null || sourcePage == null || outputPage == null) return;
+
+        ArrayList<PDAnnotation> merged = new ArrayList<PDAnnotation>();
+
+        List<PDAnnotation> outputAnnotations = safeAnnotations(outputPage);
+        for (PDAnnotation existing : outputAnnotations) {
+            if (!isWidgetAnnotation(existing)) continue;
+            existing.setPage(outputPage);
+            merged.add(existing);
+        }
+
+        List<PDAnnotation> sourceAnnotations = safeAnnotations(sourcePage);
+        for (PDAnnotation sourceAnnotation : sourceAnnotations) {
+            if (!isPreservableAnnotation(sourceAnnotation)) continue;
+            COSBase clonedBase = cloner.cloneForNewDocument(sourceAnnotation.getCOSObject());
+            if (!(clonedBase instanceof COSDictionary clonedDictionary)) continue;
+            PDAnnotation cloned = PDAnnotation.createAnnotation(clonedDictionary);
+            if (cloned == null) continue;
+            cloned.setPage(outputPage);
+            merged.add(cloned);
+        }
+
+        outputPage.setAnnotations(merged);
+    }
+
+    private static List<PDAnnotation> safeAnnotations(PDPage page) {
+        if (page == null) return new ArrayList<PDAnnotation>();
+        try {
+            List<PDAnnotation> annotations = page.getAnnotations();
+            if (annotations == null || annotations.isEmpty()) return new ArrayList<PDAnnotation>();
+            return new ArrayList<PDAnnotation>(annotations);
+        } catch (Exception ignored) {
+            return new ArrayList<PDAnnotation>();
+        }
+    }
+
+    private static boolean isPreservableAnnotation(PDAnnotation annotation) {
+        return annotation != null && !isWidgetAnnotation(annotation);
+    }
+
+    private static boolean isWidgetAnnotation(PDAnnotation annotation) {
+        if (annotation == null) return false;
+        return "Widget".equalsIgnoreCase(safe(annotation.getSubtype()).trim());
     }
 
     private static byte[] toPng(BufferedImage image) throws Exception {

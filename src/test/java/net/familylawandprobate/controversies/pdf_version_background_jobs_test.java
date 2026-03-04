@@ -5,6 +5,10 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationRubberStamp;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationSquareCircle;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -68,6 +72,7 @@ public class pdf_version_background_jobs_test {
 
         Path sourcePdf = versionFiles.resolve("source.pdf");
         createPdf(sourcePdf, 1);
+        addCommentAndStickerAnnotations(sourcePdf);
 
         part_versions.VersionRec sourceVersion = part_versions.defaultStore().create(
                 tenant,
@@ -98,6 +103,15 @@ public class pdf_version_background_jobs_test {
         part_versions.VersionRec flattened = waitForDerivedVersion(tenant, matter, doc.uuid, part.uuid, "flattened", 20_000L);
         assertNotNull(flattened);
         assertTrue(flattened.versionLabel.contains("Flattened"));
+        Path flattenedPath = pdf_redaction_service.resolveStoragePath(flattened.storagePath);
+        assertNotNull(flattenedPath);
+        assertTrue(Files.isRegularFile(flattenedPath));
+        assertTrue(hasAnnotationSubtype(flattenedPath, 0, "Text"));
+        assertTrue(hasAnnotationSubtype(flattenedPath, 0, "Stamp"));
+        assertTrue(hasAnnotationSubtype(flattenedPath, 0, PDAnnotationSquareCircle.SUB_TYPE_SQUARE));
+        assertTrue(hasAnnotationContent(flattenedPath, "Background job comment bubble"));
+        assertTrue(hasAnnotationContent(flattenedPath, "Background job sticker object"));
+        assertTrue(hasAnnotationContent(flattenedPath, "Background job comment box"));
     }
 
     private static part_versions.VersionRec waitForDerivedVersion(String tenant,
@@ -134,6 +148,58 @@ public class pdf_version_background_jobs_test {
                 }
             }
             doc.save(target.toFile());
+        }
+    }
+
+    private static void addCommentAndStickerAnnotations(Path target) throws Exception {
+        try (PDDocument doc = PDDocument.load(target.toFile())) {
+            if (doc.getNumberOfPages() <= 0) {
+                doc.save(target.toFile());
+                return;
+            }
+            PDPage page = doc.getPage(0);
+
+            PDAnnotationText comment = new PDAnnotationText();
+            comment.setRectangle(new PDRectangle(72f, 640f, 22f, 22f));
+            comment.setContents("Background job comment bubble");
+            page.getAnnotations().add(comment);
+
+            PDAnnotationRubberStamp sticker = new PDAnnotationRubberStamp();
+            sticker.setRectangle(new PDRectangle(120f, 620f, 130f, 48f));
+            sticker.setContents("Background job sticker object");
+            page.getAnnotations().add(sticker);
+
+            PDAnnotationSquareCircle commentBox = new PDAnnotationSquareCircle(PDAnnotationSquareCircle.SUB_TYPE_SQUARE);
+            commentBox.setRectangle(new PDRectangle(72f, 520f, 220f, 64f));
+            commentBox.setContents("Background job comment box");
+            page.getAnnotations().add(commentBox);
+
+            doc.save(target.toFile());
+        }
+    }
+
+    private static boolean hasAnnotationSubtype(Path target, int pageIndex, String expectedSubtype) throws Exception {
+        try (PDDocument doc = PDDocument.load(target.toFile())) {
+            if (pageIndex < 0 || pageIndex >= doc.getNumberOfPages()) return false;
+            for (PDAnnotation annotation : doc.getPage(pageIndex).getAnnotations()) {
+                if (annotation == null) continue;
+                String subtype = String.valueOf(annotation.getSubtype());
+                if (expectedSubtype.equalsIgnoreCase(subtype)) return true;
+            }
+            return false;
+        }
+    }
+
+    private static boolean hasAnnotationContent(Path target, String expectedContent) throws Exception {
+        String needle = expectedContent == null ? "" : expectedContent;
+        try (PDDocument doc = PDDocument.load(target.toFile())) {
+            for (int i = 0; i < doc.getNumberOfPages(); i++) {
+                for (PDAnnotation annotation : doc.getPage(i).getAnnotations()) {
+                    if (annotation == null) continue;
+                    if (needle.equals(String.valueOf(annotation.getContents()))) return true;
+                }
+            }
+            return false;
         }
     }
 

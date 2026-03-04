@@ -118,6 +118,7 @@ public final class custom_object_records {
         if (tu.isBlank() || ou.isBlank()) throw new IllegalArgumentException("tenantUuid/objectUuid required");
         if (lbl.isBlank()) throw new IllegalArgumentException("label required");
 
+        RecordRec created = null;
         ReentrantReadWriteLock lock = lockFor(tu, ou);
         lock.writeLock().lock();
         try {
@@ -138,10 +139,15 @@ public final class custom_object_records {
             all.add(rec);
             sortRows(all);
             writeAllLocked(tu, ou, all);
-            return rec;
+            created = rec;
         } finally {
             lock.writeLock().unlock();
         }
+
+        if (created != null) {
+            publishRecordEvent(tu, ou, "custom_object_record.created", created, Map.of());
+        }
+        return created;
     }
 
     public boolean update(String tenantUuid,
@@ -156,30 +162,42 @@ public final class custom_object_records {
         if (tu.isBlank() || ou.isBlank() || id.isBlank()) throw new IllegalArgumentException("tenantUuid/objectUuid/recordUuid required");
         if (lbl.isBlank()) throw new IllegalArgumentException("label required");
 
+        RecordRec updated = null;
+        boolean changed = false;
         ReentrantReadWriteLock lock = lockFor(tu, ou);
         lock.writeLock().lock();
         try {
             ensure(tu, ou);
             List<RecordRec> all = readAllLocked(tu, ou);
             ArrayList<RecordRec> out = new ArrayList<RecordRec>(all.size());
-            boolean changed = false;
             String now = Instant.now().toString();
+            LinkedHashMap<String, String> sanitizedValues = sanitizeFieldValues(values);
 
             for (int i = 0; i < all.size(); i++) {
                 RecordRec r = all.get(i);
                 if (r == null) continue;
 
                 if (id.equals(safe(r.uuid).trim())) {
-                    out.add(new RecordRec(
-                            r.uuid,
-                            lbl,
-                            r.enabled,
-                            r.trashed,
-                            safe(r.createdAt).isBlank() ? now : r.createdAt,
-                            now,
-                            values
-                    ));
-                    changed = true;
+                    LinkedHashMap<String, String> currentValues = sanitizeFieldValues(r.values);
+                    boolean labelChanged = !safe(r.label).equals(lbl);
+                    boolean valuesChanged = !currentValues.equals(sanitizedValues);
+                    if (labelChanged || valuesChanged) {
+                        RecordRec next = new RecordRec(
+                                r.uuid,
+                                lbl,
+                                r.enabled,
+                                r.trashed,
+                                safe(r.createdAt).isBlank() ? now : r.createdAt,
+                                now,
+                                sanitizedValues
+                        );
+                        out.add(next);
+                        updated = next;
+                        changed = true;
+                    } else {
+                        out.add(r);
+                        updated = r;
+                    }
                 } else {
                     out.add(r);
                 }
@@ -189,10 +207,14 @@ public final class custom_object_records {
                 sortRows(out);
                 writeAllLocked(tu, ou, out);
             }
-            return changed;
         } finally {
             lock.writeLock().unlock();
         }
+
+        if (changed && updated != null) {
+            publishRecordEvent(tu, ou, "custom_object_record.updated", updated, Map.of());
+        }
+        return changed;
     }
 
     public boolean setTrashed(String tenantUuid, String objectUuid, String recordUuid, boolean trashed) throws Exception {
@@ -201,13 +223,14 @@ public final class custom_object_records {
         String id = safe(recordUuid).trim();
         if (tu.isBlank() || ou.isBlank() || id.isBlank()) return false;
 
+        RecordRec updated = null;
+        boolean changed = false;
         ReentrantReadWriteLock lock = lockFor(tu, ou);
         lock.writeLock().lock();
         try {
             ensure(tu, ou);
             List<RecordRec> all = readAllLocked(tu, ou);
             ArrayList<RecordRec> out = new ArrayList<RecordRec>(all.size());
-            boolean changed = false;
             String now = Instant.now().toString();
 
             for (int i = 0; i < all.size(); i++) {
@@ -217,7 +240,7 @@ public final class custom_object_records {
                 if (id.equals(safe(r.uuid).trim())) {
                     boolean enabled = trashed ? false : true;
                     if (r.trashed != trashed || r.enabled != enabled) changed = true;
-                    out.add(new RecordRec(
+                    RecordRec next = new RecordRec(
                             r.uuid,
                             r.label,
                             enabled,
@@ -225,7 +248,9 @@ public final class custom_object_records {
                             safe(r.createdAt).isBlank() ? now : r.createdAt,
                             now,
                             r.values
-                    ));
+                    );
+                    out.add(next);
+                    updated = changed ? next : r;
                 } else {
                     out.add(r);
                 }
@@ -235,10 +260,20 @@ public final class custom_object_records {
                 sortRows(out);
                 writeAllLocked(tu, ou, out);
             }
-            return changed;
         } finally {
             lock.writeLock().unlock();
         }
+
+        if (changed && updated != null) {
+            publishRecordEvent(
+                    tu,
+                    ou,
+                    trashed ? "custom_object_record.trashed" : "custom_object_record.restored",
+                    updated,
+                    Map.of()
+            );
+        }
+        return changed;
     }
 
     public String normalizeFieldKey(String key) {
@@ -431,6 +466,60 @@ public final class custom_object_records {
                 return safe(a.uuid).compareToIgnoreCase(safe(b.uuid));
             }
         });
+    }
+
+    private static void publishRecordEvent(String tenantUuid,
+                                           String objectUuid,
+                                           String eventType,
+                                           RecordRec rec,
+                                           Map<String, String> extras) {
+        if (rec == null) return;
+        try {
+            LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+            payload.put("tenant_uuid", safe(tenantUuid));
+            payload.put("object_uuid", safe(objectUuid));
+            payload.put("record_uuid", safe(rec.uuid));
+            payload.put("record_label", safe(rec.label));
+            payload.put("enabled", rec.enabled ? "true" : "false");
+            payload.put("trashed", rec.trashed ? "true" : "false");
+            payload.put("created_at", safe(rec.createdAt));
+            payload.put("updated_at", safe(rec.updatedAt));
+
+            custom_objects.ObjectRec objectRec = custom_objects.defaultStore().getByUuid(
+                    safe(tenantUuid),
+                    safe(objectUuid)
+            );
+            payload.put("object_key", safe(objectRec == null ? "" : objectRec.key));
+            payload.put("object_label", safe(objectRec == null ? "" : objectRec.label));
+            payload.put("object_plural_label", safe(objectRec == null ? "" : objectRec.pluralLabel));
+
+            for (Map.Entry<String, String> e : sanitizeFieldValues(rec.values).entrySet()) {
+                if (e == null) continue;
+                String key = normalizeFieldKeyStatic(e.getKey());
+                if (key.isBlank()) continue;
+                String val = safe(e.getValue());
+                payload.put("value." + key, val);
+                if (!payload.containsKey(key)) payload.put(key, val);
+            }
+
+            if (extras != null) {
+                for (Map.Entry<String, String> e : extras.entrySet()) {
+                    if (e == null) continue;
+                    String key = safe(e.getKey()).trim();
+                    if (key.isBlank()) continue;
+                    payload.put(key, safe(e.getValue()));
+                }
+            }
+
+            business_process_manager.defaultService().triggerEvent(
+                    safe(tenantUuid),
+                    safe(eventType).trim().toLowerCase(Locale.ROOT),
+                    payload,
+                    "",
+                    "custom_object_records.store"
+            );
+        } catch (Exception ignored) {
+        }
     }
 
     private static Document parseXml(Path p) throws Exception {

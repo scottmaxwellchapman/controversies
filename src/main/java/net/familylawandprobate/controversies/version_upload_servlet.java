@@ -55,6 +55,8 @@ public final class version_upload_servlet extends HttpServlet {
             writeError(resp, 400, "bad_action", "Unknown upload action.", requestId);
         } catch (IllegalArgumentException ex) {
             writeError(resp, 400, "bad_request", safe(ex.getMessage()), requestId);
+        } catch (IllegalStateException ex) {
+            writeError(resp, 409, "read_only", safe(ex.getMessage()), requestId);
         } catch (Exception ex) {
             LOG.log(Level.SEVERE, "Version upload failed [" + requestId + "]: " + ex.getMessage(), ex);
             writeError(resp, 500, "server_error", safe(ex.getMessage()), requestId);

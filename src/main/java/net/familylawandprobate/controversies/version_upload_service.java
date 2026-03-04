@@ -61,6 +61,7 @@ public final class version_upload_service {
                                   int totalChunks,
                                   String expectedChunkSha256,
                                   byte[] chunkBytes) throws Exception {
+        documents.defaultStore().requireEditable(tenantUuid, caseUuid, docUuid);
         Path partFolder = requirePartFolder(tenantUuid, caseUuid, docUuid, partUuid);
         Path uploadDir = uploadDir(partFolder, sanitizeUploadId(uploadId));
         if (chunkIndex < 0 || totalChunks <= 0 || totalChunks > MAX_UPLOAD_CHUNKS || chunkIndex >= totalChunks) {
@@ -95,6 +96,7 @@ public final class version_upload_service {
                                      String partUuid,
                                      CommitRequest req) throws Exception {
         if (req == null) throw new IllegalArgumentException("Missing commit request.");
+        documents.defaultStore().requireEditable(tenantUuid, caseUuid, docUuid);
         Path partFolder = requirePartFolder(tenantUuid, caseUuid, docUuid, partUuid);
 
         String uploadId = sanitizeUploadId(req.uploadId);

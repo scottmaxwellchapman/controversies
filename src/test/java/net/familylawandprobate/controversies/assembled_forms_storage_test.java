@@ -102,7 +102,39 @@ public class assembled_forms_storage_test {
         assertTrue(store.retrySyncNow(tenantUuid, matterUuid, completed.uuid));
     }
 
+    @Test
+    void assembled_form_records_can_be_soft_trashed_and_restored() throws Exception {
+        String tenantUuid = "tenant-trash-" + UUID.randomUUID();
+        String matterUuid = "matter-trash-" + UUID.randomUUID();
 
+        assembled_forms store = assembled_forms.defaultStore();
+        store.ensure(tenantUuid, matterUuid);
+
+        assembled_forms.AssemblyRec completed = store.markCompleted(
+                tenantUuid,
+                matterUuid,
+                "",
+                "tmpl-trash",
+                "Trash Template",
+                "txt",
+                "user-trash",
+                "trash@example.com",
+                Map.of(),
+                "trash-check.txt",
+                "txt",
+                "trash-check".getBytes()
+        );
+        assertFalse(completed.trashed);
+
+        assertTrue(store.setTrashed(tenantUuid, matterUuid, completed.uuid, true));
+        assembled_forms.AssemblyRec afterTrash = store.getByUuid(tenantUuid, matterUuid, completed.uuid);
+        assertTrue(afterTrash != null && afterTrash.trashed);
+        assertFalse(store.setTrashed(tenantUuid, matterUuid, completed.uuid, true));
+
+        assertTrue(store.setTrashed(tenantUuid, matterUuid, completed.uuid, false));
+        assembled_forms.AssemblyRec restored = store.getByUuid(tenantUuid, matterUuid, completed.uuid);
+        assertTrue(restored != null && !restored.trashed);
+    }
 
     @Test
     void app_level_encryption_encrypts_local_and_remote_payloads() throws Exception {

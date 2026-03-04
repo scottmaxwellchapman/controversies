@@ -2,6 +2,7 @@
 <menu>
   <item label="Home" href="/index.jsp" />
   <item label="Cases" href="/cases.jsp" />
+  <item label="Contacts" href="/contacts.jsp" />
   <item label="Documents" href="/documents.jsp" />
   <item label="Facts Case Plan" href="/facts.jsp" />
   <item label="Tasks" href="/tasks.jsp" />
@@ -19,6 +20,7 @@
 
   <item label="Settings">
     <item label="Users &amp; Security" href="/users_roles.jsp" />
+    <item label="User Settings" href="/user_settings.jsp" />
     <item label="Change E-Mail Address" href="/change_email.jsp" />
     <item label="Change Password" href="/change_password.jsp" />
     <item label="Tenant Fields" href="/tenant_fields.jsp" />

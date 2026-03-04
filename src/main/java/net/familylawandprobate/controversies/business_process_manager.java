@@ -2,6 +2,8 @@ package net.familylawandprobate.controversies;
 
 import java.io.InputStream;
 import java.io.StringReader;
+import java.net.HttpURLConnection;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -455,6 +457,20 @@ public final class business_process_manager {
                 List.of("on_error")
         ));
         out.add(actionDescriptor(
+                "set_custom_object_record_field",
+                "Set one custom object record field value.",
+                true,
+                List.of("object_uuid", "record_uuid", "field_key", "field_value"),
+                List.of("on_error")
+        ));
+        out.add(actionDescriptor(
+                "update_custom_object_record",
+                "Update one custom object record (label/values/trashed).",
+                false,
+                List.of("object_uuid", "record_uuid"),
+                List.of("label", "replace_values", "value.*", "values.*", "trashed", "on_error")
+        ));
+        out.add(actionDescriptor(
                 "set_variable",
                 "Set a process variable for later steps.",
                 false,
@@ -467,6 +483,13 @@ public final class business_process_manager {
                 false,
                 List.of("event_type"),
                 List.of("payload.*", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "send_webhook",
+                "Send outbound webhook HTTP request.",
+                false,
+                List.of("url"),
+                List.of("method", "content_type", "body", "timeout_ms", "header.*", "payload.*", "on_error")
         ));
         out.add(actionDescriptor(
                 "update_thread",
@@ -852,6 +875,37 @@ public final class business_process_manager {
             return;
         }
 
+        if ("set_custom_object_record_field".equals(type)) {
+            String objectUuid = safe(op.get("object_uuid")).trim();
+            String recordUuid = safe(op.get("record_uuid")).trim();
+            String fieldKey = safe(op.get("field_key")).trim();
+            if (objectUuid.isBlank() || recordUuid.isBlank() || fieldKey.isBlank()) {
+                throw new IllegalArgumentException(
+                        "Compensation set_custom_object_record_field requires object_uuid, record_uuid, and field_key."
+                );
+            }
+
+            custom_object_records store = custom_object_records.defaultStore();
+            custom_object_records.RecordRec rec = store.getByUuid(tenantUuid, objectUuid, recordUuid);
+            if (rec == null) {
+                throw new IllegalArgumentException("Compensation custom object record not found: " + recordUuid);
+            }
+
+            String normalizedFieldKey = store.normalizeFieldKey(fieldKey);
+            if (normalizedFieldKey.isBlank()) {
+                throw new IllegalArgumentException("Compensation custom object field key is invalid.");
+            }
+
+            boolean hadKey = parseBool(op.get("had_key"), true);
+            String value = safe(op.get("field_value"));
+
+            LinkedHashMap<String, String> values = new LinkedHashMap<String, String>(rec.values);
+            if (hadKey) values.put(normalizedFieldKey, value);
+            else values.remove(normalizedFieldKey);
+            store.update(tenantUuid, objectUuid, recordUuid, rec.label, values);
+            return;
+        }
+
         if ("set_case_list_item".equals(type)) {
             String matterUuid = safe(op.get("matter_uuid")).trim();
             String listKey = safe(op.get("field_key")).trim();
@@ -895,10 +949,29 @@ public final class business_process_manager {
         List<ProcessDefinition> all = listProcesses(tu);
         LinkedHashMap<String, String> eventPayload = sanitizeMap(payload);
         eventPayload.put("tenant_uuid", tu);
+        String eventMatterUuid = safe(eventPayload.get("matter_uuid")).trim();
+        String eventDocUuid = safe(eventPayload.get("doc_uuid")).trim();
 
+        LinkedHashMap<String, String> triggerStart = new LinkedHashMap<String, String>();
+        triggerStart.put("event_type", evt);
+        triggerStart.put("source", safe(source));
+        triggerStart.put("actor_user_uuid", safe(actorUserUuid));
+        triggerStart.put("recursion_depth", String.valueOf(Math.max(0, recursionDepth)));
+        triggerStart.put("payload_keys", String.valueOf(eventPayload.size()));
+        activity_log.defaultStore().logVerbose(
+                "bpm.trigger.received",
+                tu,
+                safe(actorUserUuid),
+                eventMatterUuid,
+                eventDocUuid,
+                triggerStart
+        );
+
+        int matched = 0;
         for (ProcessDefinition d : all) {
             if (d == null || !d.enabled) continue;
             if (!matchesAnyTrigger(d.triggers, evt, eventPayload)) continue;
+            matched++;
 
             try {
                 RunResult run = executeProcess(
@@ -919,6 +992,20 @@ public final class business_process_manager {
                         ex);
             }
         }
+
+        LinkedHashMap<String, String> triggerEnd = new LinkedHashMap<String, String>();
+        triggerEnd.put("event_type", evt);
+        triggerEnd.put("source", safe(source));
+        triggerEnd.put("matched_processes", String.valueOf(matched));
+        triggerEnd.put("runs_started", String.valueOf(out.size()));
+        activity_log.defaultStore().logVerbose(
+                "bpm.trigger.dispatched",
+                tu,
+                safe(actorUserUuid),
+                eventMatterUuid,
+                eventDocUuid,
+                triggerEnd
+        );
 
         return out;
     }
@@ -990,6 +1077,7 @@ public final class business_process_manager {
                 recursionDepth,
                 steps
         );
+        activity_log activityLogs = activity_log.defaultStore();
 
         boolean waitingForHumanReview = false;
         boolean hardFailed = false;
@@ -1008,9 +1096,19 @@ public final class business_process_manager {
                 continue;
             }
 
+            String action = safe(step.action).trim().toLowerCase(Locale.ROOT);
             logs.add(new RunLogEntry(nowIso(), "info", "step.start", safe(step.stepId), "Executing step: " + stepLabel));
+            auditBpmStep(
+                    activityLogs,
+                    "verbose",
+                    "bpm.action.started",
+                    exec,
+                    step,
+                    context,
+                    "Executing step: " + stepLabel,
+                    "step.start"
+            );
             try {
-                String action = safe(step.action).trim().toLowerCase(Locale.ROOT);
                 StepHandler handler = handlers.get(action);
                 if (handler == null) {
                     throw new IllegalArgumentException("Unknown BPM action: " + action);
@@ -1032,14 +1130,44 @@ public final class business_process_manager {
                     result.humanReviewUuid = safe(outcome.humanReviewUuid);
                     result.message = safe(outcome.message);
                     logs.add(new RunLogEntry(nowIso(), "warning", "step.waiting_human", safe(step.stepId), safe(outcome.message)));
+                    auditBpmStep(
+                            activityLogs,
+                            "warning",
+                            "bpm.action.waiting_human_review",
+                            exec,
+                            step,
+                            context,
+                            safe(outcome.message),
+                            "step.waiting_human"
+                    );
                     break;
                 }
 
                 logs.add(new RunLogEntry(nowIso(), "info", "step.complete", safe(step.stepId), safe(outcome == null ? "Step completed." : outcome.message)));
+                auditBpmStep(
+                        activityLogs,
+                        "verbose",
+                        "bpm.action.completed",
+                        exec,
+                        step,
+                        context,
+                        safe(outcome == null ? "Step completed." : outcome.message),
+                        "step.complete"
+                );
             } catch (Exception ex) {
                 result.errors++;
                 String msg = "Step failed: " + safe(ex.getMessage());
                 logs.add(new RunLogEntry(nowIso(), "error", "step.error", safe(step.stepId), msg));
+                auditBpmStep(
+                        activityLogs,
+                        "error",
+                        "bpm.action.failed",
+                        exec,
+                        step,
+                        context,
+                        msg,
+                        "step.error"
+                );
 
                 String onError = safe(step.settings.get("on_error")).trim().toLowerCase(Locale.ROOT);
                 boolean continueOnError = "continue".equals(onError);
@@ -1096,6 +1224,71 @@ public final class business_process_manager {
         return result;
     }
 
+    private static void auditBpmStep(activity_log logs,
+                                     String level,
+                                     String action,
+                                     ExecutionContext exec,
+                                     ProcessStep step,
+                                     LinkedHashMap<String, String> context,
+                                     String message,
+                                     String code) {
+        if (logs == null || exec == null || step == null) return;
+        try {
+            String matterUuid = resolveMatterUuidForAudit(step, context);
+            String docUuid = resolveDocumentUuidForAudit(step, context);
+
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("process_uuid", safe(exec.process == null ? "" : exec.process.processUuid));
+            details.put("process_name", safe(exec.process == null ? "" : exec.process.name));
+            details.put("run_uuid", safe(exec.runUuid));
+            details.put("event_type", safe(exec.eventType));
+            details.put("source", safe(exec.source));
+            details.put("step_id", safe(step.stepId));
+            details.put("step_order", String.valueOf(Math.max(0, step.order)));
+            details.put("step_action", safe(step.action));
+            details.put("step_label", safe(step.label));
+            details.put("code", safe(code));
+            details.put("message", safe(message));
+
+            String severity = safe(level).trim().toLowerCase(Locale.ROOT);
+            if ("error".equals(severity)) {
+                logs.logError(action, safe(exec.tenantUuid), safe(exec.actorUserUuid), matterUuid, docUuid, details);
+            } else if ("warning".equals(severity)) {
+                logs.logWarning(action, safe(exec.tenantUuid), safe(exec.actorUserUuid), matterUuid, docUuid, details);
+            } else {
+                logs.logVerbose(action, safe(exec.tenantUuid), safe(exec.actorUserUuid), matterUuid, docUuid, details);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static String resolveMatterUuidForAudit(ProcessStep step, LinkedHashMap<String, String> context) {
+        String matterUuid = safe(context == null ? "" : context.get("event.matter_uuid")).trim();
+        if (matterUuid.isBlank()) matterUuid = safe(context == null ? "" : context.get("matter_uuid")).trim();
+        if (matterUuid.isBlank()) matterUuid = safe(context == null ? "" : context.get("vars.last_matter_uuid")).trim();
+        if (matterUuid.isBlank()) {
+            matterUuid = safe(resolveTemplate(step == null ? "" : step.settings.get("matter_uuid"), context)).trim();
+        }
+        if (matterUuid.isBlank()) {
+            matterUuid = safe(resolveTemplate(step == null ? "" : step.settings.get("case_uuid"), context)).trim();
+        }
+        return matterUuid;
+    }
+
+    private static String resolveDocumentUuidForAudit(ProcessStep step, LinkedHashMap<String, String> context) {
+        String docUuid = safe(context == null ? "" : context.get("event.doc_uuid")).trim();
+        if (docUuid.isBlank()) docUuid = safe(context == null ? "" : context.get("event.document_uuid")).trim();
+        if (docUuid.isBlank()) docUuid = safe(context == null ? "" : context.get("doc_uuid")).trim();
+        if (docUuid.isBlank()) docUuid = safe(context == null ? "" : context.get("vars.last_document_uuid")).trim();
+        if (docUuid.isBlank()) {
+            docUuid = safe(resolveTemplate(step == null ? "" : step.settings.get("doc_uuid"), context)).trim();
+        }
+        if (docUuid.isBlank()) {
+            docUuid = safe(resolveTemplate(step == null ? "" : step.settings.get("document_uuid"), context)).trim();
+        }
+        return docUuid;
+    }
+
     private void registerDefaultHandlers() {
         handlers.put("log_note", (exec, step, context) -> {
             String level = resolveTemplate(step.settings.get("level"), context).trim().toLowerCase(Locale.ROOT);
@@ -1142,6 +1335,7 @@ public final class business_process_manager {
             fields.put(fieldKey, fieldValue);
             store.write(exec.tenantUuid, matterUuid, fields);
 
+            context.put("vars.last_matter_uuid", matterUuid);
             context.put("vars.last_case_field_key", fieldKey);
             context.put("vars.last_case_field_value", fieldValue);
 
@@ -1178,6 +1372,7 @@ public final class business_process_manager {
             values.put(listKey, listValue);
             store.write(exec.tenantUuid, matterUuid, values);
 
+            context.put("vars.last_matter_uuid", matterUuid);
             context.put("vars.last_case_list_key", listKey);
             context.put("vars.last_case_list_value", listValue);
 
@@ -1214,6 +1409,7 @@ public final class business_process_manager {
             fields.put(fieldKey, fieldValue);
             store.write(exec.tenantUuid, matterUuid, docUuid, fields);
 
+            context.put("vars.last_matter_uuid", matterUuid);
             context.put("vars.last_document_uuid", docUuid);
             context.put("vars.last_document_field_key", fieldKey);
             context.put("vars.last_document_field_value", fieldValue);
@@ -1295,6 +1491,88 @@ public final class business_process_manager {
 
             context.put("vars.last_triggered_count", String.valueOf(triggered.size()));
             return StepOutcome.continueWithMessage("Triggered downstream event " + eventType + " for " + triggered.size() + " process(es).");
+        });
+
+        handlers.put("send_webhook", (exec, step, context) -> {
+            String url = resolveTemplate(step.settings.get("url"), context).trim();
+            if (url.isBlank()) throw new IllegalArgumentException("url is required for send_webhook.");
+
+            String method = resolveTemplate(step.settings.get("method"), context).trim().toUpperCase(Locale.ROOT);
+            if (method.isBlank()) method = "POST";
+            if (!List.of("GET", "POST", "PUT", "PATCH", "DELETE").contains(method)) {
+                throw new IllegalArgumentException("Unsupported webhook method: " + method);
+            }
+
+            int timeoutMs = Math.max(1000, Math.min(120000, parseInt(
+                    resolveTemplate(step.settings.get("timeout_ms"), context).trim(),
+                    15000
+            )));
+
+            String body = resolveTemplate(step.settings.get("body"), context);
+            if (body.isBlank()) {
+                LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+                for (Map.Entry<String, String> e : step.settings.entrySet()) {
+                    if (e == null) continue;
+                    String key = safe(e.getKey()).trim();
+                    if (!key.startsWith("payload.")) continue;
+                    String payloadKey = key.substring("payload.".length()).trim();
+                    if (payloadKey.isBlank()) continue;
+                    payload.put(payloadKey, resolveTemplate(e.getValue(), context));
+                }
+                if (!payload.isEmpty()) body = toSimpleJson(payload);
+            }
+
+            HttpURLConnection conn = null;
+            int status = 0;
+            String responseBody = "";
+            try {
+                conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+                conn.setConnectTimeout(timeoutMs);
+                conn.setReadTimeout(timeoutMs);
+                conn.setRequestMethod(method);
+                conn.setRequestProperty("User-Agent", "controversies-bpm/1.0");
+                conn.setRequestProperty("Accept", "application/json, text/plain, */*");
+
+                String contentType = resolveTemplate(step.settings.get("content_type"), context).trim();
+                if (contentType.isBlank() && !body.isBlank()) contentType = "application/json; charset=UTF-8";
+                if (!contentType.isBlank()) conn.setRequestProperty("Content-Type", contentType);
+
+                for (Map.Entry<String, String> e : step.settings.entrySet()) {
+                    if (e == null) continue;
+                    String key = safe(e.getKey()).trim();
+                    if (!key.startsWith("header.")) continue;
+                    String headerName = key.substring("header.".length()).trim();
+                    if (headerName.isBlank()) continue;
+                    conn.setRequestProperty(headerName, resolveTemplate(e.getValue(), context));
+                }
+
+                boolean canWrite = !"GET".equals(method) && !"DELETE".equals(method);
+                if (canWrite && !body.isBlank()) {
+                    conn.setDoOutput(true);
+                    byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+                    conn.setFixedLengthStreamingMode(bytes.length);
+                    conn.getOutputStream().write(bytes);
+                }
+
+                status = conn.getResponseCode();
+                responseBody = readHttpBody(conn);
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+
+            context.put("vars.last_webhook_url", url);
+            context.put("vars.last_webhook_method", method);
+            context.put("vars.last_webhook_status", String.valueOf(status));
+            context.put("vars.last_webhook_response", responseBody);
+            context.put("vars.last_webhook_ok", (status >= 200 && status < 300) ? "true" : "false");
+
+            if (status < 200 || status >= 300) {
+                String msg = "Webhook request failed status=" + status;
+                if (!responseBody.isBlank()) msg = msg + ", response=" + responseBody;
+                throw new IllegalStateException(msg);
+            }
+
+            return StepOutcome.continueWithMessage("Webhook sent. status=" + status);
         });
 
         handlers.put("update_thread", (exec, step, context) -> {
@@ -1420,6 +1698,138 @@ public final class business_process_manager {
             entry.redo = compensationOpTask("set_task_field", taskUuid, fieldKey, fieldValue, true);
 
             return StepOutcome.continueWithJournal("Task field updated: " + fieldKey, entry);
+        });
+
+        handlers.put("set_custom_object_record_field", (exec, step, context) -> {
+            String objectUuid = resolveTemplate(step.settings.get("object_uuid"), context).trim();
+            if (objectUuid.isBlank()) objectUuid = safe(context.get("event.object_uuid")).trim();
+            if (objectUuid.isBlank()) {
+                throw new IllegalArgumentException("object_uuid is required for set_custom_object_record_field.");
+            }
+
+            String recordUuid = resolveTemplate(step.settings.get("record_uuid"), context).trim();
+            if (recordUuid.isBlank()) recordUuid = safe(context.get("event.record_uuid")).trim();
+            if (recordUuid.isBlank()) {
+                throw new IllegalArgumentException("record_uuid is required for set_custom_object_record_field.");
+            }
+
+            String fieldKey = resolveTemplate(step.settings.get("field_key"), context).trim();
+            if (fieldKey.isBlank()) {
+                throw new IllegalArgumentException("field_key is required for set_custom_object_record_field.");
+            }
+            String fieldValue = resolveTemplate(step.settings.get("field_value"), context);
+
+            custom_object_records store = custom_object_records.defaultStore();
+            custom_object_records.RecordRec current = store.getByUuid(exec.tenantUuid, objectUuid, recordUuid);
+            if (current == null) throw new IllegalArgumentException("Custom object record not found.");
+
+            String normalizedFieldKey = store.normalizeFieldKey(fieldKey);
+            if (normalizedFieldKey.isBlank()) {
+                throw new IllegalArgumentException("Custom object field key is invalid.");
+            }
+
+            LinkedHashMap<String, String> values = new LinkedHashMap<String, String>(current.values);
+            boolean hadBefore = values.containsKey(normalizedFieldKey);
+            String beforeValue = safe(values.get(normalizedFieldKey));
+            values.put(normalizedFieldKey, fieldValue);
+
+            boolean changed = store.update(exec.tenantUuid, objectUuid, recordUuid, current.label, values);
+            context.put("vars.last_custom_object_uuid", objectUuid);
+            context.put("vars.last_custom_object_record_uuid", recordUuid);
+            context.put("vars.last_custom_object_field_key", normalizedFieldKey);
+            context.put("vars.last_custom_object_field_value", fieldValue);
+
+            if (!changed) {
+                return StepOutcome.continueWithMessage("Custom object field unchanged: " + normalizedFieldKey);
+            }
+
+            RunJournalEntry entry = new RunJournalEntry();
+            entry.createdAt = nowIso();
+            entry.stepId = safe(step.stepId);
+            entry.action = "set_custom_object_record_field";
+            entry.description = "Updated custom object record field " + normalizedFieldKey;
+            entry.reversible = true;
+            entry.undo = compensationOpCustomObjectField(
+                    "set_custom_object_record_field",
+                    objectUuid,
+                    recordUuid,
+                    normalizedFieldKey,
+                    beforeValue,
+                    hadBefore
+            );
+            entry.redo = compensationOpCustomObjectField(
+                    "set_custom_object_record_field",
+                    objectUuid,
+                    recordUuid,
+                    normalizedFieldKey,
+                    fieldValue,
+                    true
+            );
+
+            return StepOutcome.continueWithJournal(
+                    "Custom object record field updated: " + normalizedFieldKey,
+                    entry
+            );
+        });
+
+        handlers.put("update_custom_object_record", (exec, step, context) -> {
+            String objectUuid = resolveTemplate(step.settings.get("object_uuid"), context).trim();
+            if (objectUuid.isBlank()) objectUuid = safe(context.get("event.object_uuid")).trim();
+            if (objectUuid.isBlank()) {
+                throw new IllegalArgumentException("object_uuid is required for update_custom_object_record.");
+            }
+
+            String recordUuid = resolveTemplate(step.settings.get("record_uuid"), context).trim();
+            if (recordUuid.isBlank()) recordUuid = safe(context.get("event.record_uuid")).trim();
+            if (recordUuid.isBlank()) {
+                throw new IllegalArgumentException("record_uuid is required for update_custom_object_record.");
+            }
+
+            custom_object_records store = custom_object_records.defaultStore();
+            custom_object_records.RecordRec current = store.getByUuid(exec.tenantUuid, objectUuid, recordUuid);
+            if (current == null) throw new IllegalArgumentException("Custom object record not found.");
+
+            String label = current.label;
+            if (step.settings.containsKey("label")) {
+                String nextLabel = resolveTemplate(step.settings.get("label"), context).trim();
+                if (!nextLabel.isBlank()) label = nextLabel;
+            }
+
+            boolean replaceValues = false;
+            if (step.settings.containsKey("replace_values")) {
+                replaceValues = parseBool(resolveTemplate(step.settings.get("replace_values"), context), false);
+            }
+
+            LinkedHashMap<String, String> values = new LinkedHashMap<String, String>();
+            if (!replaceValues) values.putAll(current.values);
+
+            for (Map.Entry<String, String> e : step.settings.entrySet()) {
+                if (e == null) continue;
+                String key = safe(e.getKey()).trim();
+                if (key.isBlank()) continue;
+
+                String prefix = "";
+                if (key.startsWith("value.")) prefix = "value.";
+                else if (key.startsWith("values.")) prefix = "values.";
+                if (prefix.isBlank()) continue;
+
+                String fieldKey = store.normalizeFieldKey(key.substring(prefix.length()).trim());
+                if (fieldKey.isBlank()) continue;
+                values.put(fieldKey, resolveTemplate(e.getValue(), context));
+            }
+
+            boolean changed = store.update(exec.tenantUuid, objectUuid, recordUuid, label, values);
+            if (step.settings.containsKey("trashed")) {
+                boolean trashed = parseBool(resolveTemplate(step.settings.get("trashed"), context), current.trashed);
+                changed = store.setTrashed(exec.tenantUuid, objectUuid, recordUuid, trashed) || changed;
+            }
+
+            custom_object_records.RecordRec refreshed = store.getByUuid(exec.tenantUuid, objectUuid, recordUuid);
+            context.put("vars.last_custom_object_uuid", objectUuid);
+            context.put("vars.last_custom_object_record_uuid", recordUuid);
+            context.put("vars.last_custom_object_record_label", safe(refreshed == null ? "" : refreshed.label));
+            context.put("vars.last_custom_object_record_updated", changed ? "true" : "false");
+            return StepOutcome.continueWithMessage(changed ? "Custom object record updated." : "Custom object record unchanged.");
         });
 
         handlers.put("update_task", (exec, step, context) -> {
@@ -1550,6 +1960,7 @@ public final class business_process_manager {
             if (actorUser.isBlank()) actorUser = exec.actorUserUuid;
 
             boolean changed = store.updateFact(exec.tenantUuid, matterUuid, in, actorUser);
+            context.put("vars.last_matter_uuid", matterUuid);
             context.put("vars.last_fact_uuid", factUuid);
             context.put("vars.last_fact_updated", changed ? "true" : "false");
             return StepOutcome.continueWithMessage(changed ? "Fact updated." : "Fact unchanged.");
@@ -1564,6 +1975,7 @@ public final class business_process_manager {
             if (actorUser.isBlank()) actorUser = exec.actorUserUuid;
 
             matter_facts.ReportRec report = matter_facts.defaultStore().refreshMatterReport(exec.tenantUuid, matterUuid, actorUser);
+            context.put("vars.last_matter_uuid", matterUuid);
             context.put("vars.last_facts_report_document_uuid", safe(report == null ? "" : report.reportDocumentUuid));
             context.put("vars.last_facts_report_part_uuid", safe(report == null ? "" : report.reportPartUuid));
             context.put("vars.last_facts_report_version_uuid", safe(report == null ? "" : report.lastReportVersionUuid));
@@ -2215,6 +2627,22 @@ public final class business_process_manager {
         return out;
     }
 
+    private static LinkedHashMap<String, String> compensationOpCustomObjectField(String type,
+                                                                                  String objectUuid,
+                                                                                  String recordUuid,
+                                                                                  String fieldKey,
+                                                                                  String fieldValue,
+                                                                                  boolean hadKey) {
+        LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
+        out.put("type", safe(type).trim());
+        out.put("object_uuid", safe(objectUuid));
+        out.put("record_uuid", safe(recordUuid));
+        out.put("field_key", safe(fieldKey));
+        out.put("field_value", safe(fieldValue));
+        out.put("had_key", hadKey ? "true" : "false");
+        return out;
+    }
+
     private static LinkedHashMap<String, Object> actionDescriptor(String action,
                                                                   String summary,
                                                                   boolean reversible,
@@ -2227,6 +2655,83 @@ public final class business_process_manager {
         row.put("required_settings", parseCsv(requiredSettings));
         row.put("optional_settings", parseCsv(optionalSettings));
         return row;
+    }
+
+    private static String readHttpBody(HttpURLConnection conn) {
+        if (conn == null) return "";
+        InputStream in = null;
+        try {
+            in = conn.getInputStream();
+        } catch (Exception ignored) {
+            try {
+                in = conn.getErrorStream();
+            } catch (Exception ignored2) {
+                in = null;
+            }
+        }
+        if (in == null) return "";
+        try (InputStream src = in) {
+            byte[] bytes = src.readAllBytes();
+            String out = new String(bytes == null ? new byte[0] : bytes, StandardCharsets.UTF_8).trim();
+            if (out.length() > 1200) out = out.substring(0, 1200);
+            return out;
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private static String toSimpleJson(Map<String, String> map) {
+        LinkedHashMap<String, String> rows = sanitizeMap(map);
+        if (rows.isEmpty()) return "{}";
+        StringBuilder sb = new StringBuilder(512);
+        sb.append("{");
+        boolean first = true;
+        for (Map.Entry<String, String> e : rows.entrySet()) {
+            if (e == null) continue;
+            String k = safe(e.getKey()).trim();
+            if (k.isBlank()) continue;
+            if (!first) sb.append(",");
+            first = false;
+            sb.append("\"").append(jsonEsc(k)).append("\":\"").append(jsonEsc(safe(e.getValue()))).append("\"");
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private static String jsonEsc(String in) {
+        String s = safe(in);
+        StringBuilder sb = new StringBuilder(s.length() + 16);
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            switch (ch) {
+                case '"':
+                    sb.append("\\\"");
+                    break;
+                case '\\':
+                    sb.append("\\\\");
+                    break;
+                case '\b':
+                    sb.append("\\b");
+                    break;
+                case '\f':
+                    sb.append("\\f");
+                    break;
+                case '\n':
+                    sb.append("\\n");
+                    break;
+                case '\r':
+                    sb.append("\\r");
+                    break;
+                case '\t':
+                    sb.append("\\t");
+                    break;
+                default:
+                    if (ch < 0x20) sb.append(String.format(Locale.ROOT, "\\u%04x", Integer.valueOf(ch)));
+                    else sb.append(ch);
+                    break;
+            }
+        }
+        return sb.toString();
     }
 
     private static tasks.TaskRec copyTask(tasks.TaskRec in) {

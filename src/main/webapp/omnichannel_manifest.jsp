@@ -137,15 +137,15 @@
 
   <% if (selected != null) { %>
     <div class="meta" style="margin-top:8px;">
-      Thread UUID: <code><%= esc(safe(selected.uuid)) %></code>
-      | Matter UUID: <code><%= esc(safe(selected.matterUuid)) %></code>
-      | Report Document UUID: <code><%= esc(safe(selected.reportDocumentUuid)) %></code>
-      | Report Part UUID: <code><%= esc(safe(selected.reportPartUuid)) %></code>
-      | Latest Report Version UUID: <code><%= esc(safe(selected.lastReportVersionUuid)) %></code>
+      Channel: <code><%= esc(safe(selected.channel)) %></code>
+      | Status: <code><%= esc(safe(selected.status)) %></code>
+      | Updated: <code><%= esc(safe(selected.updatedAt)) %></code>
     </div>
     <% if (latestReportVersion != null) { %>
       <div class="meta" style="margin-top:6px;">
-        Latest report file: <code><%= esc(safe(latestReportVersion.storagePath)) %></code>
+        Latest report version:
+        <code><%= esc(safe(latestReportVersion.versionLabel)) %></code>
+        | Created: <code><%= esc(safe(latestReportVersion.createdAt)) %></code>
       </div>
     <% } %>
 

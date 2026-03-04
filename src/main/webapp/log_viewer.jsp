@@ -9,6 +9,18 @@
   private static String esc(String s) {
     return safe(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&#39;");
   }
+  private static String displayUser(String raw) {
+    String v = safe(raw).trim();
+    if (v.isBlank()) return "";
+    if (v.contains("@")) return v;
+    return "Account user";
+  }
+  private static String linkedLabel(String raw) {
+    return safe(raw).trim().isBlank() ? "" : "Linked";
+  }
+  private static String redactUuid(String raw) {
+    return safe(raw).replaceAll("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\b", "[hidden]");
+  }
 %>
 <%
   String tenantUuid = safe((String) session.getAttribute("tenant.uuid"));
@@ -32,10 +44,10 @@
       <tr>
         <td><%= esc(e.time) %></td>
         <td><code><%= esc(e.action) %></code></td>
-        <td><%= esc(e.userUuid) %></td>
-        <td><%= esc(e.caseUuid) %></td>
-        <td><%= esc(e.documentUuid) %></td>
-        <td><%= esc(e.details) %></td>
+        <td><%= esc(displayUser(e.userUuid)) %></td>
+        <td><%= esc(linkedLabel(e.caseUuid)) %></td>
+        <td><%= esc(linkedLabel(e.documentUuid)) %></td>
+        <td><%= esc(redactUuid(e.details)) %></td>
       </tr>
       <% }} %>
     </tbody>

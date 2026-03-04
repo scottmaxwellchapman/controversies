@@ -38,6 +38,10 @@ public final class tenant_settings {
             "storage_encryption_key",
             "storage_s3_sse_mode",
             "storage_s3_sse_kms_key_id",
+            "storage_cache_size_ftp_mb",
+            "storage_cache_size_ftps_mb",
+            "storage_cache_size_sftp_mb",
+            "storage_cache_size_s3_compatible_mb",
             "clio_base_url",
             "clio_client_id",
             "clio_client_secret",
@@ -49,6 +53,11 @@ public final class tenant_settings {
             "clio_refresh_token",
             "clio_storage_mode",
             "clio_matters_last_sync_at",
+            "clio_matters_sync_interval_minutes",
+            "clio_documents_last_sync_at",
+            "clio_contacts_last_sync_at",
+            "clio_contacts_last_sync_status",
+            "clio_contacts_last_sync_error",
             "feature_advanced_assembly",
             "feature_async_sync",
             "theme_mode_default",
@@ -353,6 +362,10 @@ public final class tenant_settings {
         d.put("storage_encryption_key", "");
         d.put("storage_s3_sse_mode", "none");
         d.put("storage_s3_sse_kms_key_id", "");
+        d.put("storage_cache_size_ftp_mb", "1024");
+        d.put("storage_cache_size_ftps_mb", "1024");
+        d.put("storage_cache_size_sftp_mb", "1024");
+        d.put("storage_cache_size_s3_compatible_mb", "1024");
         d.put("clio_base_url", "");
         d.put("clio_client_id", "");
         d.put("clio_client_secret", "");
@@ -364,6 +377,11 @@ public final class tenant_settings {
         d.put("clio_refresh_token", "");
         d.put("clio_storage_mode", "disabled");
         d.put("clio_matters_last_sync_at", "");
+        d.put("clio_matters_sync_interval_minutes", "15");
+        d.put("clio_documents_last_sync_at", "");
+        d.put("clio_contacts_last_sync_at", "");
+        d.put("clio_contacts_last_sync_status", "never");
+        d.put("clio_contacts_last_sync_error", "");
         d.put("feature_advanced_assembly", "false");
         d.put("feature_async_sync", "false");
         d.put("theme_mode_default", "auto");
@@ -547,6 +565,18 @@ public final class tenant_settings {
             return mode;
         }
 
+        if ("clio_matters_sync_interval_minutes".equals(key)) {
+            int n = parseInt(v, 15);
+            if (n < 1 || n > 1440) return "15";
+            return String.valueOf(n);
+        }
+
+        if ("clio_contacts_last_sync_status".equals(key)) {
+            String s = v.toLowerCase(Locale.ROOT);
+            if (!"ok".equals(s) && !"failed".equals(s) && !"never".equals(s)) return "never";
+            return s;
+        }
+
         if ("storage_backend".equals(key)) {
             String mode = v.toLowerCase(Locale.ROOT);
             if ("localfs".equals(mode)) return "local";
@@ -565,6 +595,15 @@ public final class tenant_settings {
             String mode = v.toLowerCase(Locale.ROOT);
             if (!"aes256".equals(mode) && !"aws_kms".equals(mode) && !"none".equals(mode)) return "none";
             return mode;
+        }
+
+        if ("storage_cache_size_ftp_mb".equals(key)
+                || "storage_cache_size_ftps_mb".equals(key)
+                || "storage_cache_size_sftp_mb".equals(key)
+                || "storage_cache_size_s3_compatible_mb".equals(key)) {
+            int sizeMb = parseInt(v, 1024);
+            if (sizeMb < 0 || sizeMb > 1048576) return "1024";
+            return String.valueOf(sizeMb);
         }
 
         if ("storage_connection_status".equals(key) || "clio_connection_status".equals(key) || "clio_auth_health_status".equals(key)) {

@@ -121,6 +121,52 @@ public class omnichannel_tickets_test {
     }
 
     @Test
+    void internal_messages_channel_is_preserved() throws Exception {
+        String tenantUuid = "omni-internal-channel-" + UUID.randomUUID();
+        Path tenantDir = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();
+        deleteQuietly(tenantDir);
+
+        try {
+            omnichannel_tickets store = omnichannel_tickets.defaultStore();
+            store.ensure(tenantUuid);
+
+            omnichannel_tickets.TicketRec thread = store.createTicket(
+                    tenantUuid,
+                    "",
+                    "internal_messages",
+                    "Internal team thread",
+                    "open",
+                    "normal",
+                    "manual",
+                    "user-a,user-b",
+                    "",
+                    "",
+                    "Paralegal Team",
+                    "team@internal.local",
+                    "",
+                    "",
+                    "",
+                    "internal",
+                    "Initial user-to-user handoff",
+                    "coordinator@internal.local",
+                    "owner@internal.local",
+                    false,
+                    "tester@example.test",
+                    "Internal collaboration assignment"
+            );
+
+            assertNotNull(thread);
+            assertEquals("internal_messages", safe(thread.channel));
+
+            omnichannel_tickets.TicketRec loaded = store.getTicket(tenantUuid, thread.uuid);
+            assertNotNull(loaded);
+            assertEquals("internal_messages", safe(loaded.channel));
+        } finally {
+            deleteQuietly(tenantDir);
+        }
+    }
+
+    @Test
     void report_embeds_public_multimedia_and_hides_internal_note_content() throws Exception {
         String tenantUuid = "omni-report-" + UUID.randomUUID();
         Path tenantDir = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();

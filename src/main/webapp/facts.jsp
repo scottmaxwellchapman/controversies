@@ -79,6 +79,14 @@
   private static boolean isSelected(String a, String b) {
     return safe(a).trim().equals(safe(b).trim());
   }
+
+  private static String linkedLabel(String uuid, Map<String, String> labelByUuid, String noun) {
+    String id = safe(uuid).trim();
+    if (id.isBlank()) return "(none)";
+    String label = labelByUuid == null ? "" : safe(labelByUuid.get(id)).trim();
+    if (!label.isBlank()) return label;
+    return "(linked " + safe(noun).trim() + ")";
+  }
 %>
 
 <%
@@ -535,14 +543,34 @@
 <style>
   .facts-shell {
     display: grid;
-    grid-template-columns: 340px 1fr;
-    gap: 12px;
+    grid-template-columns: minmax(0, 1.45fr) minmax(340px, 520px);
+    gap: 14px;
   }
   .facts-tree-pane {
     position: sticky;
-    top: 82px;
-    max-height: calc(100vh - 150px);
+    top: 74px;
+    max-height: calc(100vh - 120px);
     overflow: auto;
+  }
+  .facts-tree-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .facts-tree-stats {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .facts-chip {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: .76rem;
+    background: var(--surface-2);
+    color: var(--muted);
   }
   .facts-tree-root,
   .facts-tree-root ul {
@@ -594,11 +622,40 @@
     border-color: rgba(220, 38, 38, 0.35);
     background: rgba(220, 38, 38, 0.10);
   }
-  .facts-panels > .card {
-    margin-top: 12px;
+  .facts-panels {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
-  .facts-panels > .card:first-child {
-    margin-top: 0;
+  .facts-pane {
+    overflow: hidden;
+    padding: 0;
+  }
+  .facts-pane > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--surface-2), #f8fafc);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-weight: 650;
+  }
+  .facts-pane > summary::-webkit-details-marker {
+    display: none;
+  }
+  .facts-pane[open] > summary {
+    background: linear-gradient(180deg, var(--accent-soft), #f3f8ff);
+  }
+  .facts-pane .facts-pane-body {
+    padding: 12px 14px 14px 14px;
+  }
+  .facts-pane-label {
+    color: var(--muted);
+    font-size: .82rem;
+    font-weight: 500;
   }
   .facts-inline {
     display: grid;
@@ -633,6 +690,9 @@
       position: static;
       max-height: none;
     }
+    .facts-panels {
+      gap: 12px;
+    }
     .facts-inline {
       grid-template-columns: 1fr;
     }
@@ -647,89 +707,26 @@
   </div>
 </section>
 
-<section class="card" style="margin-top:12px;">
-  <form method="get" action="<%= ctx %>/facts.jsp" class="form">
-    <div class="grid grid-3">
-      <label>
-        <span>Matter</span>
-        <select name="case_uuid" onchange="this.form.submit()">
-          <% for (int i = 0; i < activeCases.size(); i++) {
-               matters.MatterRec c = activeCases.get(i);
-               if (c == null) continue;
-               String id = safe(c.uuid);
-          %>
-            <option value="<%= esc(id) %>" <%= isSelected(id, caseUuid) ? "selected" : "" %>><%= esc(safe(c.label)) %></option>
-          <% } %>
-        </select>
-      </label>
-      <label>
-        <span>View</span>
-        <select name="show" onchange="this.form.submit()">
-          <option value="active" <%= "active".equals(show) ? "selected" : "" %>>Active Only</option>
-          <option value="all" <%= "all".equals(show) ? "selected" : "" %>>Active + Archived</option>
-        </select>
-      </label>
-      <label>
-        <span>&nbsp;</span>
-        <button class="btn" type="submit">Apply</button>
-      </label>
-    </div>
-    <input type="hidden" name="claim_uuid" value="<%= esc(selectedClaimUuid) %>" />
-    <input type="hidden" name="element_uuid" value="<%= esc(selectedElementUuid) %>" />
-    <input type="hidden" name="fact_uuid" value="<%= esc(selectedFactUuid) %>" />
-  </form>
-
-  <% if (message != null) { %>
-    <div class="alert alert-ok" style="margin-top:12px;"><%= esc(message) %></div>
-  <% } %>
-  <% if (error != null) { %>
-    <div class="alert alert-error" style="margin-top:12px;"><%= esc(error) %></div>
-  <% } %>
-
-  <div class="facts-counts">
-    <div class="facts-count-box">
-      <div class="k">Claims</div>
-      <div class="v"><%= claims.size() %></div>
-      <div class="meta">Active: <%= activeClaimCount %> / Total: <%= allClaims.size() %></div>
-    </div>
-    <div class="facts-count-box">
-      <div class="k">Elements</div>
-      <div class="v"><%= elements.size() %></div>
-      <div class="meta">Active: <%= activeElementCount %> / Total: <%= allElements.size() %></div>
-    </div>
-    <div class="facts-count-box">
-      <div class="k">Facts</div>
-      <div class="v"><%= facts.size() %></div>
-      <div class="meta">Active: <%= activeFactCount %> / Total: <%= allFacts.size() %></div>
-    </div>
-  </div>
-
-  <div class="meta" style="margin-top:10px;">
-    Report Document UUID: <code><%= esc(safe(reportRefs.reportDocumentUuid)) %></code>
-    |
-    Report Part UUID: <code><%= esc(safe(reportRefs.reportPartUuid)) %></code>
-    |
-    Last Version UUID: <code><%= esc(safe(reportRefs.lastReportVersionUuid)) %></code>
-    |
-    Generated: <code><%= esc(safe(reportRefs.reportGeneratedAt)) %></code>
-  </div>
-
-  <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:10px;">
-    <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-    <input type="hidden" name="action" value="refresh_report" />
-    <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
-    <input type="hidden" name="show" value="<%= esc(show) %>" />
-    <input type="hidden" name="claim_uuid" value="<%= esc(selectedClaimUuid) %>" />
-    <input type="hidden" name="element_uuid" value="<%= esc(selectedElementUuid) %>" />
-    <input type="hidden" name="fact_uuid" value="<%= esc(selectedFactUuid) %>" />
-    <button class="btn" type="submit">Regenerate Landscape PDF Report</button>
-  </form>
-</section>
+<% if (message != null) { %>
+  <div class="alert alert-ok" style="margin-top:12px;"><%= esc(message) %></div>
+<% } %>
+<% if (error != null) { %>
+  <div class="alert alert-error" style="margin-top:12px;"><%= esc(error) %></div>
+<% } %>
 
 <section class="facts-shell" style="margin-top:12px;">
   <section class="card facts-tree-pane">
-    <h2 style="margin-top:0;">Case Plan Tree</h2>
-    <div class="meta">Side-tree view for Claims, Elements, and Facts.</div>
+    <div class="facts-tree-header">
+      <div>
+        <h2 style="margin:0;">Case Plan Tree</h2>
+        <div class="meta">Primary workspace for Claims, Elements, and Facts.</div>
+      </div>
+      <div class="facts-tree-stats">
+        <span class="facts-chip">Claims: <strong><%= claims.size() %></strong></span>
+        <span class="facts-chip">Elements: <strong><%= elements.size() %></strong></span>
+        <span class="facts-chip">Facts: <strong><%= facts.size() %></strong></span>
+      </div>
+    </div>
 
     <% if (claims.isEmpty()) { %>
       <div class="muted" style="margin-top:10px;">No claims yet. Create one in the panel to the right.</div>
@@ -795,137 +792,157 @@
   </section>
 
   <section class="facts-panels">
-    <section class="card">
-      <h2 style="margin-top:0;">Create Claim</h2>
-      <form method="post" class="form" action="<%= ctx %>/facts.jsp">
-        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-        <input type="hidden" name="action" value="create_claim" />
-        <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
-        <input type="hidden" name="show" value="<%= esc(show) %>" />
-        <label><span>Claim Title</span><input type="text" name="claim_title" required /></label>
-        <div class="facts-inline">
-          <label><span>Sort Order</span><input type="number" name="claim_sort_order" value="10" min="1" /></label>
-          <label><span>&nbsp;</span><button class="btn" type="submit">Add Claim</button></label>
+    <details class="card facts-pane" open>
+      <summary>
+        <span>Workspace Controls</span>
+        <span class="facts-pane-label">Matter, view filters, and report metadata</span>
+      </summary>
+      <div class="facts-pane-body">
+        <form method="get" action="<%= ctx %>/facts.jsp" class="form">
+          <div class="grid grid-3">
+            <label>
+              <span>Matter</span>
+              <select name="case_uuid" onchange="this.form.submit()">
+                <% for (int i = 0; i < activeCases.size(); i++) {
+                     matters.MatterRec c = activeCases.get(i);
+                     if (c == null) continue;
+                     String id = safe(c.uuid);
+                %>
+                  <option value="<%= esc(id) %>" <%= isSelected(id, caseUuid) ? "selected" : "" %>><%= esc(safe(c.label)) %></option>
+                <% } %>
+              </select>
+            </label>
+            <label>
+              <span>View</span>
+              <select name="show" onchange="this.form.submit()">
+                <option value="active" <%= "active".equals(show) ? "selected" : "" %>>Active Only</option>
+                <option value="all" <%= "all".equals(show) ? "selected" : "" %>>Active + Archived</option>
+              </select>
+            </label>
+            <label>
+              <span>&nbsp;</span>
+              <button class="btn" type="submit">Apply</button>
+            </label>
+          </div>
+          <input type="hidden" name="claim_uuid" value="<%= esc(selectedClaimUuid) %>" />
+          <input type="hidden" name="element_uuid" value="<%= esc(selectedElementUuid) %>" />
+          <input type="hidden" name="fact_uuid" value="<%= esc(selectedFactUuid) %>" />
+        </form>
+
+        <div class="facts-counts">
+          <div class="facts-count-box">
+            <div class="k">Claims</div>
+            <div class="v"><%= claims.size() %></div>
+            <div class="meta">Active: <%= activeClaimCount %> / Total: <%= allClaims.size() %></div>
+          </div>
+          <div class="facts-count-box">
+            <div class="k">Elements</div>
+            <div class="v"><%= elements.size() %></div>
+            <div class="meta">Active: <%= activeElementCount %> / Total: <%= allElements.size() %></div>
+          </div>
+          <div class="facts-count-box">
+            <div class="k">Facts</div>
+            <div class="v"><%= facts.size() %></div>
+            <div class="meta">Active: <%= activeFactCount %> / Total: <%= allFacts.size() %></div>
+          </div>
         </div>
-        <label><span>Summary</span><textarea name="claim_summary" rows="2" placeholder="Describe the legal claim at a high level."></textarea></label>
-      </form>
-    </section>
 
-    <% if (selectedClaim != null) { %>
-      <section class="card">
-        <h2 style="margin-top:0;">Edit Selected Claim</h2>
-        <form method="post" class="form" action="<%= ctx %>/facts.jsp">
-          <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-          <input type="hidden" name="action" value="save_claim" />
-          <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
-          <input type="hidden" name="show" value="<%= esc(show) %>" />
-          <input type="hidden" name="claim_uuid" value="<%= esc(safe(selectedClaim.uuid)) %>" />
-          <label><span>Claim Title</span><input type="text" name="claim_title" value="<%= esc(safe(selectedClaim.title)) %>" required /></label>
-          <div class="facts-inline">
-            <label><span>Sort Order</span><input type="number" name="claim_sort_order" value="<%= selectedClaim.sortOrder %>" min="1" /></label>
-            <label><span>Status</span><input type="text" value="<%= selectedClaim.trashed ? "Archived" : "Active" %>" disabled /></label>
-          </div>
-          <label><span>Summary</span><textarea name="claim_summary" rows="3"><%= esc(safe(selectedClaim.summary)) %></textarea></label>
-          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
-            <button class="btn" type="submit">Save Claim</button>
-          </div>
-        </form>
-        <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:8px;">
-          <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-          <input type="hidden" name="action" value="<%= selectedClaim.trashed ? "restore_claim" : "archive_claim" %>" />
-          <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
-          <input type="hidden" name="show" value="<%= esc(show) %>" />
-          <input type="hidden" name="claim_uuid" value="<%= esc(safe(selectedClaim.uuid)) %>" />
-          <button class="btn btn-ghost" type="submit" onclick="return confirm('<%= selectedClaim.trashed ? "Restore" : "Archive" %> this claim and all descendant elements/facts?');">
-            <%= selectedClaim.trashed ? "Restore Claim + Descendants" : "Archive Claim + Descendants" %>
-          </button>
-        </form>
-      </section>
-    <% } %>
-
-    <section class="card">
-      <h2 style="margin-top:0;">Create Element</h2>
-      <form method="post" class="form" action="<%= ctx %>/facts.jsp">
-        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-        <input type="hidden" name="action" value="create_element" />
-        <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
-        <input type="hidden" name="show" value="<%= esc(show) %>" />
-        <label>
-          <span>Parent Claim</span>
-          <select name="claim_uuid" required>
-            <option value=""></option>
-            <% for (int i = 0; i < allClaims.size(); i++) {
-                 matter_facts.ClaimRec c = allClaims.get(i);
-                 if (c == null || c.trashed) continue;
-            %>
-              <option value="<%= esc(safe(c.uuid)) %>" <%= isSelected(safe(c.uuid), selectedClaimUuid) ? "selected" : "" %>><%= esc(safe(c.title)) %></option>
-            <% } %>
-          </select>
-        </label>
-        <label><span>Element Title</span><input type="text" name="element_title" required /></label>
-        <div class="facts-inline">
-          <label><span>Sort Order</span><input type="number" name="element_sort_order" value="10" min="1" /></label>
-          <label><span>&nbsp;</span><button class="btn" type="submit">Add Element</button></label>
+        <div class="meta" style="margin-top:10px;">
+          Report Document: <code><%= esc(linkedLabel(reportRefs.reportDocumentUuid, docLabelByUuid, "document")) %></code>
+          |
+          Report Part: <code><%= esc(linkedLabel(reportRefs.reportPartUuid, partLabelByUuid, "part")) %></code>
+          |
+          Last Version: <code><%= esc(linkedLabel(reportRefs.lastReportVersionUuid, versionLabelByUuid, "version")) %></code>
+          |
+          Generated: <code><%= esc(safe(reportRefs.reportGeneratedAt)) %></code>
         </div>
-        <label><span>Notes</span><textarea name="element_notes" rows="2" placeholder="List required legal elements/proofs."></textarea></label>
-      </form>
-    </section>
 
-    <% if (selectedElement != null) { %>
-      <section class="card">
-        <h2 style="margin-top:0;">Edit Selected Element</h2>
-        <form method="post" class="form" action="<%= ctx %>/facts.jsp">
+        <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:10px;">
           <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-          <input type="hidden" name="action" value="save_element" />
-          <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
-          <input type="hidden" name="show" value="<%= esc(show) %>" />
-          <input type="hidden" name="element_uuid" value="<%= esc(safe(selectedElement.uuid)) %>" />
-          <label>
-            <span>Parent Claim</span>
-            <select name="claim_uuid" required>
-              <% for (int i = 0; i < allClaims.size(); i++) {
-                   matter_facts.ClaimRec c = allClaims.get(i);
-                   if (c == null || c.trashed) continue;
-              %>
-                <option value="<%= esc(safe(c.uuid)) %>" <%= isSelected(safe(c.uuid), safe(selectedElement.claimUuid)) ? "selected" : "" %>><%= esc(safe(c.title)) %></option>
-              <% } %>
-            </select>
-          </label>
-          <label><span>Element Title</span><input type="text" name="element_title" value="<%= esc(safe(selectedElement.title)) %>" required /></label>
-          <div class="facts-inline">
-            <label><span>Sort Order</span><input type="number" name="element_sort_order" value="<%= selectedElement.sortOrder %>" min="1" /></label>
-            <label><span>Status</span><input type="text" value="<%= selectedElement.trashed ? "Archived" : "Active" %>" disabled /></label>
-          </div>
-          <label><span>Notes</span><textarea name="element_notes" rows="3"><%= esc(safe(selectedElement.notes)) %></textarea></label>
-          <button class="btn" type="submit">Save Element</button>
-        </form>
-        <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:8px;">
-          <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-          <input type="hidden" name="action" value="<%= selectedElement.trashed ? "restore_element" : "archive_element" %>" />
+          <input type="hidden" name="action" value="refresh_report" />
           <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
           <input type="hidden" name="show" value="<%= esc(show) %>" />
           <input type="hidden" name="claim_uuid" value="<%= esc(selectedClaimUuid) %>" />
-          <input type="hidden" name="element_uuid" value="<%= esc(safe(selectedElement.uuid)) %>" />
-          <button class="btn btn-ghost" type="submit" onclick="return confirm('<%= selectedElement.trashed ? "Restore" : "Archive" %> this element and all descendant facts?');">
-            <%= selectedElement.trashed ? "Restore Element + Facts" : "Archive Element + Facts" %>
-          </button>
+          <input type="hidden" name="element_uuid" value="<%= esc(selectedElementUuid) %>" />
+          <input type="hidden" name="fact_uuid" value="<%= esc(selectedFactUuid) %>" />
+          <button class="btn" type="submit">Regenerate Landscape PDF Report</button>
         </form>
-      </section>
+      </div>
+    </details>
+
+    <details class="card facts-pane">
+      <summary>
+        <span>Add Claim</span>
+        <span class="facts-pane-label">Create a top-level claim</span>
+      </summary>
+      <div class="facts-pane-body">
+        <form method="post" class="form" action="<%= ctx %>/facts.jsp">
+          <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+          <input type="hidden" name="action" value="create_claim" />
+          <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+          <input type="hidden" name="show" value="<%= esc(show) %>" />
+          <label><span>Claim Title</span><input type="text" name="claim_title" required /></label>
+          <div class="facts-inline">
+            <label><span>Sort Order</span><input type="number" name="claim_sort_order" value="10" min="1" /></label>
+            <label><span>&nbsp;</span><button class="btn" type="submit">Add Claim</button></label>
+          </div>
+          <label><span>Summary</span><textarea name="claim_summary" rows="2" placeholder="Describe the legal claim at a high level."></textarea></label>
+        </form>
+      </div>
+    </details>
+
+    <% if (selectedClaim != null) { %>
+      <details class="card facts-pane" open>
+        <summary>
+          <span>Selected Claim</span>
+          <span class="facts-pane-label"><%= esc(safe(selectedClaim.title)) %></span>
+        </summary>
+        <div class="facts-pane-body">
+          <form method="post" class="form" action="<%= ctx %>/facts.jsp">
+            <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+            <input type="hidden" name="action" value="save_claim" />
+            <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+            <input type="hidden" name="show" value="<%= esc(show) %>" />
+            <input type="hidden" name="claim_uuid" value="<%= esc(safe(selectedClaim.uuid)) %>" />
+            <label><span>Claim Title</span><input type="text" name="claim_title" value="<%= esc(safe(selectedClaim.title)) %>" required /></label>
+            <div class="facts-inline">
+              <label><span>Sort Order</span><input type="number" name="claim_sort_order" value="<%= selectedClaim.sortOrder %>" min="1" /></label>
+              <label><span>Status</span><input type="text" value="<%= selectedClaim.trashed ? "Archived" : "Active" %>" disabled /></label>
+            </div>
+            <label><span>Summary</span><textarea name="claim_summary" rows="3"><%= esc(safe(selectedClaim.summary)) %></textarea></label>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+              <button class="btn" type="submit">Save Claim</button>
+            </div>
+          </form>
+          <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:8px;">
+            <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+            <input type="hidden" name="action" value="<%= selectedClaim.trashed ? "restore_claim" : "archive_claim" %>" />
+            <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+            <input type="hidden" name="show" value="<%= esc(show) %>" />
+            <input type="hidden" name="claim_uuid" value="<%= esc(safe(selectedClaim.uuid)) %>" />
+            <button class="btn btn-ghost" type="submit" onclick="return confirm('<%= selectedClaim.trashed ? "Restore" : "Archive" %> this claim and all descendant elements/facts?');">
+              <%= selectedClaim.trashed ? "Restore Claim + Descendants" : "Archive Claim + Descendants" %>
+            </button>
+          </form>
+        </div>
+      </details>
     <% } %>
 
-    <section class="card">
-      <h2 style="margin-top:0;">Create Fact</h2>
-      <div class="meta">Facts may link to a specific document, part, version, and page.</div>
-      <form method="post" class="form" action="<%= ctx %>/facts.jsp">
-        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-        <input type="hidden" name="action" value="create_fact" />
-        <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
-        <input type="hidden" name="show" value="<%= esc(show) %>" />
-
-        <div class="grid grid-3">
+    <details class="card facts-pane">
+      <summary>
+        <span>Add Element</span>
+        <span class="facts-pane-label">Create a child element for a claim</span>
+      </summary>
+      <div class="facts-pane-body">
+        <form method="post" class="form" action="<%= ctx %>/facts.jsp">
+          <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+          <input type="hidden" name="action" value="create_element" />
+          <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+          <input type="hidden" name="show" value="<%= esc(show) %>" />
           <label>
-            <span>Claim</span>
+            <span>Parent Claim</span>
             <select name="claim_uuid" required>
+              <option value=""></option>
               <% for (int i = 0; i < allClaims.size(); i++) {
                    matter_facts.ClaimRec c = allClaims.get(i);
                    if (c == null || c.trashed) continue;
@@ -934,109 +951,75 @@
               <% } %>
             </select>
           </label>
-          <label>
-            <span>Element</span>
-            <select name="element_uuid" required>
-              <% for (int i = 0; i < allElements.size(); i++) {
-                   matter_facts.ElementRec e = allElements.get(i);
-                   if (e == null || e.trashed) continue;
-              %>
-                <option value="<%= esc(safe(e.uuid)) %>" <%= isSelected(safe(e.uuid), selectedElementUuid) ? "selected" : "" %>><%= esc(safe(e.title)) %></option>
-              <% } %>
-            </select>
-          </label>
-          <label>
-            <span>Sort Order</span>
-            <input type="number" name="fact_sort_order" value="10" min="1" />
-          </label>
+          <label><span>Element Title</span><input type="text" name="element_title" required /></label>
+          <div class="facts-inline">
+            <label><span>Sort Order</span><input type="number" name="element_sort_order" value="10" min="1" /></label>
+            <label><span>&nbsp;</span><button class="btn" type="submit">Add Element</button></label>
+          </div>
+          <label><span>Notes</span><textarea name="element_notes" rows="2" placeholder="List required legal elements/proofs."></textarea></label>
+        </form>
+      </div>
+    </details>
+
+    <% if (selectedElement != null) { %>
+      <details class="card facts-pane" open>
+        <summary>
+          <span>Selected Element</span>
+          <span class="facts-pane-label"><%= esc(safe(selectedElement.title)) %></span>
+        </summary>
+        <div class="facts-pane-body">
+          <form method="post" class="form" action="<%= ctx %>/facts.jsp">
+            <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+            <input type="hidden" name="action" value="save_element" />
+            <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+            <input type="hidden" name="show" value="<%= esc(show) %>" />
+            <input type="hidden" name="element_uuid" value="<%= esc(safe(selectedElement.uuid)) %>" />
+            <label>
+              <span>Parent Claim</span>
+              <select name="claim_uuid" required>
+                <% for (int i = 0; i < allClaims.size(); i++) {
+                     matter_facts.ClaimRec c = allClaims.get(i);
+                     if (c == null || c.trashed) continue;
+                %>
+                  <option value="<%= esc(safe(c.uuid)) %>" <%= isSelected(safe(c.uuid), safe(selectedElement.claimUuid)) ? "selected" : "" %>><%= esc(safe(c.title)) %></option>
+                <% } %>
+              </select>
+            </label>
+            <label><span>Element Title</span><input type="text" name="element_title" value="<%= esc(safe(selectedElement.title)) %>" required /></label>
+            <div class="facts-inline">
+              <label><span>Sort Order</span><input type="number" name="element_sort_order" value="<%= selectedElement.sortOrder %>" min="1" /></label>
+              <label><span>Status</span><input type="text" value="<%= selectedElement.trashed ? "Archived" : "Active" %>" disabled /></label>
+            </div>
+            <label><span>Notes</span><textarea name="element_notes" rows="3"><%= esc(safe(selectedElement.notes)) %></textarea></label>
+            <button class="btn" type="submit">Save Element</button>
+          </form>
+          <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:8px;">
+            <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+            <input type="hidden" name="action" value="<%= selectedElement.trashed ? "restore_element" : "archive_element" %>" />
+            <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+            <input type="hidden" name="show" value="<%= esc(show) %>" />
+            <input type="hidden" name="claim_uuid" value="<%= esc(selectedClaimUuid) %>" />
+            <input type="hidden" name="element_uuid" value="<%= esc(safe(selectedElement.uuid)) %>" />
+            <button class="btn btn-ghost" type="submit" onclick="return confirm('<%= selectedElement.trashed ? "Restore" : "Archive" %> this element and all descendant facts?');">
+              <%= selectedElement.trashed ? "Restore Element + Facts" : "Archive Element + Facts" %>
+            </button>
+          </form>
         </div>
+      </details>
+    <% } %>
 
-        <label><span>Fact Summary</span><input type="text" name="fact_summary" required /></label>
-        <label><span>Fact Detail</span><textarea name="fact_detail" rows="3"></textarea></label>
-        <label><span>Internal Notes (users only)</span><textarea name="fact_internal_notes" rows="2" placeholder="Not intended for non-user audiences."></textarea></label>
-
-        <div class="grid grid-3">
-          <label>
-            <span>Status</span>
-            <select name="fact_status">
-              <option value="unverified">Unverified</option>
-              <option value="corroborated">Corroborated</option>
-              <option value="disputed">Disputed</option>
-              <option value="admitted">Admitted</option>
-              <option value="proven">Proven</option>
-            </select>
-          </label>
-          <label>
-            <span>Strength</span>
-            <select name="fact_strength">
-              <option value="low">Low</option>
-              <option value="medium" selected>Medium</option>
-              <option value="high">High</option>
-              <option value="critical">Critical</option>
-            </select>
-          </label>
-          <label>
-            <span>Page Number</span>
-            <input type="number" name="page_number" min="0" value="0" />
-          </label>
-        </div>
-
-        <h4 style="margin:12px 0 8px 0;">Document Association</h4>
-        <div class="grid grid-3">
-          <label>
-            <span>Document</span>
-            <select name="document_uuid">
-              <option value=""></option>
-              <% for (int i = 0; i < docs.size(); i++) {
-                   documents.DocumentRec d = docs.get(i);
-                   if (d == null || d.trashed) continue;
-              %>
-                <option value="<%= esc(safe(d.uuid)) %>"><%= esc(safe(d.title)) %></option>
-              <% } %>
-            </select>
-          </label>
-          <label>
-            <span>Part</span>
-            <select name="part_uuid">
-              <option value=""></option>
-              <% for (int i = 0; i < allParts.size(); i++) {
-                   document_parts.PartRec p = allParts.get(i);
-                   if (p == null) continue;
-                   String docId = safe(partDocUuid.get(safe(p.uuid)));
-              %>
-                <option value="<%= esc(safe(p.uuid)) %>"><%= esc(safe(docLabelByUuid.get(docId))) %> :: <%= esc(safe(p.label)) %></option>
-              <% } %>
-            </select>
-          </label>
-          <label>
-            <span>Version</span>
-            <select name="version_uuid">
-              <option value=""></option>
-              <% for (int i = 0; i < allVersions.size(); i++) {
-                   part_versions.VersionRec v = allVersions.get(i);
-                   if (v == null) continue;
-                   String docId = safe(versionDocUuid.get(safe(v.uuid)));
-                   String partId = safe(versionPartUuid.get(safe(v.uuid)));
-              %>
-                <option value="<%= esc(safe(v.uuid)) %>"><%= esc(safe(docLabelByUuid.get(docId))) %> :: <%= esc(safe(partLabelByUuid.get(partId))) %> :: <%= esc(safe(v.versionLabel)) %></option>
-              <% } %>
-            </select>
-          </label>
-        </div>
-
-        <button class="btn" type="submit" style="margin-top:10px;">Add Fact</button>
-      </form>
-    </section>
-
-    <% if (selectedFact != null) { %>
-      <section class="card">
-        <h2 style="margin-top:0;">Edit Selected Fact</h2>
+    <details class="card facts-pane">
+      <summary>
+        <span>Add Fact</span>
+        <span class="facts-pane-label">Create a fact and link it to evidence</span>
+      </summary>
+      <div class="facts-pane-body">
+        <div class="meta">Facts may link to a specific document, part, version, and page.</div>
         <form method="post" class="form" action="<%= ctx %>/facts.jsp">
           <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-          <input type="hidden" name="action" value="save_fact" />
+          <input type="hidden" name="action" value="create_fact" />
           <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
           <input type="hidden" name="show" value="<%= esc(show) %>" />
-          <input type="hidden" name="fact_uuid" value="<%= esc(safe(selectedFact.uuid)) %>" />
 
           <div class="grid grid-3">
             <label>
@@ -1046,7 +1029,7 @@
                      matter_facts.ClaimRec c = allClaims.get(i);
                      if (c == null || c.trashed) continue;
                 %>
-                  <option value="<%= esc(safe(c.uuid)) %>" <%= isSelected(safe(c.uuid), safe(selectedFact.claimUuid)) ? "selected" : "" %>><%= esc(safe(c.title)) %></option>
+                  <option value="<%= esc(safe(c.uuid)) %>" <%= isSelected(safe(c.uuid), selectedClaimUuid) ? "selected" : "" %>><%= esc(safe(c.title)) %></option>
                 <% } %>
               </select>
             </label>
@@ -1057,38 +1040,44 @@
                      matter_facts.ElementRec e = allElements.get(i);
                      if (e == null || e.trashed) continue;
                 %>
-                  <option value="<%= esc(safe(e.uuid)) %>" <%= isSelected(safe(e.uuid), safe(selectedFact.elementUuid)) ? "selected" : "" %>><%= esc(safe(e.title)) %></option>
+                  <option value="<%= esc(safe(e.uuid)) %>" <%= isSelected(safe(e.uuid), selectedElementUuid) ? "selected" : "" %>><%= esc(safe(e.title)) %></option>
                 <% } %>
               </select>
             </label>
-            <label><span>Sort Order</span><input type="number" name="fact_sort_order" min="1" value="<%= selectedFact.sortOrder %>" /></label>
+            <label>
+              <span>Sort Order</span>
+              <input type="number" name="fact_sort_order" value="10" min="1" />
+            </label>
           </div>
 
-          <label><span>Fact Summary</span><input type="text" name="fact_summary" value="<%= esc(safe(selectedFact.summary)) %>" required /></label>
-          <label><span>Fact Detail</span><textarea name="fact_detail" rows="3"><%= esc(safe(selectedFact.detail)) %></textarea></label>
-          <label><span>Internal Notes (users only)</span><textarea name="fact_internal_notes" rows="2"><%= esc(safe(selectedFact.internalNotes)) %></textarea></label>
+          <label><span>Fact Summary</span><input type="text" name="fact_summary" required /></label>
+          <label><span>Fact Detail</span><textarea name="fact_detail" rows="3"></textarea></label>
+          <label><span>Internal Notes (users only)</span><textarea name="fact_internal_notes" rows="2" placeholder="Not intended for non-user audiences."></textarea></label>
 
           <div class="grid grid-3">
             <label>
               <span>Status</span>
               <select name="fact_status">
-                <option value="unverified" <%= isSelected("unverified", safe(selectedFact.status)) ? "selected" : "" %>>Unverified</option>
-                <option value="corroborated" <%= isSelected("corroborated", safe(selectedFact.status)) ? "selected" : "" %>>Corroborated</option>
-                <option value="disputed" <%= isSelected("disputed", safe(selectedFact.status)) ? "selected" : "" %>>Disputed</option>
-                <option value="admitted" <%= isSelected("admitted", safe(selectedFact.status)) ? "selected" : "" %>>Admitted</option>
-                <option value="proven" <%= isSelected("proven", safe(selectedFact.status)) ? "selected" : "" %>>Proven</option>
+                <option value="unverified">Unverified</option>
+                <option value="corroborated">Corroborated</option>
+                <option value="disputed">Disputed</option>
+                <option value="admitted">Admitted</option>
+                <option value="proven">Proven</option>
               </select>
             </label>
             <label>
               <span>Strength</span>
               <select name="fact_strength">
-                <option value="low" <%= isSelected("low", safe(selectedFact.strength)) ? "selected" : "" %>>Low</option>
-                <option value="medium" <%= isSelected("medium", safe(selectedFact.strength)) ? "selected" : "" %>>Medium</option>
-                <option value="high" <%= isSelected("high", safe(selectedFact.strength)) ? "selected" : "" %>>High</option>
-                <option value="critical" <%= isSelected("critical", safe(selectedFact.strength)) ? "selected" : "" %>>Critical</option>
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
               </select>
             </label>
-            <label><span>Page Number</span><input type="number" name="page_number" min="0" value="<%= selectedFact.pageNumber %>" /></label>
+            <label>
+              <span>Page Number</span>
+              <input type="number" name="page_number" min="0" value="0" />
+            </label>
           </div>
 
           <h4 style="margin:12px 0 8px 0;">Document Association</h4>
@@ -1101,7 +1090,7 @@
                      documents.DocumentRec d = docs.get(i);
                      if (d == null || d.trashed) continue;
                 %>
-                  <option value="<%= esc(safe(d.uuid)) %>" <%= isSelected(safe(d.uuid), safe(selectedFact.documentUuid)) ? "selected" : "" %>><%= esc(safe(d.title)) %></option>
+                  <option value="<%= esc(safe(d.uuid)) %>"><%= esc(safe(d.title)) %></option>
                 <% } %>
               </select>
             </label>
@@ -1114,7 +1103,7 @@
                      if (p == null) continue;
                      String docId = safe(partDocUuid.get(safe(p.uuid)));
                 %>
-                  <option value="<%= esc(safe(p.uuid)) %>" <%= isSelected(safe(p.uuid), safe(selectedFact.partUuid)) ? "selected" : "" %>><%= esc(safe(docLabelByUuid.get(docId))) %> :: <%= esc(safe(p.label)) %></option>
+                  <option value="<%= esc(safe(p.uuid)) %>"><%= esc(safe(docLabelByUuid.get(docId))) %> :: <%= esc(safe(p.label)) %></option>
                 <% } %>
               </select>
             </label>
@@ -1128,64 +1117,185 @@
                      String docId = safe(versionDocUuid.get(safe(v.uuid)));
                      String partId = safe(versionPartUuid.get(safe(v.uuid)));
                 %>
-                  <option value="<%= esc(safe(v.uuid)) %>" <%= isSelected(safe(v.uuid), safe(selectedFact.versionUuid)) ? "selected" : "" %>><%= esc(safe(docLabelByUuid.get(docId))) %> :: <%= esc(safe(partLabelByUuid.get(partId))) %> :: <%= esc(safe(v.versionLabel)) %></option>
+                  <option value="<%= esc(safe(v.uuid)) %>"><%= esc(safe(docLabelByUuid.get(docId))) %> :: <%= esc(safe(partLabelByUuid.get(partId))) %> :: <%= esc(safe(v.versionLabel)) %></option>
                 <% } %>
               </select>
             </label>
           </div>
 
-          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
-            <button class="btn" type="submit">Save Fact</button>
-          </div>
+          <button class="btn" type="submit" style="margin-top:10px;">Add Fact</button>
         </form>
-        <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:8px;">
-          <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-          <input type="hidden" name="action" value="<%= selectedFact.trashed ? "restore_fact" : "archive_fact" %>" />
-          <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
-          <input type="hidden" name="show" value="<%= esc(show) %>" />
-          <input type="hidden" name="claim_uuid" value="<%= esc(selectedClaimUuid) %>" />
-          <input type="hidden" name="element_uuid" value="<%= esc(selectedElementUuid) %>" />
-          <input type="hidden" name="fact_uuid" value="<%= esc(safe(selectedFact.uuid)) %>" />
-          <button class="btn btn-ghost" type="submit" onclick="return confirm('<%= selectedFact.trashed ? "Restore" : "Archive" %> this fact?');">
-            <%= selectedFact.trashed ? "Restore Fact" : "Archive Fact" %>
-          </button>
-        </form>
-      </section>
+      </div>
+    </details>
+
+    <% if (selectedFact != null) { %>
+      <details class="card facts-pane" open>
+        <summary>
+          <span>Selected Fact</span>
+          <span class="facts-pane-label"><%= esc(safe(selectedFact.summary)) %></span>
+        </summary>
+        <div class="facts-pane-body">
+          <form method="post" class="form" action="<%= ctx %>/facts.jsp">
+            <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+            <input type="hidden" name="action" value="save_fact" />
+            <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+            <input type="hidden" name="show" value="<%= esc(show) %>" />
+            <input type="hidden" name="fact_uuid" value="<%= esc(safe(selectedFact.uuid)) %>" />
+
+            <div class="grid grid-3">
+              <label>
+                <span>Claim</span>
+                <select name="claim_uuid" required>
+                  <% for (int i = 0; i < allClaims.size(); i++) {
+                       matter_facts.ClaimRec c = allClaims.get(i);
+                       if (c == null || c.trashed) continue;
+                  %>
+                    <option value="<%= esc(safe(c.uuid)) %>" <%= isSelected(safe(c.uuid), safe(selectedFact.claimUuid)) ? "selected" : "" %>><%= esc(safe(c.title)) %></option>
+                  <% } %>
+                </select>
+              </label>
+              <label>
+                <span>Element</span>
+                <select name="element_uuid" required>
+                  <% for (int i = 0; i < allElements.size(); i++) {
+                       matter_facts.ElementRec e = allElements.get(i);
+                       if (e == null || e.trashed) continue;
+                  %>
+                    <option value="<%= esc(safe(e.uuid)) %>" <%= isSelected(safe(e.uuid), safe(selectedFact.elementUuid)) ? "selected" : "" %>><%= esc(safe(e.title)) %></option>
+                  <% } %>
+                </select>
+              </label>
+              <label><span>Sort Order</span><input type="number" name="fact_sort_order" min="1" value="<%= selectedFact.sortOrder %>" /></label>
+            </div>
+
+            <label><span>Fact Summary</span><input type="text" name="fact_summary" value="<%= esc(safe(selectedFact.summary)) %>" required /></label>
+            <label><span>Fact Detail</span><textarea name="fact_detail" rows="3"><%= esc(safe(selectedFact.detail)) %></textarea></label>
+            <label><span>Internal Notes (users only)</span><textarea name="fact_internal_notes" rows="2"><%= esc(safe(selectedFact.internalNotes)) %></textarea></label>
+
+            <div class="grid grid-3">
+              <label>
+                <span>Status</span>
+                <select name="fact_status">
+                  <option value="unverified" <%= isSelected("unverified", safe(selectedFact.status)) ? "selected" : "" %>>Unverified</option>
+                  <option value="corroborated" <%= isSelected("corroborated", safe(selectedFact.status)) ? "selected" : "" %>>Corroborated</option>
+                  <option value="disputed" <%= isSelected("disputed", safe(selectedFact.status)) ? "selected" : "" %>>Disputed</option>
+                  <option value="admitted" <%= isSelected("admitted", safe(selectedFact.status)) ? "selected" : "" %>>Admitted</option>
+                  <option value="proven" <%= isSelected("proven", safe(selectedFact.status)) ? "selected" : "" %>>Proven</option>
+                </select>
+              </label>
+              <label>
+                <span>Strength</span>
+                <select name="fact_strength">
+                  <option value="low" <%= isSelected("low", safe(selectedFact.strength)) ? "selected" : "" %>>Low</option>
+                  <option value="medium" <%= isSelected("medium", safe(selectedFact.strength)) ? "selected" : "" %>>Medium</option>
+                  <option value="high" <%= isSelected("high", safe(selectedFact.strength)) ? "selected" : "" %>>High</option>
+                  <option value="critical" <%= isSelected("critical", safe(selectedFact.strength)) ? "selected" : "" %>>Critical</option>
+                </select>
+              </label>
+              <label><span>Page Number</span><input type="number" name="page_number" min="0" value="<%= selectedFact.pageNumber %>" /></label>
+            </div>
+
+            <h4 style="margin:12px 0 8px 0;">Document Association</h4>
+            <div class="grid grid-3">
+              <label>
+                <span>Document</span>
+                <select name="document_uuid">
+                  <option value=""></option>
+                  <% for (int i = 0; i < docs.size(); i++) {
+                       documents.DocumentRec d = docs.get(i);
+                       if (d == null || d.trashed) continue;
+                  %>
+                    <option value="<%= esc(safe(d.uuid)) %>" <%= isSelected(safe(d.uuid), safe(selectedFact.documentUuid)) ? "selected" : "" %>><%= esc(safe(d.title)) %></option>
+                  <% } %>
+                </select>
+              </label>
+              <label>
+                <span>Part</span>
+                <select name="part_uuid">
+                  <option value=""></option>
+                  <% for (int i = 0; i < allParts.size(); i++) {
+                       document_parts.PartRec p = allParts.get(i);
+                       if (p == null) continue;
+                       String docId = safe(partDocUuid.get(safe(p.uuid)));
+                  %>
+                    <option value="<%= esc(safe(p.uuid)) %>" <%= isSelected(safe(p.uuid), safe(selectedFact.partUuid)) ? "selected" : "" %>><%= esc(safe(docLabelByUuid.get(docId))) %> :: <%= esc(safe(p.label)) %></option>
+                  <% } %>
+                </select>
+              </label>
+              <label>
+                <span>Version</span>
+                <select name="version_uuid">
+                  <option value=""></option>
+                  <% for (int i = 0; i < allVersions.size(); i++) {
+                       part_versions.VersionRec v = allVersions.get(i);
+                       if (v == null) continue;
+                       String docId = safe(versionDocUuid.get(safe(v.uuid)));
+                       String partId = safe(versionPartUuid.get(safe(v.uuid)));
+                  %>
+                    <option value="<%= esc(safe(v.uuid)) %>" <%= isSelected(safe(v.uuid), safe(selectedFact.versionUuid)) ? "selected" : "" %>><%= esc(safe(docLabelByUuid.get(docId))) %> :: <%= esc(safe(partLabelByUuid.get(partId))) %> :: <%= esc(safe(v.versionLabel)) %></option>
+                  <% } %>
+                </select>
+              </label>
+            </div>
+
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+              <button class="btn" type="submit">Save Fact</button>
+            </div>
+          </form>
+          <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:8px;">
+            <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+            <input type="hidden" name="action" value="<%= selectedFact.trashed ? "restore_fact" : "archive_fact" %>" />
+            <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+            <input type="hidden" name="show" value="<%= esc(show) %>" />
+            <input type="hidden" name="claim_uuid" value="<%= esc(selectedClaimUuid) %>" />
+            <input type="hidden" name="element_uuid" value="<%= esc(selectedElementUuid) %>" />
+            <input type="hidden" name="fact_uuid" value="<%= esc(safe(selectedFact.uuid)) %>" />
+            <button class="btn btn-ghost" type="submit" onclick="return confirm('<%= selectedFact.trashed ? "Restore" : "Archive" %> this fact?');">
+              <%= selectedFact.trashed ? "Restore Fact" : "Archive Fact" %>
+            </button>
+          </form>
+        </div>
+      </details>
     <% } %>
 
-    <section class="card">
-      <h2 style="margin-top:0;">Reference Catalog</h2>
-      <div class="meta">Use this list to quickly choose valid document -> part -> version links for facts.</div>
-      <div class="table-wrap" style="margin-top:10px;">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Document</th>
-              <th>Part</th>
-              <th>Version</th>
-            </tr>
-          </thead>
-          <tbody>
-            <% if (allVersions.isEmpty()) { %>
-              <tr><td colspan="3" class="muted">No versions found. Add document parts and versions first.</td></tr>
-            <% } else {
-                 for (int i = 0; i < allVersions.size(); i++) {
-                   part_versions.VersionRec v = allVersions.get(i);
-                   if (v == null) continue;
-                   String vid = safe(v.uuid);
-                   String pid = safe(versionPartUuid.get(vid));
-                   String did = safe(versionDocUuid.get(vid));
-            %>
+    <details class="card facts-pane">
+      <summary>
+        <span>Reference Catalog</span>
+        <span class="facts-pane-label">Document -> Part -> Version mapping</span>
+      </summary>
+      <div class="facts-pane-body">
+        <div class="meta">Use this list to quickly choose valid document -> part -> version links for facts.</div>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table class="table">
+            <thead>
               <tr>
-                <td><%= esc(safe(docLabelByUuid.get(did))) %><div class="muted"><code><%= esc(did) %></code></div></td>
-                <td><%= esc(safe(partLabelByUuid.get(pid))) %><div class="muted"><code><%= esc(pid) %></code></div></td>
-                <td><%= esc(safe(v.versionLabel)) %><div class="muted"><code><%= esc(vid) %></code></div></td>
+                <th>Document</th>
+                <th>Part</th>
+                <th>Version</th>
               </tr>
-            <% } } %>
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              <% if (allVersions.isEmpty()) { %>
+                <tr><td colspan="3" class="muted">No versions found. Add document parts and versions first.</td></tr>
+              <% } else {
+                   for (int i = 0; i < allVersions.size(); i++) {
+                     part_versions.VersionRec v = allVersions.get(i);
+                     if (v == null) continue;
+                     String vid = safe(v.uuid);
+                     String pid = safe(versionPartUuid.get(vid));
+                     String did = safe(versionDocUuid.get(vid));
+              %>
+                <tr>
+                  <td><%= esc(linkedLabel(did, docLabelByUuid, "document")) %></td>
+                  <td><%= esc(linkedLabel(pid, partLabelByUuid, "part")) %></td>
+                  <td><%= esc(linkedLabel(vid, versionLabelByUuid, "version")) %></td>
+                </tr>
+              <% } } %>
+            </tbody>
+          </table>
+        </div>
       </div>
-    </section>
+    </details>
   </section>
 </section>
 

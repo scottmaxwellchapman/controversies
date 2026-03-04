@@ -124,6 +124,162 @@ html[data-theme="dark"]{
   --bar-bg: rgba(15,23,42,0.92);
 }
 
+html[data-theme-variant="macos"]{
+  --bg: #F2F2F7;
+  --surface: #FFFFFF;
+  --surface-2: #F5F5F7;
+  --popover: #FFFFFF;
+
+  --text: #1D1D1F;
+  --muted: #6E6E73;
+  --border: rgba(60, 60, 67, 0.29);
+  --stroke: rgba(60, 60, 67, 0.20);
+
+  --accent: #0A84FF;
+  --accent-hover: #0066CC;
+  --accent-soft: rgba(10, 132, 255, 0.14);
+
+  --input-bg: #FFFFFF;
+  --input-bg-elev: #FFFFFF;
+  --ghost-bg: #FFFFFF;
+  --ghost-hover: rgba(60, 60, 67, 0.10);
+  --chip-bg: #FFFFFF;
+  --table-row-hover: rgba(10, 132, 255, 0.09);
+  --bar-bg: rgba(249, 249, 251, 0.90);
+
+  --focus: 0 0 0 3px rgba(10, 132, 255, 0.26);
+}
+
+html[data-theme="dark"][data-theme-variant="macos"]{
+  --bg: #1C1C1E;
+  --surface: #2C2C2E;
+  --surface-2: #3A3A3C;
+  --popover: #2C2C2E;
+
+  --text: #F2F2F7;
+  --muted: #AEAEB2;
+  --border: rgba(174, 174, 178, 0.36);
+  --stroke: rgba(174, 174, 178, 0.24);
+
+  --accent: #0A84FF;
+  --accent-hover: #409CFF;
+  --accent-soft: rgba(10, 132, 255, 0.26);
+
+  --input-bg: #2C2C2E;
+  --input-bg-elev: #1F1F21;
+  --ghost-bg: #1F1F21;
+  --ghost-hover: rgba(174, 174, 178, 0.16);
+  --chip-bg: #1F1F21;
+  --table-row-hover: rgba(10, 132, 255, 0.16);
+  --bar-bg: rgba(28, 28, 30, 0.90);
+
+  --focus: 0 0 0 3px rgba(10, 132, 255, 0.40);
+}
+
+html[data-theme-variant="sunset"]{
+  --bg: #FFF7F0;
+  --surface: #FFFDF9;
+  --surface-2: #FFF1E2;
+  --popover: #FFFDF9;
+
+  --text: #3F2500;
+  --muted: #7D5F3A;
+  --border: rgba(125, 95, 58, 0.25);
+  --stroke: rgba(125, 95, 58, 0.18);
+
+  --accent: #EA580C;
+  --accent-hover: #C2410C;
+  --accent-soft: rgba(234, 88, 12, 0.16);
+
+  --input-bg: #FFFFFF;
+  --input-bg-elev: #FFF9F2;
+  --ghost-bg: #FFFFFF;
+  --ghost-hover: rgba(125, 95, 58, 0.08);
+  --chip-bg: #FFFFFF;
+  --table-row-hover: rgba(234, 88, 12, 0.08);
+  --bar-bg: rgba(255, 247, 240, 0.90);
+
+  --focus: 0 0 0 3px rgba(234, 88, 12, 0.26);
+}
+
+html[data-theme="dark"][data-theme-variant="sunset"]{
+  --bg: #251A14;
+  --surface: #33231B;
+  --surface-2: #402D23;
+  --popover: #33231B;
+
+  --text: #FFE7CF;
+  --muted: #D2B48F;
+  --border: rgba(210, 180, 143, 0.34);
+  --stroke: rgba(210, 180, 143, 0.24);
+
+  --accent: #FB923C;
+  --accent-hover: #FDBA74;
+  --accent-soft: rgba(251, 146, 60, 0.24);
+
+  --input-bg: #2C1F18;
+  --input-bg-elev: #241912;
+  --ghost-bg: #2C1F18;
+  --ghost-hover: rgba(210, 180, 143, 0.14);
+  --chip-bg: #2C1F18;
+  --table-row-hover: rgba(251, 146, 60, 0.14);
+  --bar-bg: rgba(37, 26, 20, 0.90);
+
+  --focus: 0 0 0 3px rgba(251, 146, 60, 0.40);
+}
+
+html[data-theme-variant="graphite"]{
+  --bg: #F0F2F4;
+  --surface: #FDFDFE;
+  --surface-2: #E9EDF1;
+  --popover: #FDFDFE;
+
+  --text: #1F2933;
+  --muted: #5F6B78;
+  --border: rgba(31, 41, 51, 0.20);
+  --stroke: rgba(31, 41, 51, 0.14);
+
+  --accent: #2F6EA3;
+  --accent-hover: #255680;
+  --accent-soft: rgba(47, 110, 163, 0.15);
+
+  --input-bg: #FFFFFF;
+  --input-bg-elev: #F8FAFC;
+  --ghost-bg: #FFFFFF;
+  --ghost-hover: rgba(31, 41, 51, 0.06);
+  --chip-bg: #FFFFFF;
+  --table-row-hover: rgba(47, 110, 163, 0.07);
+  --bar-bg: rgba(240, 242, 244, 0.90);
+
+  --focus: 0 0 0 3px rgba(47, 110, 163, 0.28);
+}
+
+html[data-theme="dark"][data-theme-variant="graphite"]{
+  --bg: #0F1318;
+  --surface: #171D24;
+  --surface-2: #212A35;
+  --popover: #171D24;
+
+  --text: #E6EDF5;
+  --muted: #9BA9B8;
+  --border: rgba(155, 169, 184, 0.30);
+  --stroke: rgba(155, 169, 184, 0.20);
+
+  --accent: #7AB0FF;
+  --accent-hover: #A6CAFF;
+  --accent-soft: rgba(122, 176, 255, 0.24);
+
+  --input-bg: #121820;
+  --input-bg-elev: #0D131A;
+  --ghost-bg: #121820;
+  --ghost-hover: rgba(155, 169, 184, 0.13);
+  --chip-bg: #121820;
+  --table-row-hover: rgba(122, 176, 255, 0.14);
+  --bar-bg: rgba(15, 19, 24, 0.90);
+
+  --focus: 0 0 0 3px rgba(122, 176, 255, 0.42);
+}
+
 html[data-text-size="sm"]{ font-size: 14px; }
 html[data-text-size="md"]{ font-size: 16px; }
 html[data-text-size="lg"]{ font-size: 17px; }
@@ -174,6 +330,20 @@ h1, h2, h3{
 h1{ font-size: 1.25rem; font-weight: 650; }
 h2{ font-size: 1.05rem; font-weight: 600; }
 h3{ font-size: 0.98rem; font-weight: 600; }
+
+.page-title-with-icon{
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.page-title-icon{
+  width: 1.05rem;
+  height: 1.05rem;
+  flex: 0 0 1.05rem;
+  object-fit: contain;
+  opacity: 0.94;
+}
 
 p{ margin: 0 0 var(--s-4); }
 small{ color: var(--muted); }
@@ -584,6 +754,46 @@ textarea{ min-height: 120px; resize: vertical; }
   accent-color: var(--accent);
 }
 
+.pref-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--s-4);
+}
+
+.quick-links{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s-4);
+}
+
+.quick-link-card{
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  padding: var(--s-4);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.quick-link-card:hover{
+  text-decoration: none;
+  background: var(--surface);
+  border-color: rgba(37, 99, 235, 0.35);
+}
+
+.quick-link-title{
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.quick-link-meta{
+  display: block;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 /* ===========================
    8) Alerts (pastel fills)
    =========================== */
@@ -778,7 +988,25 @@ overscroll-behavior: contain;
   border-color: rgba(37,99,235,0.22);
 }
 .dropdown-item:focus-visible{ outline: none; box-shadow: var(--focus); }
-.dropdown-item-label{ font-weight: 600; }
+.dropdown-item-label{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.dropdown-item-label-text{
+  min-width: 0;
+}
+
+.menu-item-icon{
+  width: 0.95rem;
+  height: 0.95rem;
+  flex: 0 0 0.95rem;
+  object-fit: contain;
+  opacity: 0.92;
+}
 
 .dropdown-item-label-only{
   background: transparent;
@@ -829,6 +1057,7 @@ overscroll-behavior: contain;
 .dropdown-submenu-label{
   display: inline-flex;
   align-items: center;
+  gap: 0.45rem;
   min-width: 0;
   color: var(--text);
   font-weight: 600;

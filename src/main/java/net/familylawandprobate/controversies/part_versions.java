@@ -51,30 +51,13 @@ public final class part_versions {
     public VersionRec create(String tenantUuid, String matterUuid, String docUuid, String partUuid, String versionLabel,
                              String source, String mimeType, String checksum, String fileSizeBytes,
                              String storagePath, String createdBy, String notes, boolean makeCurrent) throws Exception {
-        if (document_workflow_support.safe(versionLabel).trim().isBlank()) throw new IllegalArgumentException("version label required");
-        Path resolvedStoragePath = pdf_redaction_service.resolveStoragePath(storagePath);
-        if (resolvedStoragePath != null) {
-            pdf_redaction_service.requirePathWithinTenant(resolvedStoragePath, tenantUuid, "Storage path");
-        }
-        List<VersionRec> all = listAll(tenantUuid, matterUuid, docUuid, partUuid);
-        if (makeCurrent) {
-            for (VersionRec rec : all) rec.current = false;
-        }
-        VersionRec rec = new VersionRec();
-        rec.uuid = UUID.randomUUID().toString();
-        rec.versionLabel = document_workflow_support.safe(versionLabel).trim();
-        rec.source = document_workflow_support.safe(source).trim();
-        rec.mimeType = document_workflow_support.safe(mimeType).trim();
-        rec.checksum = document_workflow_support.safe(checksum).trim();
-        rec.fileSizeBytes = document_workflow_support.safe(fileSizeBytes).trim();
-        rec.storagePath = document_workflow_support.safe(storagePath).trim();
-        rec.createdBy = document_workflow_support.safe(createdBy).trim();
-        rec.notes = document_workflow_support.safe(notes).trim();
-        rec.createdAt = Instant.now().toString();
-        rec.current = makeCurrent || all.isEmpty();
-        all.add(rec);
-        writeAll(tenantUuid, matterUuid, docUuid, partUuid, all);
-        return rec;
+        return createInternal(tenantUuid, matterUuid, docUuid, partUuid, versionLabel, source, mimeType, checksum, fileSizeBytes, storagePath, createdBy, notes, makeCurrent, true);
+    }
+
+    public VersionRec createForExternalSync(String tenantUuid, String matterUuid, String docUuid, String partUuid, String versionLabel,
+                                            String source, String mimeType, String checksum, String fileSizeBytes,
+                                            String storagePath, String createdBy, String notes, boolean makeCurrent) throws Exception {
+        return createInternal(tenantUuid, matterUuid, docUuid, partUuid, versionLabel, source, mimeType, checksum, fileSizeBytes, storagePath, createdBy, notes, makeCurrent, false);
     }
 
     private static VersionRec readRec(Element e) {
@@ -128,5 +111,46 @@ public final class part_versions {
         Path partFolder = parts.partFolder(tenantUuid, matterUuid, docUuid, partUuid);
         if (partFolder == null) return null;
         return partFolder.resolve("versions.xml");
+    }
+
+    private VersionRec createInternal(String tenantUuid,
+                                      String matterUuid,
+                                      String docUuid,
+                                      String partUuid,
+                                      String versionLabel,
+                                      String source,
+                                      String mimeType,
+                                      String checksum,
+                                      String fileSizeBytes,
+                                      String storagePath,
+                                      String createdBy,
+                                      String notes,
+                                      boolean makeCurrent,
+                                      boolean enforceEditable) throws Exception {
+        if (document_workflow_support.safe(versionLabel).trim().isBlank()) throw new IllegalArgumentException("version label required");
+        if (enforceEditable) documents.defaultStore().requireEditable(tenantUuid, matterUuid, docUuid);
+        Path resolvedStoragePath = pdf_redaction_service.resolveStoragePath(storagePath);
+        if (resolvedStoragePath != null) {
+            pdf_redaction_service.requirePathWithinTenant(resolvedStoragePath, tenantUuid, "Storage path");
+        }
+        List<VersionRec> all = listAll(tenantUuid, matterUuid, docUuid, partUuid);
+        if (makeCurrent) {
+            for (VersionRec rec : all) rec.current = false;
+        }
+        VersionRec rec = new VersionRec();
+        rec.uuid = UUID.randomUUID().toString();
+        rec.versionLabel = document_workflow_support.safe(versionLabel).trim();
+        rec.source = document_workflow_support.safe(source).trim();
+        rec.mimeType = document_workflow_support.safe(mimeType).trim();
+        rec.checksum = document_workflow_support.safe(checksum).trim();
+        rec.fileSizeBytes = document_workflow_support.safe(fileSizeBytes).trim();
+        rec.storagePath = document_workflow_support.safe(storagePath).trim();
+        rec.createdBy = document_workflow_support.safe(createdBy).trim();
+        rec.notes = document_workflow_support.safe(notes).trim();
+        rec.createdAt = Instant.now().toString();
+        rec.current = makeCurrent || all.isEmpty();
+        all.add(rec);
+        writeAll(tenantUuid, matterUuid, docUuid, partUuid, all);
+        return rec;
     }
 }

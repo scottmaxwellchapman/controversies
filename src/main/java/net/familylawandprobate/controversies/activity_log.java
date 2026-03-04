@@ -12,8 +12,12 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class activity_log {
+    private static final Pattern EVENT_PATTERN = Pattern.compile("<event\\s+([^>]+)>([\\s\\S]*?)</event>");
+
     public static final class LogEntry {
         public final String time;
         public final String level;
@@ -56,6 +60,7 @@ public final class activity_log {
     private void log(String level, String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
         String tenant = safe(tenantUuid).trim();
         if (tenant.isBlank()) return;
+        String caseId = safe(caseUuid).trim();
         String now = Instant.now().toString();
         StringBuilder detailXml = new StringBuilder(256);
         if (details != null) {
@@ -71,22 +76,15 @@ public final class activity_log {
 
         String entry = "  <event time=\"" + xmlAttr(now) + "\" level=\"" + xmlAttr(level) + "\" action=\"" + xmlAttr(action)
                 + "\" tenant_uuid=\"" + xmlAttr(tenant) + "\" user_uuid=\"" + xmlAttr(userUuid)
-                + "\" case_uuid=\"" + xmlAttr(caseUuid) + "\" document_uuid=\"" + xmlAttr(documentUuid) + "\">\n"
+                + "\" case_uuid=\"" + xmlAttr(caseId) + "\" document_uuid=\"" + xmlAttr(documentUuid) + "\">\n"
                 + detailXml + "  </event>\n";
 
         synchronized (lock) {
             try {
-                Path p = logPath(tenant);
-                Files.createDirectories(p.getParent());
-                if (!Files.exists(p)) {
-                    String seed = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<activity_log tenant_uuid=\"" + xmlAttr(tenant) + "\">\n</activity_log>\n";
-                    Files.writeString(p, seed, StandardCharsets.UTF_8);
+                appendXmlEvent(logPath(tenant), "activity_log", tenantLogSeed(tenant), entry);
+                if (!caseId.isBlank()) {
+                    appendXmlEvent(caseLogPath(tenant, caseId), "activity_feed", caseLogSeed(tenant, caseId), entry);
                 }
-                String existing = Files.readString(p, StandardCharsets.UTF_8);
-                int cut = existing.lastIndexOf("</activity_log>");
-                if (cut < 0) cut = existing.length();
-                String merged = existing.substring(0, cut) + entry + "</activity_log>\n";
-                Files.writeString(p, merged, StandardCharsets.UTF_8);
             } catch (Exception ignored) {}
         }
     }
@@ -101,28 +99,91 @@ public final class activity_log {
                 Path p = logPath(tenant);
                 if (!Files.exists(p)) return List.of();
                 String xml = Files.readString(p, StandardCharsets.UTF_8);
-                java.util.regex.Matcher m = java.util.regex.Pattern
-                        .compile("<event\\s+([^>]+)>([\\s\\S]*?)</event>")
-                        .matcher(xml);
-                while (m.find()) {
-                    String attrs = safe(m.group(1));
-                    String body = safe(m.group(2)).trim();
-                    out.add(new LogEntry(
-                            xmlUnescape(attr(attrs, "time")),
-                            xmlUnescape(attr(attrs, "level")),
-                            xmlUnescape(attr(attrs, "action")),
-                            xmlUnescape(attr(attrs, "tenant_uuid")),
-                            xmlUnescape(attr(attrs, "user_uuid")),
-                            xmlUnescape(attr(attrs, "case_uuid")),
-                            xmlUnescape(attr(attrs, "document_uuid")),
-                            xmlUnescape(body.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim())
-                    ));
-                }
+                out.addAll(parseEntries(xml));
             } catch (Exception ignored) {}
         }
         Collections.sort(out, Comparator.comparing((LogEntry e) -> safe(e.time)).reversed());
         if (out.size() > max) return new ArrayList<LogEntry>(out.subList(0, max));
         return out;
+    }
+
+    public List<LogEntry> recentForCase(String tenantUuid, String caseUuid, int limit) {
+        String tenant = safe(tenantUuid).trim();
+        String caseId = safe(caseUuid).trim();
+        if (tenant.isBlank() || caseId.isBlank()) return List.of();
+        int max = Math.max(1, Math.min(1000, limit));
+        List<LogEntry> out = new ArrayList<LogEntry>();
+        synchronized (lock) {
+            try {
+                Path p = caseLogPath(tenant, caseId);
+                if (!Files.exists(p)) return List.of();
+                String xml = Files.readString(p, StandardCharsets.UTF_8);
+                out.addAll(parseEntries(xml));
+            } catch (Exception ignored) {}
+        }
+        Collections.sort(out, Comparator.comparing((LogEntry e) -> safe(e.time)).reversed());
+        if (out.size() > max) return new ArrayList<LogEntry>(out.subList(0, max));
+        return out;
+    }
+
+    public String caseFeedXml(String tenantUuid, String caseUuid) {
+        String tenant = safe(tenantUuid).trim();
+        String caseId = safe(caseUuid).trim();
+        if (tenant.isBlank() || caseId.isBlank()) return caseLogSeed("", "");
+        synchronized (lock) {
+            try {
+                Path p = caseLogPath(tenant, caseId);
+                if (!Files.exists(p)) return caseLogSeed(tenant, caseId);
+                return Files.readString(p, StandardCharsets.UTF_8);
+            } catch (Exception ignored) {
+                return caseLogSeed(tenant, caseId);
+            }
+        }
+    }
+
+    private static List<LogEntry> parseEntries(String xml) {
+        List<LogEntry> out = new ArrayList<LogEntry>();
+        Matcher m = EVENT_PATTERN.matcher(safe(xml));
+        while (m.find()) {
+            String attrs = safe(m.group(1));
+            String body = safe(m.group(2)).trim();
+            out.add(new LogEntry(
+                    xmlUnescape(attr(attrs, "time")),
+                    xmlUnescape(attr(attrs, "level")),
+                    xmlUnescape(attr(attrs, "action")),
+                    xmlUnescape(attr(attrs, "tenant_uuid")),
+                    xmlUnescape(attr(attrs, "user_uuid")),
+                    xmlUnescape(attr(attrs, "case_uuid")),
+                    xmlUnescape(attr(attrs, "document_uuid")),
+                    xmlUnescape(body.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim())
+            ));
+        }
+        return out;
+    }
+
+    private static void appendXmlEvent(Path path, String rootTag, String seed, String entry) throws Exception {
+        Files.createDirectories(path.getParent());
+        if (!Files.exists(path)) {
+            Files.writeString(path, safe(seed), StandardCharsets.UTF_8);
+        }
+        String existing = Files.readString(path, StandardCharsets.UTF_8);
+        String closeTag = "</" + safe(rootTag) + ">";
+        int cut = existing.lastIndexOf(closeTag);
+        if (cut < 0) cut = existing.length();
+        String merged = existing.substring(0, cut) + safe(entry) + closeTag + "\n";
+        Files.writeString(path, merged, StandardCharsets.UTF_8);
+    }
+
+    private static String tenantLogSeed(String tenantUuid) {
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                + "<activity_log tenant_uuid=\"" + xmlAttr(tenantUuid) + "\">\n"
+                + "</activity_log>\n";
+    }
+
+    private static String caseLogSeed(String tenantUuid, String caseUuid) {
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                + "<activity_feed tenant_uuid=\"" + xmlAttr(tenantUuid) + "\" case_uuid=\"" + xmlAttr(caseUuid) + "\">\n"
+                + "</activity_feed>\n";
     }
 
     private static String attr(String attrs, String key) {
@@ -144,6 +205,10 @@ public final class activity_log {
     private static Path logPath(String tenantUuid) {
         String day = DAY.format(Instant.now());
         return Paths.get("data", "tenants", safeFile(tenantUuid), "logs", "activity_" + day + ".xml").toAbsolutePath();
+    }
+
+    private static Path caseLogPath(String tenantUuid, String caseUuid) {
+        return Paths.get("data", "tenants", safeFile(tenantUuid), "matters", safeFile(caseUuid), "activity_feed.xml").toAbsolutePath();
     }
 
     private static String safe(String s) { return s == null ? "" : s; }

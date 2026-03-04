@@ -224,6 +224,7 @@ public final class filter implements Filter {
                 if (apiAuthRequired(req)) {
                     if (!apiAuthOk(req, wrapped, clientIp)) return;
                 }
+                documents.bindActorContext(resolveApiActor(req));
                 chain.doFilter(req, wrapped);
                 return;
             }
@@ -236,9 +237,11 @@ public final class filter implements Filter {
                 if (!csrfOk(req, wrapped)) return;
             }
 
+            documents.bindActorContext(resolveWebActor(req));
             chain.doFilter(req, wrapped);
 
         } finally {
+            documents.clearActorContext();
             if (enableAccessLog) {
                 long ms = (System.nanoTime() - startNs) / 1_000_000L;
                 try {
@@ -450,6 +453,22 @@ public final class filter implements Filter {
         if ("/api/v1/ping".equals(path)) return false;
         if ("/api/v1/capabilities".equals(path)) return false;
         return true;
+    }
+
+    private static String resolveApiActor(HttpServletRequest req) {
+        String credentialId = safe((String) req.getAttribute(api_servlet.REQ_CREDENTIAL_ID)).trim();
+        if (credentialId.isBlank()) return "api";
+        return "api:" + credentialId.toLowerCase(Locale.ROOT);
+    }
+
+    private static String resolveWebActor(HttpServletRequest req) {
+        HttpSession session = req.getSession(false);
+        if (session == null) return "";
+        String email = safe((String) session.getAttribute(users_roles.S_USER_EMAIL)).trim();
+        if (!email.isBlank()) return email.toLowerCase(Locale.ROOT);
+        String userUuid = safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim();
+        if (!userUuid.isBlank()) return userUuid.toLowerCase(Locale.ROOT);
+        return "";
     }
 
     private boolean apiAuthOk(HttpServletRequest req, HttpServletResponse res, String clientIp) throws IOException {

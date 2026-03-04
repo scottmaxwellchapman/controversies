@@ -52,30 +52,16 @@ public final class document_parts {
 
     public PartRec create(String tenantUuid, String matterUuid, String docUuid, String label, String partType,
                           String sequence, String confidentiality, String author, String notes) throws Exception {
-        if (document_workflow_support.safe(label).trim().isBlank()) throw new IllegalArgumentException("label required");
-        List<PartRec> all = listAll(tenantUuid, matterUuid, docUuid);
-        String category = canonicalCategory(partType);
-        if (CATEGORY_LEAD.equals(category) && hasActiveLead(all, null)) {
-            throw new IllegalArgumentException("Only one Lead part is allowed per document.");
-        }
-        PartRec rec = new PartRec();
-        rec.uuid = UUID.randomUUID().toString();
-        rec.label = document_workflow_support.safe(label).trim();
-        rec.partType = category;
-        rec.sequence = document_workflow_support.safe(sequence).trim();
-        rec.confidentiality = document_workflow_support.safe(confidentiality).trim();
-        rec.author = document_workflow_support.safe(author).trim();
-        rec.notes = document_workflow_support.safe(notes).trim();
-        rec.createdAt = Instant.now().toString();
-        rec.updatedAt = rec.createdAt;
-        rec.trashed = false;
-        all.add(rec);
-        writeAll(tenantUuid, matterUuid, docUuid, all);
-        Files.createDirectories(partFolder(tenantUuid, matterUuid, docUuid, rec.uuid));
-        return rec;
+        return createInternal(tenantUuid, matterUuid, docUuid, label, partType, sequence, confidentiality, author, notes, true);
+    }
+
+    public PartRec createForExternalSync(String tenantUuid, String matterUuid, String docUuid, String label, String partType,
+                                         String sequence, String confidentiality, String author, String notes) throws Exception {
+        return createInternal(tenantUuid, matterUuid, docUuid, label, partType, sequence, confidentiality, author, notes, false);
     }
 
     public boolean setTrashed(String tenantUuid, String matterUuid, String docUuid, String partUuid, boolean trashed) throws Exception {
+        documents.defaultStore().requireEditable(tenantUuid, matterUuid, docUuid);
         List<PartRec> all = listAll(tenantUuid, matterUuid, docUuid);
         if (!trashed) {
             PartRec target = null;
@@ -183,5 +169,39 @@ public final class document_parts {
             if (CATEGORY_LEAD.equals(canonicalCategory(rec.partType))) return true;
         }
         return false;
+    }
+
+    private PartRec createInternal(String tenantUuid,
+                                   String matterUuid,
+                                   String docUuid,
+                                   String label,
+                                   String partType,
+                                   String sequence,
+                                   String confidentiality,
+                                   String author,
+                                   String notes,
+                                   boolean enforceEditable) throws Exception {
+        if (document_workflow_support.safe(label).trim().isBlank()) throw new IllegalArgumentException("label required");
+        if (enforceEditable) documents.defaultStore().requireEditable(tenantUuid, matterUuid, docUuid);
+        List<PartRec> all = listAll(tenantUuid, matterUuid, docUuid);
+        String category = canonicalCategory(partType);
+        if (CATEGORY_LEAD.equals(category) && hasActiveLead(all, null)) {
+            throw new IllegalArgumentException("Only one Lead part is allowed per document.");
+        }
+        PartRec rec = new PartRec();
+        rec.uuid = UUID.randomUUID().toString();
+        rec.label = document_workflow_support.safe(label).trim();
+        rec.partType = category;
+        rec.sequence = document_workflow_support.safe(sequence).trim();
+        rec.confidentiality = document_workflow_support.safe(confidentiality).trim();
+        rec.author = document_workflow_support.safe(author).trim();
+        rec.notes = document_workflow_support.safe(notes).trim();
+        rec.createdAt = Instant.now().toString();
+        rec.updatedAt = rec.createdAt;
+        rec.trashed = false;
+        all.add(rec);
+        writeAll(tenantUuid, matterUuid, docUuid, all);
+        Files.createDirectories(partFolder(tenantUuid, matterUuid, docUuid, rec.uuid));
+        return rec;
     }
 }

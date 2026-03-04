@@ -5,6 +5,10 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationRubberStamp;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationSquareCircle;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -75,6 +79,7 @@ public class api_pdf_redaction_test {
 
         Path sourcePdf = versionFiles.resolve("source.pdf");
         createPdf(sourcePdf, 2);
+        addCommentAndStickerAnnotations(sourcePdf);
 
         part_versions.VersionRec sourceVersion = part_versions.defaultStore().create(
                 tenant,
@@ -140,6 +145,12 @@ public class api_pdf_redaction_test {
             assertNotNull(redactedPath);
             assertTrue(Files.isRegularFile(redactedPath));
             assertTrue(Files.size(redactedPath) > 0L);
+            assertTrue(hasAnnotationSubtype(redactedPath, 0, "Text"));
+            assertTrue(hasAnnotationSubtype(redactedPath, 0, "Stamp"));
+            assertTrue(hasAnnotationSubtype(redactedPath, 1, PDAnnotationSquareCircle.SUB_TYPE_SQUARE));
+            assertTrue(hasAnnotationContent(redactedPath, "API source comment bubble"));
+            assertTrue(hasAnnotationContent(redactedPath, "API source comment box"));
+            assertTrue(hasAnnotationContent(redactedPath, "API source sticker object"));
             if (!usedPdfRedactor) {
                 String extracted = extractText(redactedPath);
                 assertTrue(extracted.trim().isEmpty(), "Rasterized fallback should not retain extractable source text.");
@@ -201,6 +212,60 @@ public class api_pdf_redaction_test {
     private static String extractText(Path target) throws Exception {
         try (PDDocument doc = PDDocument.load(target.toFile())) {
             return new PDFTextStripper().getText(doc);
+        }
+    }
+
+    private static void addCommentAndStickerAnnotations(Path target) throws Exception {
+        try (PDDocument doc = PDDocument.load(target.toFile())) {
+            if (doc.getNumberOfPages() <= 0) {
+                doc.save(target.toFile());
+                return;
+            }
+
+            PDPage page0 = doc.getPage(0);
+            PDAnnotationText comment = new PDAnnotationText();
+            comment.setRectangle(new PDRectangle(72f, 640f, 22f, 22f));
+            comment.setContents("API source comment bubble");
+            comment.setTitlePopup("Reviewer");
+            page0.getAnnotations().add(comment);
+
+            PDAnnotationRubberStamp sticker = new PDAnnotationRubberStamp();
+            sticker.setRectangle(new PDRectangle(120f, 620f, 130f, 48f));
+            sticker.setContents("API source sticker object");
+            page0.getAnnotations().add(sticker);
+
+            PDPage page1 = doc.getNumberOfPages() > 1 ? doc.getPage(1) : page0;
+            PDAnnotationSquareCircle commentBox = new PDAnnotationSquareCircle(PDAnnotationSquareCircle.SUB_TYPE_SQUARE);
+            commentBox.setRectangle(new PDRectangle(72f, 520f, 220f, 64f));
+            commentBox.setContents("API source comment box");
+            page1.getAnnotations().add(commentBox);
+
+            doc.save(target.toFile());
+        }
+    }
+
+    private static boolean hasAnnotationSubtype(Path target, int pageIndex, String expectedSubtype) throws Exception {
+        try (PDDocument doc = PDDocument.load(target.toFile())) {
+            if (pageIndex < 0 || pageIndex >= doc.getNumberOfPages()) return false;
+            for (PDAnnotation annotation : doc.getPage(pageIndex).getAnnotations()) {
+                if (annotation == null) continue;
+                String subtype = String.valueOf(annotation.getSubtype());
+                if (expectedSubtype.equalsIgnoreCase(subtype)) return true;
+            }
+            return false;
+        }
+    }
+
+    private static boolean hasAnnotationContent(Path target, String expectedContent) throws Exception {
+        String needle = expectedContent == null ? "" : expectedContent;
+        try (PDDocument doc = PDDocument.load(target.toFile())) {
+            for (int i = 0; i < doc.getNumberOfPages(); i++) {
+                for (PDAnnotation annotation : doc.getPage(i).getAnnotations()) {
+                    if (annotation == null) continue;
+                    if (needle.equals(String.valueOf(annotation.getContents()))) return true;
+                }
+            }
+            return false;
         }
     }
 

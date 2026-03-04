@@ -1,7 +1,9 @@
 package net.familylawandprobate.controversies;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
+import net.familylawandprobate.controversies.storage.CachedDocumentStorageBackend;
 import net.familylawandprobate.controversies.storage.DocumentStorageBackend;
 import net.familylawandprobate.controversies.storage.EncryptedDocumentStorageBackend;
 import net.familylawandprobate.controversies.storage.FilesystemRemoteStorageBackend;
@@ -9,8 +11,12 @@ import net.familylawandprobate.controversies.storage.LocalFsStorageBackend;
 import net.familylawandprobate.controversies.storage.StorageCrypto;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
@@ -48,5 +54,44 @@ public class storage_backend_integrity_test {
         Map<String, String> metadata = backend.metadata(key);
         assertEquals(StorageCrypto.checksumMd5Hex(bytes), metadata.get("checksum_md5"));
         assertEquals(StorageCrypto.checksumSha256Hex(bytes), metadata.get("checksum_sha256"));
+    }
+
+    @Test
+    void cache_layer_serves_reads_after_remote_object_changes() throws Exception {
+        String tenantUuid = "tenant-" + UUID.randomUUID();
+        String sourceToken = "s3_compatible_default";
+        DocumentStorageBackend remote = new FilesystemRemoteStorageBackend("s3_compatible", tenantUuid);
+        DocumentStorageBackend cached = new CachedDocumentStorageBackend(remote, tenantUuid, sourceToken, 1024L * 1024L);
+
+        String key = remote.put("checks/cache-hit.txt", "first".getBytes(StandardCharsets.UTF_8));
+        assertEquals("first", new String(cached.get(key), StandardCharsets.UTF_8));
+
+        remote.put(key, "second".getBytes(StandardCharsets.UTF_8));
+        assertEquals("first", new String(cached.get(key), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void cache_layer_enforces_max_size_eviction() throws Exception {
+        String tenantUuid = "tenant-" + UUID.randomUUID();
+        String sourceToken = "sftp_default";
+        long maxBytes = 32L;
+        DocumentStorageBackend remote = new FilesystemRemoteStorageBackend("sftp", tenantUuid);
+        DocumentStorageBackend cached = new CachedDocumentStorageBackend(remote, tenantUuid, sourceToken, maxBytes);
+
+        String firstKey = cached.put("checks/first.bin", "12345678901234567890".getBytes(StandardCharsets.UTF_8));
+        String secondKey = cached.put("checks/second.bin", "abcdefghijabcdefghij".getBytes(StandardCharsets.UTF_8));
+        assertEquals("abcdefghijabcdefghij", new String(cached.get(secondKey), StandardCharsets.UTF_8));
+
+        Path cacheRoot = Paths.get("data", "tenants", tenantUuid, "storage_cache", sourceToken).toAbsolutePath();
+        long totalBytes = 0L;
+        if (Files.exists(cacheRoot)) {
+            try (Stream<Path> walk = Files.walk(cacheRoot)) {
+                totalBytes = walk.filter(Files::isRegularFile).mapToLong(p -> {
+                    try { return Files.size(p); } catch (Exception ignored) { return 0L; }
+                }).sum();
+            }
+        }
+        assertFalse(totalBytes > maxBytes);
+        assertEquals("12345678901234567890", new String(remote.get(firstKey), StandardCharsets.UTF_8));
     }
 }

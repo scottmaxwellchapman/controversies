@@ -93,6 +93,66 @@ public class case_attributes_test {
         }
     }
 
+    @Test
+    void save_supports_additional_data_types_and_aliases() throws Exception {
+        String tenantUuid = "case-attrs-extra-types-" + UUID.randomUUID();
+        Path tenantDir = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();
+        deleteQuietly(tenantDir);
+
+        try {
+            case_attributes store = case_attributes.defaultStore();
+            store.ensure(tenantUuid);
+
+            List<case_attributes.AttributeRec> all = new ArrayList<case_attributes.AttributeRec>(store.listAll(tenantUuid));
+            all.add(new case_attributes.AttributeRec("", "notify_client", "Notify Client", "checkbox", "unused", false, true, false, 60, ""));
+            all.add(new case_attributes.AttributeRec("", "hearing_at", "Hearing At", "datetime-local", "", false, true, false, 70, ""));
+            all.add(new case_attributes.AttributeRec("", "call_time", "Call Time", "time", "", false, true, false, 80, ""));
+            all.add(new case_attributes.AttributeRec("", "contact_email", "Contact Email", "email", "", false, true, false, 90, ""));
+            all.add(new case_attributes.AttributeRec("", "contact_phone", "Contact Phone", "tel", "", false, true, false, 100, ""));
+            all.add(new case_attributes.AttributeRec("", "portal_url", "Portal Url", "uri", "", false, true, false, 110, ""));
+            store.saveAll(tenantUuid, all);
+
+            List<case_attributes.AttributeRec> saved = store.listAll(tenantUuid);
+            case_attributes.AttributeRec notify = null;
+            case_attributes.AttributeRec hearingAt = null;
+            case_attributes.AttributeRec callTime = null;
+            case_attributes.AttributeRec email = null;
+            case_attributes.AttributeRec phone = null;
+            case_attributes.AttributeRec url = null;
+            for (int i = 0; i < saved.size(); i++) {
+                case_attributes.AttributeRec r = saved.get(i);
+                if (r == null) continue;
+                if ("notify_client".equals(r.key)) notify = r;
+                if ("hearing_at".equals(r.key)) hearingAt = r;
+                if ("call_time".equals(r.key)) callTime = r;
+                if ("contact_email".equals(r.key)) email = r;
+                if ("contact_phone".equals(r.key)) phone = r;
+                if ("portal_url".equals(r.key)) url = r;
+            }
+
+            assertTrue(notify != null);
+            assertEquals("boolean", notify.dataType);
+            assertEquals("", notify.options);
+
+            assertTrue(hearingAt != null);
+            assertEquals("datetime", hearingAt.dataType);
+
+            assertTrue(callTime != null);
+            assertEquals("time", callTime.dataType);
+
+            assertTrue(email != null);
+            assertEquals("email", email.dataType);
+
+            assertTrue(phone != null);
+            assertEquals("phone", phone.dataType);
+
+            assertTrue(url != null);
+            assertEquals("url", url.dataType);
+        } finally {
+            deleteQuietly(tenantDir);
+        }
+    }
+
     private static void deleteQuietly(Path p) {
         try {
             if (p == null || !Files.exists(p)) return;

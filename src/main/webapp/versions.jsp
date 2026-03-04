@@ -8,8 +8,11 @@
 <%@ page import="java.util.Base64" %>
 <%@ page import="java.util.Comparator" %>
 <%@ page import="java.util.UUID" %>
+<%@ page import="net.familylawandprobate.controversies.document_page_preview" %>
 <%@ page import="net.familylawandprobate.controversies.part_versions" %>
 <%@ page import="net.familylawandprobate.controversies.document_parts" %>
+<%@ page import="net.familylawandprobate.controversies.documents" %>
+<%@ page import="net.familylawandprobate.controversies.pdf_redaction_service" %>
 <%@ page import="net.familylawandprobate.controversies.pdf_version_background_jobs" %>
 <%@ include file="security.jspf" %>
 <% if (!require_login()) return; %>
@@ -19,6 +22,7 @@ private static final String CSRF_SESSION_KEY = "CSRF_TOKEN";
 private static final int MAX_UPLOAD_CHUNKS = 12000;
 private static String safe(String s){ return s == null ? "" : s; }
 private static String esc(String s){ return safe(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&#39;"); }
+private static String enc(String s){ return java.net.URLEncoder.encode(safe(s), java.nio.charset.StandardCharsets.UTF_8); }
 private static String csrfForRender(jakarta.servlet.http.HttpServletRequest req) {
   Object a = req.getAttribute("csrfToken");
   if (a instanceof String) {
@@ -79,6 +83,39 @@ private static boolean isPdfVersion(part_versions.VersionRec rec) {
   String storage = safe(rec.storagePath).trim().toLowerCase(java.util.Locale.ROOT);
   return storage.endsWith(".pdf") || storage.contains(".pdf?");
 }
+private static part_versions.VersionRec findVersion(List<part_versions.VersionRec> rows, String uuid) {
+  if (rows == null || rows.isEmpty()) return null;
+  String id = safe(uuid).trim();
+  if (id.isBlank()) return null;
+  for (part_versions.VersionRec r : rows) {
+    if (r == null) continue;
+    if (id.equals(safe(r.uuid).trim())) return r;
+  }
+  return null;
+}
+private static boolean isPreviewRenderable(Path sourcePath, String tenantUuid) {
+  try {
+    pdf_redaction_service.requirePathWithinTenant(sourcePath, tenantUuid, "Preview file path");
+  } catch (Exception ex) {
+    return false;
+  }
+  return sourcePath != null && Files.isRegularFile(sourcePath) && document_page_preview.isRenderable(sourcePath);
+}
+private static String fileName(Path p){
+  if (p == null || p.getFileName() == null) return "";
+  return safe(p.getFileName().toString());
+}
+private static String safeExternalHref(String raw) {
+  String v = safe(raw).trim();
+  if (v.isBlank()) return "";
+  String lower = v.toLowerCase(java.util.Locale.ROOT);
+  if (lower.startsWith("https://") || lower.startsWith("http://") || lower.startsWith("mailto:")) return v;
+  return "";
+}
+private static String displayVersionLabel(part_versions.VersionRec rec) {
+  String label = safe(rec == null ? "" : rec.versionLabel).trim();
+  return label.isBlank() ? "Version" : label;
+}
 %>
 <%
 String ctx = safe(request.getContextPath());
@@ -93,12 +130,16 @@ String docUuid = safe(request.getParameter("doc_uuid")).trim();
 String partUuid = safe(request.getParameter("part_uuid")).trim();
 part_versions versions = part_versions.defaultStore();
 document_parts parts = document_parts.defaultStore();
+documents docs = documents.defaultStore();
+documents.DocumentRec doc = docs.get(tenantUuid, caseUuid, docUuid);
+boolean docReadOnly = documents.isReadOnly(doc);
 String error = null;
 String message = null;
 if ("POST".equalsIgnoreCase(request.getMethod())) {
   String action = safe(request.getParameter("action")).trim();
   boolean uploadAction = "upload_chunk_bin".equalsIgnoreCase(action) || "upload_chunk".equalsIgnoreCase(action) || "commit_upload".equalsIgnoreCase(action);
   try {
+    if (docReadOnly) throw new IllegalStateException(documents.readOnlyMessage(doc));
     Path partFolder = parts.partFolder(tenantUuid, caseUuid, docUuid, partUuid);
     if (partFolder == null) throw new IllegalArgumentException("Part folder unavailable.");
     Path tempRoot = partFolder.resolve(".upload_staging");
@@ -235,11 +276,64 @@ if ("1".equals(request.getParameter("redacted"))) message = "Redacted PDF saved 
 if ("1".equals(request.getParameter("ocr_queued"))) message = "OCR job queued in background.";
 if ("1".equals(request.getParameter("flat_queued"))) message = "Flatten job queued in background.";
 List<part_versions.VersionRec> rows = versions.listAll(tenantUuid, caseUuid, docUuid, partUuid);
+String viewVersionUuid = safe(request.getParameter("view_version_uuid")).trim();
+int viewPageParam = intOrDefault(request.getParameter("page"), 0);
+int gotoPageParam = intOrDefault(request.getParameter("goto_page"), -1);
+if (gotoPageParam > 0) viewPageParam = gotoPageParam - 1;
+if (viewPageParam < 0) viewPageParam = 0;
+
+part_versions.VersionRec viewedVersion = findVersion(rows, viewVersionUuid);
+Path viewedVersionPath = null;
+document_page_preview.RenderedPage viewedPage = null;
+if (!viewVersionUuid.isBlank()) {
+  if (viewedVersion == null) {
+    if (safe(error).isBlank()) error = "Preview version not found.";
+  } else {
+    try {
+      viewedVersionPath = pdf_redaction_service.resolveStoragePath(viewedVersion.storagePath);
+      pdf_redaction_service.requirePathWithinTenant(viewedVersionPath, tenantUuid, "Preview file path");
+      if (viewedVersionPath == null || !Files.isRegularFile(viewedVersionPath)) {
+        if (safe(error).isBlank()) error = "Preview file not found.";
+      } else if (!document_page_preview.isRenderable(viewedVersionPath)) {
+        if (safe(error).isBlank()) error = "Preview supports PDF, DOCX, DOC, RTF, TXT, and ODT files.";
+      } else {
+        viewedPage = document_page_preview.renderPage(viewedVersionPath, viewPageParam);
+      }
+    } catch (Exception ex) {
+      if (safe(error).isBlank()) error = "Unable to render preview: " + safe(ex.getMessage());
+    }
+  }
+}
 document_parts.PartRec part = parts.get(tenantUuid, caseUuid, docUuid, partUuid);
 boolean pdfsandwichAvailable = false;
 try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfSandwichAvailable(); } catch (Exception ignored) {}
 %>
 <jsp:include page="header.jsp" />
+<style>
+  .versions-preview-nav { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .versions-preview-meta { color:var(--muted); font-size:12px; }
+  .versions-preview-jump { display:flex; gap:6px; align-items:center; margin:0; }
+  .versions-preview-jump input[type="number"] { width:90px; margin:0; }
+  .versions-preview-img-wrap { border:1px solid var(--border); border-radius:10px; background:var(--surface-2); padding:8px; overflow:auto; margin-top:8px; }
+  .versions-preview-img-wrap img { display:block; width:100%; height:auto; background:#fff; border:1px solid var(--border); border-radius:8px; }
+  .versions-preview-copy-btn { min-width:34px; padding:6px 8px; line-height:1; display:inline-flex; align-items:center; justify-content:center; }
+  .versions-preview-copy-btn svg { width:15px; height:15px; display:block; fill:currentColor; }
+  .versions-preview-copy-status { min-height:1em; }
+  .versions-preview-hidden-text { position:absolute; left:-9999px; width:1px; height:1px; opacity:0; pointer-events:none; }
+  .versions-preview-doc-nav { margin-top:8px; border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:6px 8px; }
+  .versions-preview-doc-nav summary { cursor:pointer; font-weight:600; color:var(--text); }
+  .versions-preview-doc-nav-list { margin-top:8px; display:grid; gap:6px; }
+  .versions-preview-doc-nav-row { display:grid; gap:8px; grid-template-columns:minmax(0, 1fr) auto; align-items:center; border:1px solid var(--border); border-radius:8px; background:var(--surface-2); padding:6px 8px; }
+  .versions-preview-doc-nav-kind { display:inline-block; margin-right:6px; padding:1px 6px; border:1px solid var(--border); border-radius:999px; font-size:11px; color:var(--muted); background:var(--surface); text-transform:capitalize; }
+  .versions-preview-doc-nav-label { font-size:13px; color:var(--text); word-break:break-word; }
+  .versions-preview-doc-nav-target { color:var(--muted); font-size:11px; word-break:break-word; margin-top:3px; }
+  .versions-preview-doc-nav-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .versions-preview-doc-nav-page { color:var(--muted); font-size:11px; }
+  @media (max-width: 700px) {
+    .versions-preview-jump input[type="number"] { width:70px; }
+    .versions-preview-doc-nav-row { grid-template-columns:minmax(0, 1fr); }
+  }
+</style>
 <section class="card">
   <div style="display:flex; gap:10px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap;">
     <div>
@@ -249,9 +343,14 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
       <div class="meta">OCR unavailable: <code>pdfsandwich</code> was not found on this server.</div>
       <% } %>
     </div>
+    <% if (!docReadOnly) { %>
     <a class="btn btn-ghost" href="<%= ctx %>/pdf_redact.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>">Redact a PDF Version</a>
+    <% } %>
   </div>
 </section>
+<% if (docReadOnly) { %>
+<section class="card" style="margin-top:12px;"><div class="alert alert-error"><%= esc(documents.readOnlyMessage(doc)) %></div></section>
+<% } %>
 <section class="card" style="margin-top:12px;">
 <form class="form" method="post" action="<%= ctx %>/versions.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>">
 <input type="hidden" name="csrfToken" id="csrf_token" value="<%= esc(csrfToken) %>" />
@@ -260,11 +359,11 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
 <input type="hidden" name="total_chunks" id="total_chunks" value="" />
 <input type="hidden" name="upload_file_name" id="upload_file_name" value="" />
 <input type="hidden" name="file_sha256" id="file_sha256" value="" />
-<div class="grid grid-3"><div><label>Version Label</label><input type="text" name="version_label" required /></div><div><label>Source</label><input type="text" name="source" placeholder="uploaded/ocr/generated" /></div><div><label>MIME Type</label><input type="text" name="mime_type" placeholder="application/pdf"/></div></div>
-<div class="grid grid-3"><div><label>Checksum</label><input type="text" name="checksum"/></div><div><label>File Size (bytes)</label><input type="text" name="file_size_bytes"/></div><div><label>Storage Path</label><input type="text" name="storage_path" placeholder="vault://..."/></div></div>
-<div class="grid grid-3"><div><label>Version File (chunk upload)</label><input type="file" id="version_upload_file" /></div><div><label>Chunk Status</label><div id="chunk_upload_status" class="meta">No file selected.</div></div><div></div></div>
-<div class="grid grid-3"><div><label>Created By</label><input type="text" name="created_by"/></div><div><label>Notes</label><input type="text" name="notes"/></div><div><label><input type="checkbox" name="make_current" value="1" checked /> Mark current</label></div></div>
-<button class="btn" type="submit">Add Version</button>
+<div class="grid grid-3"><div><label>Version Label</label><input type="text" name="version_label" required <%= docReadOnly ? "disabled" : "" %> /></div><div><label>Source</label><input type="text" name="source" placeholder="uploaded/ocr/generated" <%= docReadOnly ? "disabled" : "" %> /></div><div><label>MIME Type</label><input type="text" name="mime_type" placeholder="application/pdf" <%= docReadOnly ? "disabled" : "" %>/></div></div>
+<div class="grid grid-3"><div><label>Checksum</label><input type="text" name="checksum" <%= docReadOnly ? "disabled" : "" %>/></div><div><label>File Size (bytes)</label><input type="text" name="file_size_bytes" <%= docReadOnly ? "disabled" : "" %>/></div><div><label>Storage Path</label><input type="text" name="storage_path" placeholder="vault://..." <%= docReadOnly ? "disabled" : "" %>/></div></div>
+<div class="grid grid-3"><div><label>Version File (chunk upload)</label><input type="file" id="version_upload_file" <%= docReadOnly ? "disabled" : "" %> /></div><div><label>Chunk Status</label><div id="chunk_upload_status" class="meta"><%= docReadOnly ? "Read-only document." : "No file selected." %></div></div><div></div></div>
+<div class="grid grid-3"><div><label>Created By</label><input type="text" name="created_by" <%= docReadOnly ? "disabled" : "" %>/></div><div><label>Notes</label><input type="text" name="notes" <%= docReadOnly ? "disabled" : "" %>/></div><div><label><input type="checkbox" name="make_current" value="1" checked <%= docReadOnly ? "disabled" : "" %> /> Mark current</label></div></div>
+<button class="btn" type="submit" <%= docReadOnly ? "disabled" : "" %>>Add Version</button>
 </form>
 <% if (!safe(message).isBlank()) { %><div class="alert" style="margin-top:10px;"><%= esc(message) %></div><% } %>
 <% if (!safe(error).isBlank()) { %><div class="alert alert-error" style="margin-top:10px;"><%= esc(error) %></div><% } %>
@@ -279,7 +378,14 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
   <td><%= esc(r.createdAt) %></td>
   <td><%= r.current ? "Yes" : "" %></td>
   <td>
-    <% if (isPdfVersion(r)) { %>
+    <%
+      Path rowSourcePath = pdf_redaction_service.resolveStoragePath(safe(r.storagePath));
+      boolean rowPreviewRenderable = isPreviewRenderable(rowSourcePath, tenantUuid);
+    %>
+    <% if (rowPreviewRenderable) { %>
+      <a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(docUuid) %>&part_uuid=<%= enc(partUuid) %>&view_version_uuid=<%= enc(safe(r.uuid)) %>&page=0">Preview</a>
+    <% } %>
+    <% if (!docReadOnly && isPdfVersion(r)) { %>
       <a class="btn btn-ghost" href="<%= ctx %>/pdf_redact.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>&source_version_uuid=<%= java.net.URLEncoder.encode(safe(r.uuid), java.nio.charset.StandardCharsets.UTF_8) %>">Redact</a>
       <form method="post" action="<%= ctx %>/versions.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>" style="display:inline;">
         <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
@@ -298,6 +404,105 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
 </tr>
 <% } %>
 </tbody></table></section>
+<% if (viewedPage != null && viewedVersion != null && !safe(viewedPage.base64Png).isBlank()) {
+     int viewedPageOne = viewedPage.pageIndex + 1;
+     String viewedTotalLabel = viewedPage.totalKnown ? String.valueOf(viewedPage.totalPages) : (viewedPage.totalPages + "+");
+     String gotoMaxAttr = viewedPage.totalKnown ? ("max=\"" + viewedPage.totalPages + "\"") : "";
+     String viewedFileName = fileName(viewedVersionPath);
+     ArrayList<document_page_preview.NavigationEntry> navEntries = viewedPage.navigation == null
+       ? new ArrayList<document_page_preview.NavigationEntry>()
+       : viewedPage.navigation;
+     int navDisplayLimit = 120;
+     int navShown = Math.min(navEntries.size(), navDisplayLimit);
+%>
+<section class="card" style="margin-top:12px;">
+  <div class="section-head">
+    <div>
+      <h2 style="margin:0;"><%= esc(displayVersionLabel(viewedVersion)) %></h2>
+      <div class="versions-preview-meta">
+        <%= esc(viewedFileName) %> |
+        Page <strong><%= viewedPageOne %></strong> of <strong><%= esc(viewedTotalLabel) %></strong>
+        <% if (!safe(viewedPage.engine).isBlank()) { %> | Engine: <%= esc(viewedPage.engine) %><% } %>
+      </div>
+    </div>
+    <div class="versions-preview-nav">
+      <% if (viewedPage.hasPrev) { %>
+        <a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(docUuid) %>&part_uuid=<%= enc(partUuid) %>&view_version_uuid=<%= enc(safe(viewedVersion.uuid)) %>&page=<%= viewedPage.pageIndex - 1 %>">Previous</a>
+      <% } %>
+      <% if (viewedPage.hasNext) { %>
+        <a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(docUuid) %>&part_uuid=<%= enc(partUuid) %>&view_version_uuid=<%= enc(safe(viewedVersion.uuid)) %>&page=<%= viewedPage.pageIndex + 1 %>">Next</a>
+      <% } %>
+      <form method="get" action="<%= ctx %>/versions.jsp" class="versions-preview-jump">
+        <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+        <input type="hidden" name="doc_uuid" value="<%= esc(docUuid) %>" />
+        <input type="hidden" name="part_uuid" value="<%= esc(partUuid) %>" />
+        <input type="hidden" name="view_version_uuid" value="<%= esc(safe(viewedVersion.uuid)) %>" />
+        <label style="margin:0;">
+          <span class="versions-preview-meta">Page</span>
+          <input type="number" name="goto_page" min="1" <%= gotoMaxAttr %> value="<%= viewedPageOne %>" />
+        </label>
+        <button class="btn btn-ghost" type="submit">Go</button>
+      </form>
+      <button type="button" class="btn btn-ghost versions-preview-copy-btn" id="btnCopyVersionPageText" title="Copy plain text of this page" aria-label="Copy plain text of this page">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M16 1H6c-1.66 0-3 1.34-3 3v12h2V4c0-.55.45-1 1-1h10V1zm3 4H10c-1.66 0-3 1.34-3 3v13c0 1.66 1.34 3 3 3h9c1.66 0 3-1.34 3-3V8c0-1.66-1.34-3-3-3zm1 16c0 .55-.45 1-1 1h-9c-.55 0-1-.45-1-1V8c0-.55.45-1 1-1h9c.55 0 1 .45 1 1v13z"/>
+        </svg>
+      </button>
+      <span id="versionsPreviewCopyStatus" class="versions-preview-meta versions-preview-copy-status" aria-live="polite"></span>
+      <a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(docUuid) %>&part_uuid=<%= enc(partUuid) %>">Close Preview</a>
+    </div>
+  </div>
+  <textarea id="versionsPreviewHiddenPageText" class="versions-preview-hidden-text" aria-hidden="true" tabindex="-1"><%= esc(safe(viewedPage.pageText)) %></textarea>
+  <% if (!safe(viewedPage.warning).isBlank()) { %>
+    <div class="alert alert-warn" style="margin-top:8px;"><%= esc(viewedPage.warning) %></div>
+  <% } %>
+  <details class="versions-preview-doc-nav">
+    <summary>Document Navigation (<%= navEntries.size() %>)</summary>
+    <div class="versions-preview-doc-nav-list">
+      <% if (navEntries.isEmpty()) { %>
+        <div class="meta">No built-in headings, bookmarks, or links were detected for this file.</div>
+      <% } else { %>
+        <% for (int i = 0; i < navShown; i++) {
+             document_page_preview.NavigationEntry n = navEntries.get(i);
+             if (n == null) continue;
+             String nType = safe(n.type).toLowerCase(java.util.Locale.ROOT);
+             String nLabel = safe(n.label);
+             int nPageOne = n.pageIndex >= 0 ? (n.pageIndex + 1) : -1;
+             String nTarget = safe(n.target);
+             String externalHref = n.external ? safeExternalHref(nTarget) : "";
+        %>
+          <div class="versions-preview-doc-nav-row">
+            <div>
+              <div class="versions-preview-doc-nav-label">
+                <span class="versions-preview-doc-nav-kind"><%= esc(nType.isBlank() ? "entry" : nType) %></span>
+                <%= esc(nLabel.isBlank() ? "Untitled navigation entry" : nLabel) %>
+              </div>
+              <% if (!nTarget.isBlank()) { %>
+                <div class="versions-preview-doc-nav-target"><%= esc(nTarget) %></div>
+              <% } %>
+            </div>
+            <div class="versions-preview-doc-nav-actions">
+              <% if (nPageOne > 0) { %>
+                <a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(docUuid) %>&part_uuid=<%= enc(partUuid) %>&view_version_uuid=<%= enc(safe(viewedVersion.uuid)) %>&page=<%= n.pageIndex %>">Go</a>
+                <span class="versions-preview-doc-nav-page">P.<%= nPageOne %></span>
+              <% } %>
+              <% if (!externalHref.isBlank()) { %>
+                <a class="btn btn-ghost" href="<%= esc(externalHref) %>" target="_blank" rel="noopener noreferrer">Open Link</a>
+              <% } %>
+            </div>
+          </div>
+        <% } %>
+        <% if (navEntries.size() > navDisplayLimit) { %>
+          <div class="versions-preview-meta">Showing first <%= navDisplayLimit %> entries.</div>
+        <% } %>
+      <% } %>
+    </div>
+  </details>
+  <div class="versions-preview-img-wrap">
+    <img src="data:image/png;base64,<%= esc(viewedPage.base64Png) %>" alt="Document page preview" />
+  </div>
+</section>
+<% } %>
 <script>
 (function () {
   var form = document.querySelector("form.form");
@@ -316,6 +521,7 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
   var partUuid = "<%= esc(partUuid) %>";
   var uploadTransportVersion = "version-upload-servlet-v1";
   var CHUNK_SIZE = 128 * 1024;
+  var documentReadOnly = <%= docReadOnly ? "true" : "false" %>;
 
   function setStatus(msg) { if (statusEl) statusEl.textContent = msg; }
   function toHex(buffer) {
@@ -328,7 +534,9 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
     var digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
     return toHex(digest);
   }
-  setStatus("No file selected. Transport: " + uploadTransportVersion + ".");
+  if (!documentReadOnly) {
+    setStatus("No file selected. Transport: " + uploadTransportVersion + ".");
+  }
 
   async function parseUploadResponse(resp) {
     var text = "";
@@ -366,6 +574,12 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
 
   form.addEventListener("submit", async function (ev) {
     var file = fileInput && fileInput.files && fileInput.files.length ? fileInput.files[0] : null;
+    if (documentReadOnly) {
+      ev.preventDefault();
+      setStatus("Upload blocked: read-only Clio-synced document.");
+      alert("This document is synced from Clio and is read-only. Edit it in Clio.");
+      return;
+    }
     if (!file) {
       actionInput.value = "create_metadata";
       return;
@@ -487,6 +701,48 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
       alert("Version file upload failed. " + (err && err.message ? err.message : ""));
     }
   });
+})();
+
+(function () {
+  var copyBtn = document.getElementById("btnCopyVersionPageText");
+  if (!copyBtn) return;
+  var textEl = document.getElementById("versionsPreviewHiddenPageText");
+  var statusEl = document.getElementById("versionsPreviewCopyStatus");
+
+  function setStatus(message, isError) {
+    if (!statusEl) return;
+    statusEl.textContent = message || "";
+    statusEl.style.color = isError ? "var(--danger, #b91c1c)" : "var(--muted)";
+  }
+
+  async function copyPageText() {
+    var value = (textEl && typeof textEl.value === "string") ? textEl.value : "";
+    if (!value.trim()) {
+      setStatus("No page text available.", true);
+      return;
+    }
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        var temp = document.createElement("textarea");
+        temp.value = value;
+        temp.setAttribute("readonly", "readonly");
+        temp.style.position = "absolute";
+        temp.style.left = "-9999px";
+        document.body.appendChild(temp);
+        temp.select();
+        var ok = document.execCommand("copy");
+        document.body.removeChild(temp);
+        if (!ok) throw new Error("copy command failed");
+      }
+      setStatus("Page text copied.", false);
+    } catch (err) {
+      setStatus("Clipboard copy is blocked by browser permissions.", true);
+    }
+  }
+
+  copyBtn.addEventListener("click", function () { void copyPageText(); });
 })();
 </script>
 <jsp:include page="footer.jsp" />

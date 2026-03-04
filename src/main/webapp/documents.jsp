@@ -22,8 +22,10 @@
   if (!require_login()) return;
 %>
 
-<%!
+<%! 
   private static final String S_TENANT_UUID = "tenant.uuid";
+  private static final String S_USER_UUID = "user.uuid";
+  private static final String S_USER_EMAIL = "user.email";
   private static final String CSRF_SESSION_KEY = "CSRF_TOKEN";
 
   private static String safe(String s){ return s == null ? "" : s; }
@@ -38,6 +40,13 @@
 
   private static String enc(String s) {
     return URLEncoder.encode(safe(s), StandardCharsets.UTF_8);
+  }
+
+  private static String actorLabel(String actor, String currentActor) {
+    String value = safe(actor).trim();
+    if (value.isBlank()) return "another user";
+    if (!safe(currentActor).trim().isBlank() && value.equalsIgnoreCase(safe(currentActor).trim())) return "you";
+    return value;
   }
 
   private static boolean boolLike(String raw) {
@@ -80,12 +89,46 @@
     if (def == null || values == null) return "";
     return safe(values.get(safe(def.key).trim()));
   }
+
+  private static boolean isTrueLike(String raw) {
+    String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+    return "true".equals(v) || "1".equals(v) || "yes".equals(v) || "on".equals(v) || "y".equals(v);
+  }
+
+  private static boolean isFalseLike(String raw) {
+    String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+    return "false".equals(v) || "0".equals(v) || "no".equals(v) || "off".equals(v) || "n".equals(v);
+  }
+
+  private static String normalizeAttrValueByType(String dataType, String raw) {
+    String type = safe(dataType).trim().toLowerCase(Locale.ROOT);
+    String v = safe(raw);
+    if ("boolean".equals(type)) {
+      if (isTrueLike(v)) return "true";
+      if (isFalseLike(v)) return "false";
+      return "";
+    }
+    if ("select".equals(type)
+        || "number".equals(type)
+        || "date".equals(type)
+        || "datetime".equals(type)
+        || "time".equals(type)
+        || "email".equals(type)
+        || "phone".equals(type)
+        || "url".equals(type)) {
+      return v.trim();
+    }
+    return v;
+  }
 %>
 
 <%
   String ctx = safe(request.getContextPath());
   String tenantUuid = safe((String)session.getAttribute(S_TENANT_UUID)).trim();
   if (tenantUuid.isBlank()) { response.sendRedirect(ctx + "/tenant_login.jsp"); return; }
+  String currentActor = safe((String)session.getAttribute(S_USER_EMAIL)).trim();
+  if (currentActor.isBlank()) currentActor = safe((String)session.getAttribute(S_USER_UUID)).trim();
+  if (currentActor.isBlank()) currentActor = "unknown";
 
   matters matterStore = matters.defaultStore();
   documents docStore = documents.defaultStore();
@@ -155,7 +198,7 @@
           if (def == null) continue;
           String k = attrStore.normalizeKey(def.key);
           if (k.isBlank()) continue;
-          String v = safe(attrValues.get(k));
+          String v = normalizeAttrValueByType(def.dataType, attrValues.get(k));
 
           if ("select".equals(def.dataType)) {
             List<String> opts = attrStore.optionList(def.options);
@@ -191,9 +234,21 @@
         return;
       }
 
+      if ("check_out_document".equals(action)) {
+        docStore.checkOut(tenantUuid, caseUuid, request.getParameter("uuid"), currentActor);
+        response.sendRedirect(ctx + "/documents.jsp?case_uuid=" + enc(caseUuid) + "&saved=1&msg=checked_out");
+        return;
+      }
+
+      if ("check_in_document".equals(action)) {
+        docStore.checkIn(tenantUuid, caseUuid, request.getParameter("uuid"), currentActor);
+        response.sendRedirect(ctx + "/documents.jsp?case_uuid=" + enc(caseUuid) + "&saved=1&msg=checked_in");
+        return;
+      }
+
       if ("save_document".equals(action)) {
         String docUuid = safe(request.getParameter("uuid")).trim();
-        documents.DocumentRec existing = docStore.get(tenantUuid, caseUuid, docUuid);
+        documents.DocumentRec existing = docStore.requireEditable(tenantUuid, caseUuid, docUuid, currentActor);
         if (existing == null) throw new IllegalStateException("Document not found.");
 
         documents.DocumentRec in = new documents.DocumentRec();
@@ -207,7 +262,7 @@
         in.filedOn = safe(request.getParameter("filed_on"));
         in.externalReference = safe(request.getParameter("external_reference"));
         in.notes = safe(request.getParameter("notes"));
-        docStore.update(tenantUuid, caseUuid, in);
+        docStore.update(tenantUuid, caseUuid, in, currentActor);
 
         LinkedHashMap<String, String> attrValues = new LinkedHashMap<String, String>();
         String[] attrKeys = request.getParameterValues("attr_def_key");
@@ -234,7 +289,7 @@
           if (def == null) continue;
           String k = attrStore.normalizeKey(def.key);
           if (k.isBlank()) continue;
-          String v = safe(attrValues.get(k));
+          String v = normalizeAttrValueByType(def.dataType, attrValues.get(k));
 
           if ("select".equals(def.dataType)) {
             List<String> opts = attrStore.optionList(def.options);
@@ -258,13 +313,15 @@
       }
 
       if ("archive_document".equals(action)) {
-        docStore.setTrashed(tenantUuid, caseUuid, request.getParameter("uuid"), true);
+        docStore.requireEditable(tenantUuid, caseUuid, request.getParameter("uuid"), currentActor);
+        docStore.setTrashed(tenantUuid, caseUuid, request.getParameter("uuid"), true, currentActor);
         response.sendRedirect(ctx + "/documents.jsp?case_uuid=" + enc(caseUuid) + "&saved=1");
         return;
       }
 
       if ("restore_document".equals(action)) {
-        docStore.setTrashed(tenantUuid, caseUuid, request.getParameter("uuid"), false);
+        docStore.requireEditable(tenantUuid, caseUuid, request.getParameter("uuid"), currentActor);
+        docStore.setTrashed(tenantUuid, caseUuid, request.getParameter("uuid"), false, currentActor);
         response.sendRedirect(ctx + "/documents.jsp?case_uuid=" + enc(caseUuid) + "&saved=1");
         return;
       }
@@ -274,7 +331,12 @@
     }
   }
 
-  if ("1".equals(request.getParameter("saved"))) message = "Document updated.";
+  if ("1".equals(request.getParameter("saved"))) {
+    String msgKey = safe(request.getParameter("msg")).trim();
+    if ("checked_out".equals(msgKey)) message = "Document checked out for editing (auto-expires in 72 hours).";
+    else if ("checked_in".equals(msgKey)) message = "Document checked in.";
+    else message = "Document updated.";
+  }
 
   if (!caseUuid.isBlank()) {
     try { docStore.ensure(tenantUuid, caseUuid); } catch (Exception ex) { logWarn(application, "Unable to ensure document store for case " + caseUuid + ": " + shortErr(ex), ex); }
@@ -383,8 +445,24 @@
               <textarea name="attr_def_value" rows="2"></textarea>
             <% } else if ("date".equals(def.dataType)) { %>
               <input type="date" name="attr_def_value" />
+            <% } else if ("datetime".equals(def.dataType)) { %>
+              <input type="datetime-local" name="attr_def_value" />
+            <% } else if ("time".equals(def.dataType)) { %>
+              <input type="time" name="attr_def_value" />
             <% } else if ("number".equals(def.dataType)) { %>
               <input type="number" name="attr_def_value" />
+            <% } else if ("boolean".equals(def.dataType)) { %>
+              <select name="attr_def_value">
+                <option value=""></option>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            <% } else if ("email".equals(def.dataType)) { %>
+              <input type="email" name="attr_def_value" />
+            <% } else if ("phone".equals(def.dataType)) { %>
+              <input type="tel" name="attr_def_value" />
+            <% } else if ("url".equals(def.dataType)) { %>
+              <input type="url" name="attr_def_value" />
             <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
               <select name="attr_def_value">
                 <option value=""></option>
@@ -428,6 +506,19 @@
           for (int i = 0; i < docs.size(); i++) {
             documents.DocumentRec d = docs.get(i);
             if (d == null) continue;
+            boolean docReadOnly = documents.isReadOnly(d);
+            boolean checkoutActive = documents.isCheckoutActive(d);
+            boolean checkedOutByMe = documents.isCheckedOutBy(d, currentActor);
+            boolean checkedOutByOther = documents.isCheckedOutByOther(d, currentActor);
+            String checkoutBy = documents.checkoutBy(d);
+            String checkoutExpiresAt = documents.checkoutExpiresAt(d);
+            String checkoutMessage = documents.checkoutMessage(d, currentActor);
+            boolean docLockedForEdit = docReadOnly || checkedOutByOther;
+            String editBlockReason = "";
+            if (docReadOnly) editBlockReason = "Synced from Clio. Edit in Clio.";
+            else if (checkedOutByOther) editBlockReason = checkoutMessage;
+            String editDisabledAttr = docLockedForEdit ? "disabled title=\"" + esc(editBlockReason) + "\"" : "";
+            String lockDisabledAttr = checkedOutByOther ? "disabled title=\"" + esc(checkoutMessage) + "\"" : "";
             String did = safe(d.uuid);
             Map<String,String> docVals = docFieldCache.get(did);
             if (docVals == null) docVals = new LinkedHashMap<String, String>();
@@ -437,6 +528,14 @@
           <td>
             <strong><%= esc(safe(d.title)) %></strong>
             <div class="muted"><%= d.trashed ? "Archived" : "Active" %></div>
+            <% if (docReadOnly) { %>
+              <div class="muted">Synced from Clio (read-only)</div>
+            <% } %>
+            <% if (checkoutActive) { %>
+              <div class="muted">
+                Checked out by <%= esc(actorLabel(checkoutBy, currentActor)) %><% if (!safe(checkoutExpiresAt).isBlank()) { %> until <%= esc(checkoutExpiresAt) %><% } %>
+              </div>
+            <% } %>
           </td>
           <td><%= esc(safe(d.status)) %></td>
           <td>
@@ -461,23 +560,45 @@
           <td><%= esc(safe(d.owner)) %></td>
           <td><%= esc(safe(d.updatedAt)) %></td>
           <td>
-            <button class="btn btn-ghost" type="button" onclick="toggleDocEdit('<%= editRowId %>')">Edit</button>
+            <button class="btn btn-ghost" type="button" onclick="toggleDocEdit('<%= editRowId %>')" <%= editDisabledAttr %>>Edit</button>
             <a class="btn btn-ghost" href="<%= ctx %>/parts.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(did) %>">Parts</a>
-            <% if (!d.trashed) { %>
+            <a class="btn btn-ghost" href="<%= ctx %>/document_preview.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(did) %>">Preview</a>
+            <% if (!docReadOnly) { %>
+              <% if (checkoutActive && checkedOutByMe) { %>
+                <form method="post" action="<%= ctx %>/documents.jsp" style="display:inline;">
+                  <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                  <input type="hidden" name="action" value="check_in_document" />
+                  <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+                  <input type="hidden" name="uuid" value="<%= esc(did) %>" />
+                  <button class="btn btn-ghost" type="submit">Check In</button>
+                </form>
+              <% } else if (!checkoutActive) { %>
+                <form method="post" action="<%= ctx %>/documents.jsp" style="display:inline;">
+                  <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                  <input type="hidden" name="action" value="check_out_document" />
+                  <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
+                  <input type="hidden" name="uuid" value="<%= esc(did) %>" />
+                  <button class="btn btn-ghost" type="submit">Check Out</button>
+                </form>
+              <% } else if (checkedOutByOther) { %>
+                <button class="btn btn-ghost" type="button" <%= lockDisabledAttr %>>Check Out</button>
+              <% } %>
+            <% } %>
+            <% if (!d.trashed && !docReadOnly) { %>
               <form method="post" action="<%= ctx %>/documents.jsp" style="display:inline;">
                 <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
                 <input type="hidden" name="action" value="archive_document" />
                 <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
                 <input type="hidden" name="uuid" value="<%= esc(did) %>" />
-                <button class="btn btn-ghost" type="submit" onclick="return confirm('Archive this document?');">Archive</button>
+                <button class="btn btn-ghost" type="submit" onclick="return confirm('Archive this document?');" <%= lockDisabledAttr %>>Archive</button>
               </form>
-            <% } else { %>
+            <% } else if (d.trashed && !docReadOnly) { %>
               <form method="post" action="<%= ctx %>/documents.jsp" style="display:inline;">
                 <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
                 <input type="hidden" name="action" value="restore_document" />
                 <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
                 <input type="hidden" name="uuid" value="<%= esc(did) %>" />
-                <button class="btn" type="submit">Restore</button>
+                <button class="btn" type="submit" <%= lockDisabledAttr %>>Restore</button>
               </form>
             <% } %>
           </td>
@@ -491,29 +612,35 @@
                 <input type="hidden" name="action" value="save_document" />
                 <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
                 <input type="hidden" name="uuid" value="<%= esc(did) %>" />
+                <% if (docReadOnly) { %>
+                  <div class="alert alert-error" style="margin-bottom:10px;">This document is synced from Clio and is read-only. Edit it in Clio.</div>
+                <% } %>
+                <% if (checkedOutByOther) { %>
+                  <div class="alert alert-error" style="margin-bottom:10px;"><%= esc(checkoutMessage) %> Checkout lock expires automatically after 72 hours.</div>
+                <% } %>
 
                 <div class="grid grid-3">
-                  <label><span>Title</span><input type="text" name="title" value="<%= esc(safe(d.title)) %>" required /></label>
+                  <label><span>Title</span><input type="text" name="title" value="<%= esc(safe(d.title)) %>" required <%= docLockedForEdit ? "disabled" : "" %> /></label>
                   <label><span>Category</span>
-                    <select name="category"><option value=""></option><% for (String cat : tx.categories) { String v = safe(cat); %><option value="<%= esc(v) %>" <%= v.equals(safe(d.category)) ? "selected" : "" %>><%= esc(v) %></option><% } %></select>
+                    <select name="category" <%= docLockedForEdit ? "disabled" : "" %>><option value=""></option><% for (String cat : tx.categories) { String v = safe(cat); %><option value="<%= esc(v) %>" <%= v.equals(safe(d.category)) ? "selected" : "" %>><%= esc(v) %></option><% } %></select>
                   </label>
                   <label><span>Subcategory</span>
-                    <select name="subcategory"><option value=""></option><% for (String sub : tx.subcategories) { String v = safe(sub); %><option value="<%= esc(v) %>" <%= v.equals(safe(d.subcategory)) ? "selected" : "" %>><%= esc(v) %></option><% } %></select>
+                    <select name="subcategory" <%= docLockedForEdit ? "disabled" : "" %>><option value=""></option><% for (String sub : tx.subcategories) { String v = safe(sub); %><option value="<%= esc(v) %>" <%= v.equals(safe(d.subcategory)) ? "selected" : "" %>><%= esc(v) %></option><% } %></select>
                   </label>
                 </div>
 
                 <div class="grid grid-3">
                   <label><span>Status</span>
-                    <select name="status"><option value=""></option><% for (String stat : tx.statuses) { String v = safe(stat); %><option value="<%= esc(v) %>" <%= v.equals(safe(d.status)) ? "selected" : "" %>><%= esc(v) %></option><% } %></select>
+                    <select name="status" <%= docLockedForEdit ? "disabled" : "" %>><option value=""></option><% for (String stat : tx.statuses) { String v = safe(stat); %><option value="<%= esc(v) %>" <%= v.equals(safe(d.status)) ? "selected" : "" %>><%= esc(v) %></option><% } %></select>
                   </label>
-                  <label><span>Owner</span><input type="text" name="owner" value="<%= esc(safe(d.owner)) %>" /></label>
-                  <label><span>Privilege</span><input type="text" name="privilege_level" value="<%= esc(safe(d.privilegeLevel)) %>" /></label>
+                  <label><span>Owner</span><input type="text" name="owner" value="<%= esc(safe(d.owner)) %>" <%= docLockedForEdit ? "disabled" : "" %> /></label>
+                  <label><span>Privilege</span><input type="text" name="privilege_level" value="<%= esc(safe(d.privilegeLevel)) %>" <%= docLockedForEdit ? "disabled" : "" %> /></label>
                 </div>
 
                 <div class="grid grid-3">
-                  <label><span>Filed On</span><input type="date" name="filed_on" value="<%= esc(safe(d.filedOn)) %>" /></label>
-                  <label><span>External Ref</span><input type="text" name="external_reference" value="<%= esc(safe(d.externalReference)) %>" /></label>
-                  <label><span>Notes</span><input type="text" name="notes" value="<%= esc(safe(d.notes)) %>" /></label>
+                  <label><span>Filed On</span><input type="date" name="filed_on" value="<%= esc(safe(d.filedOn)) %>" <%= docLockedForEdit ? "disabled" : "" %> /></label>
+                  <label><span>External Ref</span><input type="text" name="external_reference" value="<%= esc(safe(d.externalReference)) %>" <%= docLockedForEdit ? "disabled" : "" %> /></label>
+                  <label><span>Notes</span><input type="text" name="notes" value="<%= esc(safe(d.notes)) %>" <%= docLockedForEdit ? "disabled" : "" %> /></label>
                 </div>
 
                 <% if (!enabledAttrDefs.isEmpty()) { %>
@@ -532,20 +659,36 @@
                         <span><%= esc(safe(def.label)) %><%= def.required ? " *" : "" %></span>
                         <input type="hidden" name="attr_def_key" value="<%= esc(key) %>" />
                         <% if ("textarea".equals(def.dataType)) { %>
-                          <textarea name="attr_def_value" rows="2"><%= esc(val) %></textarea>
+                          <textarea name="attr_def_value" rows="2" <%= docLockedForEdit ? "disabled" : "" %>><%= esc(val) %></textarea>
                         <% } else if ("date".equals(def.dataType)) { %>
-                          <input type="date" name="attr_def_value" value="<%= esc(val) %>" />
+                          <input type="date" name="attr_def_value" value="<%= esc(val) %>" <%= docLockedForEdit ? "disabled" : "" %> />
+                        <% } else if ("datetime".equals(def.dataType)) { %>
+                          <input type="datetime-local" name="attr_def_value" value="<%= esc(val) %>" <%= docLockedForEdit ? "disabled" : "" %> />
+                        <% } else if ("time".equals(def.dataType)) { %>
+                          <input type="time" name="attr_def_value" value="<%= esc(val) %>" <%= docLockedForEdit ? "disabled" : "" %> />
                         <% } else if ("number".equals(def.dataType)) { %>
-                          <input type="number" name="attr_def_value" value="<%= esc(val) %>" />
+                          <input type="number" name="attr_def_value" value="<%= esc(val) %>" <%= docLockedForEdit ? "disabled" : "" %> />
+                        <% } else if ("boolean".equals(def.dataType)) { %>
+                          <select name="attr_def_value" <%= docLockedForEdit ? "disabled" : "" %>>
+                            <option value=""></option>
+                            <option value="true" <%= "true".equals(normalizeAttrValueByType("boolean", val)) ? "selected" : "" %>>Yes</option>
+                            <option value="false" <%= "false".equals(normalizeAttrValueByType("boolean", val)) ? "selected" : "" %>>No</option>
+                          </select>
+                        <% } else if ("email".equals(def.dataType)) { %>
+                          <input type="email" name="attr_def_value" value="<%= esc(val) %>" <%= docLockedForEdit ? "disabled" : "" %> />
+                        <% } else if ("phone".equals(def.dataType)) { %>
+                          <input type="tel" name="attr_def_value" value="<%= esc(val) %>" <%= docLockedForEdit ? "disabled" : "" %> />
+                        <% } else if ("url".equals(def.dataType)) { %>
+                          <input type="url" name="attr_def_value" value="<%= esc(val) %>" <%= docLockedForEdit ? "disabled" : "" %> />
                         <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
-                          <select name="attr_def_value">
+                          <select name="attr_def_value" <%= docLockedForEdit ? "disabled" : "" %>>
                             <option value=""></option>
                             <% for (int oi = 0; oi < opts.size(); oi++) { String ov = safe(opts.get(oi)); %>
                               <option value="<%= esc(ov) %>" <%= ov.equals(val) ? "selected" : "" %>><%= esc(ov) %></option>
                             <% } %>
                           </select>
                         <% } else { %>
-                          <input type="text" name="attr_def_value" value="<%= esc(val) %>" />
+                          <input type="text" name="attr_def_value" value="<%= esc(val) %>" <%= docLockedForEdit ? "disabled" : "" %> />
                         <% } %>
                       </label>
                     <% } %>
@@ -553,7 +696,7 @@
                 <% } %>
 
                 <div class="actions" style="display:flex; gap:10px; margin-top:10px;">
-                  <button class="btn" type="submit">Save Document</button>
+                  <button class="btn" type="submit" <%= docLockedForEdit ? "disabled" : "" %>>Save Document</button>
                   <button class="btn btn-ghost" type="button" onclick="toggleDocEdit('<%= editRowId %>')">Cancel</button>
                 </div>
               </form>

@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -17,6 +19,7 @@ public class document_workflow_test {
 
     @AfterEach
     void cleanup() throws Exception {
+        documents.clearActorContext();
         Path root = Paths.get("data", "tenants", "tenant-doc-test");
         if (!Files.exists(root)) return;
         Files.walk(root).sorted(Comparator.reverseOrder()).forEach(p -> {
@@ -75,5 +78,137 @@ public class document_workflow_test {
                         "",
                         true
                 ));
+    }
+
+    @Test
+    void clio_synced_document_is_read_only_but_external_sync_can_append_versions() throws Exception {
+        String tenant = "tenant-doc-test";
+        String matter = "matter-003";
+
+        documents docs = documents.defaultStore();
+        documents.DocumentRec doc = docs.create(
+                tenant, matter, "Clio Doc", "clio", "", "synced", "Clio", "", "", "clio-123", ""
+        );
+        docs.updateSourceMetadata(tenant, matter, doc.uuid, "clio", "clio-123", "2026-03-01T00:00:00Z", true);
+
+        documents.DocumentRec updateIn = new documents.DocumentRec();
+        updateIn.uuid = doc.uuid;
+        updateIn.title = "Edited";
+        updateIn.category = "x";
+        updateIn.subcategory = "";
+        updateIn.status = "draft";
+        updateIn.owner = "User";
+        updateIn.privilegeLevel = "";
+        updateIn.filedOn = "";
+        updateIn.externalReference = "";
+        updateIn.notes = "";
+
+        assertThrows(IllegalStateException.class, () -> docs.update(tenant, matter, updateIn));
+        assertThrows(IllegalStateException.class, () -> docs.setTrashed(tenant, matter, doc.uuid, true));
+        assertThrows(IllegalStateException.class, () ->
+                document_fields.defaultStore().write(tenant, matter, doc.uuid, java.util.Map.of("k", "v")));
+        assertThrows(IllegalStateException.class, () ->
+                document_parts.defaultStore().create(tenant, matter, doc.uuid, "Part", "lead", "1", "", "User", ""));
+
+        document_parts.PartRec externalPart = document_parts.defaultStore().createForExternalSync(
+                tenant, matter, doc.uuid, "Clio Document", "lead", "1", "", "Clio", ""
+        );
+        assertFalse(externalPart.uuid.isBlank());
+
+        part_versions.VersionRec externalVersion = part_versions.defaultStore().createForExternalSync(
+                tenant,
+                matter,
+                doc.uuid,
+                externalPart.uuid,
+                "v1",
+                "clio_version:900",
+                "application/pdf",
+                "abc",
+                "100",
+                "vault://clio",
+                "clio-sync",
+                "synced",
+                true
+        );
+        assertFalse(externalVersion.uuid.isBlank());
+
+        assertThrows(IllegalStateException.class, () ->
+                part_versions.defaultStore().create(
+                        tenant,
+                        matter,
+                        doc.uuid,
+                        externalPart.uuid,
+                        "manual-v2",
+                        "uploaded",
+                        "application/pdf",
+                        "xyz",
+                        "200",
+                        "vault://manual",
+                        "user",
+                        "",
+                        true
+                ));
+    }
+
+    @Test
+    void checkout_blocks_other_users_but_allows_owner_edits() throws Exception {
+        String tenant = "tenant-doc-test";
+        String matter = "matter-004";
+
+        documents docs = documents.defaultStore();
+        documents.DocumentRec doc = docs.create(tenant, matter, "Shared Doc", "pleading", "", "draft", "A", "", "", "", "");
+
+        assertTrue(docs.checkOut(tenant, matter, doc.uuid, "alice@example.com"));
+        assertThrows(IllegalStateException.class, () -> docs.checkOut(tenant, matter, doc.uuid, "bob@example.com"));
+
+        documents.DocumentRec in = new documents.DocumentRec();
+        in.uuid = doc.uuid;
+        in.title = "Shared Doc Updated";
+        in.category = "pleading";
+        in.subcategory = "";
+        in.status = "draft";
+        in.owner = "A";
+        in.privilegeLevel = "";
+        in.filedOn = "";
+        in.externalReference = "";
+        in.notes = "";
+
+        documents.bindActorContext("alice@example.com");
+        assertTrue(docs.update(tenant, matter, in));
+        documents.clearActorContext();
+
+        documents.bindActorContext("bob@example.com");
+        assertThrows(IllegalStateException.class, () -> docs.update(tenant, matter, in));
+        documents.clearActorContext();
+
+        assertThrows(IllegalStateException.class, () -> docs.checkIn(tenant, matter, doc.uuid, "bob@example.com"));
+        assertTrue(docs.checkIn(tenant, matter, doc.uuid, "alice@example.com"));
+        assertTrue(docs.checkOut(tenant, matter, doc.uuid, "bob@example.com"));
+    }
+
+    @Test
+    void checkout_auto_expires_after_72_hours() throws Exception {
+        String tenant = "tenant-doc-test";
+        String matter = "matter-005";
+
+        documents docs = documents.defaultStore();
+        documents.DocumentRec doc = docs.create(tenant, matter, "Expiring Lock", "pleading", "", "draft", "A", "", "", "", "");
+
+        assertTrue(docs.checkOut(tenant, matter, doc.uuid, "alice@example.com"));
+
+        documents.DocumentRec locked = docs.get(tenant, matter, doc.uuid);
+        String priorCheckedOutAt = locked == null ? "" : locked.checkedOutAt;
+        Path docsPath = Paths.get("data", "tenants", tenant, "matters", matter, "documents.xml").toAbsolutePath();
+        String xml = Files.readString(docsPath);
+        String expiredAt = Instant.now().minus(Duration.ofHours(73)).toString();
+        xml = xml.replace(
+                "<checked_out_at>" + document_workflow_support.xmlText(priorCheckedOutAt) + "</checked_out_at>",
+                "<checked_out_at>" + document_workflow_support.xmlText(expiredAt) + "</checked_out_at>"
+        );
+        Files.writeString(docsPath, xml);
+
+        documents.DocumentRec expired = docs.get(tenant, matter, doc.uuid);
+        assertFalse(documents.isCheckoutActive(expired));
+        assertTrue(docs.checkOut(tenant, matter, doc.uuid, "bob@example.com"));
     }
 }

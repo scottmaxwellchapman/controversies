@@ -5,6 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sun.net.httpserver.HttpServer;
+
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -516,6 +520,92 @@ public class business_process_manager_test {
         business_process_manager.RunResult redone = bpm.redoRun(tenant, run.runUuid, "tester");
         assertEquals("active", safe(redone.undoState));
         assertEquals("Discovery", task_fields.defaultStore().read(tenant, task.uuid).get("phase"));
+    }
+
+    @Test
+    void supports_custom_object_record_triggers_and_reversible_field_action() throws Exception {
+        String tenant = "tenant-bpm-custom-object-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        custom_objects objects = custom_objects.defaultStore();
+        objects.saveAll(
+                tenant,
+                List.of(
+                        new custom_objects.ObjectRec(
+                                "",
+                                "billing_entry",
+                                "Billing Entry",
+                                "Billing Entries",
+                                true,
+                                true,
+                                10,
+                                ""
+                        )
+                )
+        );
+        custom_objects.ObjectRec object = objects.getByKey(tenant, "billing_entry");
+        assertNotNull(object);
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Custom Object Trigger + Field Action";
+
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "custom_object_record.created";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep setField = new business_process_manager.ProcessStep();
+        setField.stepId = "set_custom_field";
+        setField.order = 10;
+        setField.action = "set_custom_object_record_field";
+        setField.settings.put("object_uuid", "{{event.object_uuid}}");
+        setField.settings.put("record_uuid", "{{event.record_uuid}}");
+        setField.settings.put("field_key", "approval_status");
+        setField.settings.put("field_value", "pending_review");
+        process.steps.add(setField);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        bpm.saveProcess(tenant, process);
+
+        LinkedHashMap<String, String> values = new LinkedHashMap<String, String>();
+        values.put("hours", "2.5");
+        custom_object_records.RecordRec created = custom_object_records.defaultStore().create(
+                tenant,
+                object.uuid,
+                "March Billing",
+                values
+        );
+        assertNotNull(created);
+
+        custom_object_records.RecordRec after = custom_object_records.defaultStore().getByUuid(
+                tenant,
+                object.uuid,
+                created.uuid
+        );
+        assertEquals("pending_review", safe(after == null ? "" : after.values.get("approval_status")));
+
+        List<business_process_manager.RunResult> runs = bpm.listRuns(tenant, 10);
+        assertEquals(1, runs.size());
+        business_process_manager.RunResult run = runs.get(0);
+        assertEquals("custom_object_record.created", safe(run.eventType));
+        assertEquals("completed", safe(run.status));
+
+        business_process_manager.RunResult undone = bpm.undoRun(tenant, run.runUuid, "tester");
+        assertEquals("undone", safe(undone.undoState));
+        custom_object_records.RecordRec afterUndo = custom_object_records.defaultStore().getByUuid(
+                tenant,
+                object.uuid,
+                created.uuid
+        );
+        assertFalse(afterUndo != null && afterUndo.values.containsKey("approval_status"));
+
+        business_process_manager.RunResult redone = bpm.redoRun(tenant, run.runUuid, "tester");
+        assertEquals("active", safe(redone.undoState));
+        custom_object_records.RecordRec afterRedo = custom_object_records.defaultStore().getByUuid(
+                tenant,
+                object.uuid,
+                created.uuid
+        );
+        assertEquals("pending_review", safe(afterRedo == null ? "" : afterRedo.values.get("approval_status")));
     }
 
     private static business_process_manager.ProcessDefinition minimalProcess(String name, String triggerType) {

@@ -1319,8 +1319,7 @@ public final class matter_facts {
                                             int factCount) throws Exception {
         String title = "Facts Case Plan Report (Landscape)";
         String meta1 = "Generated: " + nowIso() + " | By: " + safe(actor).trim();
-        String meta2 = "Matter: " + safe(matter == null ? "" : matter.label)
-                + " | Matter UUID: " + safe(matter == null ? "" : matter.uuid);
+        String meta2 = "Matter: " + safe(matter == null ? "" : matter.label);
         String counts = "Counts -> Claims: " + claimCount + ", Elements: " + elementCount + ", Facts: " + factCount;
 
         drawTextLine(cs, title, PDType1Font.HELVETICA_BOLD, 13f, x, y);

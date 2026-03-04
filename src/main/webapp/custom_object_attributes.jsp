@@ -283,6 +283,12 @@
                   <option value="textarea" <%= "textarea".equals(a.dataType) ? "selected" : "" %>>Textarea</option>
                   <option value="number" <%= "number".equals(a.dataType) ? "selected" : "" %>>Number</option>
                   <option value="date" <%= "date".equals(a.dataType) ? "selected" : "" %>>Date</option>
+                  <option value="datetime" <%= "datetime".equals(a.dataType) ? "selected" : "" %>>Date + Time</option>
+                  <option value="time" <%= "time".equals(a.dataType) ? "selected" : "" %>>Time</option>
+                  <option value="boolean" <%= "boolean".equals(a.dataType) ? "selected" : "" %>>Yes/No</option>
+                  <option value="email" <%= "email".equals(a.dataType) ? "selected" : "" %>>Email</option>
+                  <option value="phone" <%= "phone".equals(a.dataType) ? "selected" : "" %>>Phone</option>
+                  <option value="url" <%= "url".equals(a.dataType) ? "selected" : "" %>>URL</option>
                   <option value="select" <%= "select".equals(a.dataType) ? "selected" : "" %>>Dropdown</option>
                 </select>
               </td>
@@ -319,6 +325,12 @@
                   <option value="textarea">Textarea</option>
                   <option value="number">Number</option>
                   <option value="date">Date</option>
+                  <option value="datetime">Date + Time</option>
+                  <option value="time">Time</option>
+                  <option value="boolean">Yes/No</option>
+                  <option value="email">Email</option>
+                  <option value="phone">Phone</option>
+                  <option value="url">URL</option>
                   <option value="select">Dropdown</option>
                 </select>
               </td>
@@ -369,6 +381,12 @@
         '<option value="textarea">Textarea</option>' +
         '<option value="number">Number</option>' +
         '<option value="date">Date</option>' +
+        '<option value="datetime">Date + Time</option>' +
+        '<option value="time">Time</option>' +
+        '<option value="boolean">Yes/No</option>' +
+        '<option value="email">Email</option>' +
+        '<option value="phone">Phone</option>' +
+        '<option value="url">URL</option>' +
         '<option value="select">Dropdown</option>' +
       '</select></td>' +
       '<td><textarea name="attr_options" rows="2" placeholder="Option 1&#10;Option 2"></textarea></td>' +

@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
 public class tomcat {
+    private static final int PORT_SCAN_LIMIT = 100;
+
     private Tomcat tomcat;
 
     private int httpPort = 8080;   // redirect-only (set <=0 to disable)
@@ -50,12 +52,9 @@ public class tomcat {
         if (tomcat != null) return;
 
         stopLatch = new CountDownLatch(1);
-        this.httpPort = httpPort;
-        this.httpsPort = httpsPort;
-
-        // Fail fast if ports are already in use (this is your current crash)
-        assertPortFree(this.httpsPort, "HTTPS");
-        assertPortFree(this.httpPort, "HTTP");
+        ResolvedPorts resolvedPorts = resolvePorts(httpPort, httpsPort);
+        this.httpPort = resolvedPorts.httpPort;
+        this.httpsPort = resolvedPorts.httpsPort;
 
         // JSP root (common Maven path)
         Path webappDir = Paths.get("src", "main", "webapp").toAbsolutePath();
@@ -89,6 +88,7 @@ public class tomcat {
 
         // Enable JSP engine
         ctx.addServletContainerInitializer(new JasperInitializer(), null);
+        configureJspCompilerLevel(ctx);
 
         // Register your security filter: net.familylawandprobate.controversies.filter
         registerFilter(ctx);
@@ -150,6 +150,14 @@ public class tomcat {
         stopLatch.await();
     }
 
+    public int getHttpPort() {
+        return httpPort;
+    }
+
+    public int getHttpsPort() {
+        return httpsPort;
+    }
+
     private static void registerFilter(Context ctx) {
         // NOTE: Your filter class should be:
         // package net.familylawandprobate.controversies;
@@ -163,6 +171,20 @@ public class tomcat {
         map.setFilterName("securityFilter");
         map.addURLPattern("/*");
         ctx.addFilterMap(map);
+    }
+
+    private static void configureJspCompilerLevel(Context ctx) {
+        String vm = Integer.toString(Runtime.version().feature());
+        org.apache.catalina.Container jspServlet = ctx.findChild("jsp");
+        if (jspServlet instanceof Wrapper) {
+            Wrapper jsp = (Wrapper) jspServlet;
+            jsp.addInitParameter("compilerSourceVM", vm);
+            jsp.addInitParameter("compilerTargetVM", vm);
+            return;
+        }
+        // Fallback for containers where the JSP servlet is initialized later.
+        ctx.addParameter("compilerSourceVM", vm);
+        ctx.addParameter("compilerTargetVM", vm);
     }
 
     private static void registerApiServlet(Context ctx) {
@@ -184,17 +206,59 @@ public class tomcat {
         ctx.addServletMappingDecoded("/wiki_files", "wikiFileServlet");
     }
 
-    private static void assertPortFree(int port, String label) {
-        if (port <= 0) return;
+    private static ResolvedPorts resolvePorts(int requestedHttpPort, int requestedHttpsPort) {
+        int resolvedHttpsPort = chooseAvailablePort(requestedHttpsPort, "HTTPS", -1);
+        int resolvedHttpPort = requestedHttpPort;
+        if (requestedHttpPort > 0) {
+            resolvedHttpPort = chooseAvailablePort(requestedHttpPort, "HTTP", resolvedHttpsPort);
+        }
+        return new ResolvedPorts(resolvedHttpPort, resolvedHttpsPort);
+    }
+
+    private static int chooseAvailablePort(int basePort, String label, int disallowedPort) {
+        if (basePort <= 0) return basePort;
+        if (basePort > 65535) {
+            throw new IllegalArgumentException(label + " port " + basePort + " is invalid.");
+        }
+
+        int maxOffset = Math.min(PORT_SCAN_LIMIT - 1, 65535 - basePort);
+        int lastChecked = basePort + maxOffset;
+        for (int offset = 0; offset <= maxOffset; offset++) {
+            int candidate = basePort + offset;
+            if (candidate == disallowedPort) {
+                continue;
+            }
+            if (isPortFree(candidate)) {
+                if (candidate != basePort) {
+                    System.out.println(label + " port " + basePort + " is unavailable; using " + candidate + " instead.");
+                }
+                return candidate;
+            }
+        }
+
+        throw new IllegalStateException(
+                label + " ports " + basePort + "-" + lastChecked + " are unavailable. " +
+                "Checked up to " + PORT_SCAN_LIMIT + " ports."
+        );
+    }
+
+    private static boolean isPortFree(int port) {
         try (ServerSocket ss = new ServerSocket()) {
             ss.setReuseAddress(false);
             ss.bind(new InetSocketAddress("0.0.0.0", port));
-        } catch (Exception e) {
-            throw new IllegalStateException(
-                    label + " port " + port + " is already in use. " +
-                    "Stop the other process (or change ports).",
-                    e
-            );
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static final class ResolvedPorts {
+        private final int httpPort;
+        private final int httpsPort;
+
+        private ResolvedPorts(int httpPort, int httpsPort) {
+            this.httpPort = httpPort;
+            this.httpsPort = httpsPort;
         }
     }
 

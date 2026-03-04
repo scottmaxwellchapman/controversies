@@ -63,6 +63,7 @@ public final class omnichannel_tickets {
     private static final String CHANNEL_EMAIL_IMAP_SMTP = "email_imap_smtp";
     private static final String CHANNEL_EMAIL_GRAPH_USER = "email_graph_user";
     private static final String CHANNEL_EMAIL_GRAPH_SHARED = "email_graph_shared";
+    private static final String CHANNEL_INTERNAL_MESSAGES = "internal_messages";
 
     private static final String STATUS_OPEN = "open";
     private static final String STATUS_PENDING_CUSTOMER = "pending_customer";
@@ -1032,14 +1033,12 @@ public final class omnichannel_tickets {
         lines.add("");
 
         lines.add("Thread Summary");
-        lines.add("Thread UUID: " + safe(ticket == null ? "" : ticket.uuid));
-        lines.add("Matter UUID: " + safe(ticket == null ? "" : ticket.matterUuid));
-        lines.add("Matter Label: " + safe(matter == null ? "" : matter.label));
+        lines.add("Matter: " + safe(matter == null ? "" : matter.label));
         lines.add("Channel: " + safe(ticket == null ? "" : ticket.channel));
         lines.add("Subject: " + safe(ticket == null ? "" : ticket.subject));
         lines.add("Status: " + safe(ticket == null ? "" : ticket.status));
         lines.add("Priority: " + safe(ticket == null ? "" : ticket.priority));
-        lines.add("Assigned User UUID: " + safe(ticket == null ? "" : ticket.assignedUserUuid));
+        lines.add("Assigned Team: " + (safe(ticket == null ? "" : ticket.assignedUserUuid).trim().isBlank() ? "(unassigned)" : "(assigned)"));
         lines.add("Assignment Mode: " + safe(ticket == null ? "" : ticket.assignmentMode));
         lines.add("Customer: " + safe(ticket == null ? "" : ticket.customerDisplay));
         lines.add("Customer Address: " + safe(ticket == null ? "" : ticket.customerAddress));
@@ -1065,9 +1064,7 @@ public final class omnichannel_tickets {
                 AssignmentRec a = assignments.get(i);
                 if (a == null) continue;
                 lines.add("[" + safe(a.changedAt) + "] mode=" + safe(a.mode)
-                        + " from=" + safe(a.fromUserUuid)
-                        + " to=" + safe(a.toUserUuid)
-                        + " by=" + safe(a.changedBy));
+                        + " by=" + displayActor(a.changedBy));
                 if (!safe(a.reason).trim().isBlank()) {
                     appendWrapped(lines, "Reason: " + safe(a.reason), 110);
                 }
@@ -1119,8 +1116,8 @@ public final class omnichannel_tickets {
                         + " (" + safe(a.mimeType) + ") size=" + safe(a.fileSizeBytes)
                         + " bytes inline_media=" + (a.inlineMedia ? "yes" : "no")
                         + " embedded=" + (exists ? "yes" : "no")
-                        + " message_uuid=" + safe(a.messageUuid)
-                        + " uploaded_by=" + safe(a.uploadedBy));
+                        + " message_linked=" + (safe(a.messageUuid).trim().isBlank() ? "no" : "yes")
+                        + " uploaded_by=" + displayActor(a.uploadedBy));
                 lines.add("Checksum: " + safe(a.checksumSha256));
             }
         }
@@ -1228,7 +1225,7 @@ public final class omnichannel_tickets {
                 cs.showText(sanitizePdfText("Embedded Multimedia: " + safe(a.fileName)));
                 cs.newLineAtOffset(0, -16f);
                 cs.setFont(PDType1Font.HELVETICA, 10f);
-                cs.showText(sanitizePdfText("Attachment UUID: " + safe(a.uuid) + " | MIME: " + safe(a.mimeType)
+                cs.showText(sanitizePdfText("MIME: " + safe(a.mimeType)
                         + " | Size: " + safe(a.fileSizeBytes) + " bytes"));
                 cs.endText();
 
@@ -1765,6 +1762,7 @@ public final class omnichannel_tickets {
         if (CHANNEL_EMAIL_IMAP_SMTP.equals(s)) return CHANNEL_EMAIL_IMAP_SMTP;
         if (CHANNEL_EMAIL_GRAPH_USER.equals(s)) return CHANNEL_EMAIL_GRAPH_USER;
         if (CHANNEL_EMAIL_GRAPH_SHARED.equals(s)) return CHANNEL_EMAIL_GRAPH_SHARED;
+        if (CHANNEL_INTERNAL_MESSAGES.equals(s)) return CHANNEL_INTERNAL_MESSAGES;
         return CHANNEL_EMAIL_IMAP_SMTP;
     }
 
@@ -1887,6 +1885,13 @@ public final class omnichannel_tickets {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static String displayActor(String raw) {
+        String v = safe(raw).trim();
+        if (v.isBlank()) return "";
+        if (v.contains("@")) return v;
+        return "Account user";
     }
 
     private static String safeToken(String raw) {

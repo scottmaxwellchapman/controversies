@@ -161,26 +161,32 @@ public final class texas_law_library {
     }
 
     public static String extension(Path p) {
-        if (p == null || p.getFileName() == null) return "";
-        String n = safe(p.getFileName().toString()).trim().toLowerCase(Locale.ROOT);
-        int dot = n.lastIndexOf('.');
-        if (dot < 0 || dot + 1 >= n.length()) return "";
-        return n.substring(dot + 1).replaceAll("[^a-z0-9]", "");
+        return document_page_preview.extension(p);
     }
 
     public static boolean isRenderable(Path p) {
-        String ext = extension(p);
-        return "pdf".equals(ext) || "docx".equals(ext);
+        return document_page_preview.isRenderable(p);
     }
 
     public static RenderedPage renderPage(Path file, int requestedPageIndex) throws Exception {
-        if (file == null || !Files.isRegularFile(file)) {
-            throw new IllegalArgumentException("File not found.");
+        document_page_preview.RenderedPage rendered = document_page_preview.renderPage(file, requestedPageIndex);
+        ArrayList<NavigationEntry> nav = new ArrayList<NavigationEntry>();
+        for (document_page_preview.NavigationEntry n : rendered.navigation) {
+            if (n == null) continue;
+            nav.add(new NavigationEntry(n.type, n.label, n.pageIndex, n.target, n.external));
         }
-        String ext = extension(file);
-        if ("pdf".equals(ext)) return renderPdfPage(file, requestedPageIndex);
-        if ("docx".equals(ext)) return renderDocxPage(file, requestedPageIndex);
-        throw new IllegalArgumentException("Viewer supports PDF and DOCX only.");
+        return new RenderedPage(
+                rendered.pageIndex,
+                rendered.totalPages,
+                rendered.totalKnown,
+                rendered.hasPrev,
+                rendered.hasNext,
+                rendered.base64Png,
+                rendered.warning,
+                rendered.engine,
+                rendered.pageText,
+                nav
+        );
     }
 
     public static List<SearchResult> search(Path root,

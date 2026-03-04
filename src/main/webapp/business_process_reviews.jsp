@@ -69,7 +69,8 @@
 
   private static LinkedHashMap<String, String> stringMap(Object raw) {
     LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
-    if (!(raw instanceof Map<?, ?> m)) return out;
+    if (!(raw instanceof Map<?, ?>)) return out;
+    Map<?, ?> m = (Map<?, ?>) raw;
     for (Map.Entry<?, ?> e : m.entrySet()) {
       if (e == null) continue;
       String k = safe(String.valueOf(e.getKey())).trim();
@@ -92,6 +93,13 @@
     }
     sb.append("}");
     return sb.toString();
+  }
+
+  private static String userDisplay(String raw) {
+    String v = safe(raw).trim();
+    if (v.isBlank()) return "";
+    if (v.contains("@")) return v;
+    return "System user";
   }
 %>
 
@@ -177,13 +185,15 @@
       <h3 style="margin:0;"><%= esc(safe(r.title)) %></h3>
       <div class="meta" style="margin-top:4px;">
         Process: <strong><%= esc(safe(r.processName)) %></strong>
-        (<code><%= esc(safe(r.processUuid)) %></code>)
       </div>
       <div class="meta" style="margin-top:4px;">
-        Review UUID: <code><%= esc(safe(r.reviewUuid)) %></code> • Event: <code><%= esc(safe(r.eventType)) %></code>
+        Event: <code><%= esc(safe(r.eventType)) %></code>
       </div>
       <div class="meta" style="margin-top:4px;">
-        Created: <%= esc(safe(r.createdAt)) %> • Requested by: <code><%= esc(safe(r.requestedByUserUuid)) %></code>
+        Created: <%= esc(safe(r.createdAt)) %>
+        <% if (!userDisplay(r.requestedByUserUuid).isBlank()) { %>
+          • Requested by: <code><%= esc(userDisplay(r.requestedByUserUuid)) %></code>
+        <% } %>
       </div>
 
       <% if (!safe(r.instructions).isBlank()) { %>

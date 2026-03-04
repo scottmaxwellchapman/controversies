@@ -80,6 +80,41 @@
     if ("county".equals(key)) return m == null ? "" : safe(m.county);
     return "";
   }
+
+  private static boolean isTrueLike(String raw) {
+    String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+    return "true".equals(v) || "1".equals(v) || "yes".equals(v) || "on".equals(v) || "y".equals(v);
+  }
+
+  private static boolean isFalseLike(String raw) {
+    String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+    return "false".equals(v) || "0".equals(v) || "no".equals(v) || "off".equals(v) || "n".equals(v);
+  }
+
+  private static boolean isClioManagedMatter(matters.MatterRec m) {
+    return m != null && "clio".equalsIgnoreCase(safe(m.source).trim());
+  }
+
+  private static String normalizeAttrValueByType(String dataType, String raw) {
+    String type = safe(dataType).trim().toLowerCase(Locale.ROOT);
+    String v = safe(raw);
+    if ("boolean".equals(type)) {
+      if (isTrueLike(v)) return "true";
+      if (isFalseLike(v)) return "false";
+      return "";
+    }
+    if ("select".equals(type)
+        || "number".equals(type)
+        || "date".equals(type)
+        || "datetime".equals(type)
+        || "time".equals(type)
+        || "email".equals(type)
+        || "phone".equals(type)
+        || "url".equals(type)) {
+      return v.trim();
+    }
+    return v;
+  }
 %>
 
 <%
@@ -155,7 +190,7 @@
           if (def == null) continue;
           String key = attrsStore.normalizeKey(def.key);
           if (key.isBlank()) continue;
-          String val = safe(attrValues.get(key));
+          String val = normalizeAttrValueByType(def.dataType, attrValues.get(key));
 
           if ("select".equals(def.dataType)) {
             List<String> opts = attrsStore.optionList(def.options);
@@ -211,7 +246,7 @@
           if (def == null) continue;
           String key = attrsStore.normalizeKey(def.key);
           if (key.isBlank()) continue;
-          String val = safe(attrValues.get(key));
+          String val = normalizeAttrValueByType(def.dataType, attrValues.get(key));
 
           if ("select".equals(def.dataType)) {
             List<String> opts = attrsStore.optionList(def.options);
@@ -409,8 +444,24 @@
               <textarea name="attr_def_value" rows="2"></textarea>
             <% } else if ("date".equals(def.dataType)) { %>
               <input type="date" name="attr_def_value" />
+            <% } else if ("datetime".equals(def.dataType)) { %>
+              <input type="datetime-local" name="attr_def_value" />
+            <% } else if ("time".equals(def.dataType)) { %>
+              <input type="time" name="attr_def_value" />
             <% } else if ("number".equals(def.dataType)) { %>
               <input type="number" name="attr_def_value" />
+            <% } else if ("boolean".equals(def.dataType)) { %>
+              <select name="attr_def_value">
+                <option value=""></option>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            <% } else if ("email".equals(def.dataType)) { %>
+              <input type="email" name="attr_def_value" />
+            <% } else if ("phone".equals(def.dataType)) { %>
+              <input type="tel" name="attr_def_value" />
+            <% } else if ("url".equals(def.dataType)) { %>
+              <input type="url" name="attr_def_value" />
             <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
               <select name="attr_def_value">
                 <option value=""></option>
@@ -487,6 +538,7 @@
           for (int i = 0; i < filtered.size(); i++) {
             matters.MatterRec m = filtered.get(i);
             if (m == null) continue;
+            boolean clioManaged = isClioManagedMatter(m);
 
             String id = safe(m.uuid);
             String editRowId = "edit_case_" + i;
@@ -508,6 +560,9 @@
           <td>
             <strong><%= esc(safe(m.label)) %></strong>
             <div class="muted" style="margin-top:4px;"><%= m.trashed ? "Archived" : "Active" %></div>
+            <% if (clioManaged) { %>
+              <div class="muted" style="margin-top:4px;">Synced from Clio. Edit in Clio.</div>
+            <% } %>
           </td>
           <td>
             <%
@@ -530,9 +585,15 @@
           </td>
           <td><%= extraKv.size() %></td>
           <td>
-            <button class="btn btn-ghost" type="button" onclick="toggleEdit('<%= editRowId %>')">Edit</button>
+            <% if (clioManaged) { %>
+              <button class="btn btn-ghost" type="button" disabled title="Synced from Clio. Edit in Clio.">Edit</button>
+            <% } else { %>
+              <button class="btn btn-ghost" type="button" onclick="toggleEdit('<%= editRowId %>')">Edit</button>
+            <% } %>
             <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= URLEncoder.encode(id, StandardCharsets.UTF_8) %>&<%= baseQs %>">Assemble Forms</a>
-            <% if (!m.trashed) { %>
+            <% if (clioManaged) { %>
+              <span class="muted">Read-only. Edit in Clio.</span>
+            <% } else if (!m.trashed) { %>
               <form method="post" action="<%= ctx %>/cases.jsp?<%= baseQs %>" style="display:inline;">
                 <input type="hidden" name="action" value="archive_case" />
                 <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
@@ -550,6 +611,7 @@
           </td>
         </tr>
 
+        <% if (!clioManaged) { %>
         <tr id="<%= editRowId %>" style="display:none;">
           <td colspan="4">
             <div class="card" style="margin:8px 0; padding:14px; background:rgba(0,0,0,0.02);">
@@ -581,8 +643,24 @@
                           <textarea name="attr_def_value" rows="2"><%= esc(val) %></textarea>
                         <% } else if ("date".equals(def.dataType)) { %>
                           <input type="date" name="attr_def_value" value="<%= esc(val) %>" />
+                        <% } else if ("datetime".equals(def.dataType)) { %>
+                          <input type="datetime-local" name="attr_def_value" value="<%= esc(val) %>" />
+                        <% } else if ("time".equals(def.dataType)) { %>
+                          <input type="time" name="attr_def_value" value="<%= esc(val) %>" />
                         <% } else if ("number".equals(def.dataType)) { %>
                           <input type="number" name="attr_def_value" value="<%= esc(val) %>" />
+                        <% } else if ("boolean".equals(def.dataType)) { %>
+                          <select name="attr_def_value">
+                            <option value=""></option>
+                            <option value="true" <%= "true".equals(normalizeAttrValueByType("boolean", val)) ? "selected" : "" %>>Yes</option>
+                            <option value="false" <%= "false".equals(normalizeAttrValueByType("boolean", val)) ? "selected" : "" %>>No</option>
+                          </select>
+                        <% } else if ("email".equals(def.dataType)) { %>
+                          <input type="email" name="attr_def_value" value="<%= esc(val) %>" />
+                        <% } else if ("phone".equals(def.dataType)) { %>
+                          <input type="tel" name="attr_def_value" value="<%= esc(val) %>" />
+                        <% } else if ("url".equals(def.dataType)) { %>
+                          <input type="url" name="attr_def_value" value="<%= esc(val) %>" />
                         <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
                           <select name="attr_def_value">
                             <option value=""></option>
@@ -645,6 +723,7 @@
             </div>
           </td>
         </tr>
+        <% } %>
       <%
           }
         }

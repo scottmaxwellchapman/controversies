@@ -62,6 +62,11 @@
     return "true".equals(v) || "1".equals(v) || "yes".equals(v) || "on".equals(v) || "y".equals(v);
   }
 
+  private static boolean falseLike(String raw) {
+    String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+    return "false".equals(v) || "0".equals(v) || "no".equals(v) || "off".equals(v) || "n".equals(v);
+  }
+
   private static String csrfForRender(jakarta.servlet.http.HttpServletRequest req) {
     Object a = req.getAttribute("csrfToken");
     if (a instanceof String) {
@@ -127,6 +132,18 @@
     return false;
   }
 
+  private static String userCsvLabel(String csv, Map<String, String> userEmailByUuid) {
+    String[] parts = safe(csv).split(",");
+    LinkedHashSet<String> labels = new LinkedHashSet<String>();
+    for (int i = 0; i < parts.length; i++) {
+      String id = safe(parts[i]).trim();
+      if (id.isBlank()) continue;
+      String email = userEmailByUuid == null ? "" : safe(userEmailByUuid.get(id)).trim();
+      labels.add(email.isBlank() ? "(assigned user)" : email);
+    }
+    return labels.isEmpty() ? "" : String.join(", ", labels);
+  }
+
   private static String toLocalDateTimeInput(String raw) {
     String v = safe(raw).trim();
     if (v.isBlank()) return "";
@@ -144,6 +161,27 @@
     } catch (Exception ignored) {}
     if (v.length() >= 16 && v.contains("T")) return v.substring(0, 16);
     return "";
+  }
+
+  private static String normalizeAttrValueByType(String dataType, String raw) {
+    String type = safe(dataType).trim().toLowerCase(Locale.ROOT);
+    String v = safe(raw);
+    if ("boolean".equals(type)) {
+      if (boolLike(v)) return "true";
+      if (falseLike(v)) return "false";
+      return "";
+    }
+    if ("select".equals(type)
+        || "number".equals(type)
+        || "date".equals(type)
+        || "datetime".equals(type)
+        || "time".equals(type)
+        || "email".equals(type)
+        || "phone".equals(type)
+        || "url".equals(type)) {
+      return v.trim();
+    }
+    return v;
   }
 
   private static final class TaskTreeRow {
@@ -303,7 +341,17 @@
             if (a == null) continue;
             String key = safe(a.key).trim();
             if (key.isBlank()) continue;
-            String val = safe(request.getParameter("new_field_" + key)).trim();
+            String val = normalizeAttrValueByType(safe(a.dataType), request.getParameter("new_field_" + key));
+            if ("select".equals(safe(a.dataType))) {
+              List<String> opts = attrStore.optionList(safe(a.options));
+              if (!opts.isEmpty()) {
+                boolean match = false;
+                for (int oi = 0; oi < opts.size(); oi++) {
+                  if (safe(opts.get(oi)).equals(val)) { match = true; break; }
+                }
+                if (!match) val = "";
+              }
+            }
             if (a.required && val.isBlank()) {
               throw new IllegalArgumentException("Required task attribute missing: " + safe(a.label));
             }
@@ -379,7 +427,17 @@
           if (a == null) continue;
           String key = safe(a.key).trim();
           if (key.isBlank()) continue;
-          String val = safe(request.getParameter("field_" + key)).trim();
+          String val = normalizeAttrValueByType(safe(a.dataType), request.getParameter("field_" + key));
+          if ("select".equals(safe(a.dataType))) {
+            List<String> opts = attrStore.optionList(safe(a.options));
+            if (!opts.isEmpty()) {
+              boolean match = false;
+              for (int oi = 0; oi < opts.size(); oi++) {
+                if (safe(opts.get(oi)).equals(val)) { match = true; break; }
+              }
+              if (!match) val = "";
+            }
+          }
           if (a.required && val.isBlank()) {
             throw new IllegalArgumentException("Required task attribute missing: " + safe(a.label));
           }
@@ -1039,6 +1097,22 @@
                   <input type="number" name="new_field_<%= esc(k) %>" />
                 <% } else if ("date".equals(safe(a.dataType))) { %>
                   <input type="date" name="new_field_<%= esc(k) %>" />
+                <% } else if ("datetime".equals(safe(a.dataType))) { %>
+                  <input type="datetime-local" name="new_field_<%= esc(k) %>" />
+                <% } else if ("time".equals(safe(a.dataType))) { %>
+                  <input type="time" name="new_field_<%= esc(k) %>" />
+                <% } else if ("boolean".equals(safe(a.dataType))) { %>
+                  <select name="new_field_<%= esc(k) %>">
+                    <option value=""></option>
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </select>
+                <% } else if ("email".equals(safe(a.dataType))) { %>
+                  <input type="email" name="new_field_<%= esc(k) %>" />
+                <% } else if ("phone".equals(safe(a.dataType))) { %>
+                  <input type="tel" name="new_field_<%= esc(k) %>" />
+                <% } else if ("url".equals(safe(a.dataType))) { %>
+                  <input type="url" name="new_field_<%= esc(k) %>" />
                 <% } else { %>
                   <input type="text" name="new_field_<%= esc(k) %>" />
                 <% } %>
@@ -1054,7 +1128,6 @@
     <% if (selectedTask != null) { %>
       <section class="card">
         <h2 style="margin-top:0;">Edit Selected Task</h2>
-        <div class="meta">Task UUID: <code><%= esc(safe(selectedTask.uuid)) %></code></div>
 
         <form method="post" class="form" action="<%= ctx %>/tasks.jsp">
           <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
@@ -1267,6 +1340,22 @@
                     <input type="number" name="field_<%= esc(k) %>" value="<%= esc(fv) %>" />
                   <% } else if ("date".equals(safe(a.dataType))) { %>
                     <input type="date" name="field_<%= esc(k) %>" value="<%= esc(fv) %>" />
+                  <% } else if ("datetime".equals(safe(a.dataType))) { %>
+                    <input type="datetime-local" name="field_<%= esc(k) %>" value="<%= esc(fv) %>" />
+                  <% } else if ("time".equals(safe(a.dataType))) { %>
+                    <input type="time" name="field_<%= esc(k) %>" value="<%= esc(fv) %>" />
+                  <% } else if ("boolean".equals(safe(a.dataType))) { %>
+                    <select name="field_<%= esc(k) %>">
+                      <option value=""></option>
+                      <option value="true" <%= "true".equals(normalizeAttrValueByType("boolean", fv)) ? "selected" : "" %>>Yes</option>
+                      <option value="false" <%= "false".equals(normalizeAttrValueByType("boolean", fv)) ? "selected" : "" %>>No</option>
+                    </select>
+                  <% } else if ("email".equals(safe(a.dataType))) { %>
+                    <input type="email" name="field_<%= esc(k) %>" value="<%= esc(fv) %>" />
+                  <% } else if ("phone".equals(safe(a.dataType))) { %>
+                    <input type="tel" name="field_<%= esc(k) %>" value="<%= esc(fv) %>" />
+                  <% } else if ("url".equals(safe(a.dataType))) { %>
+                    <input type="url" name="field_<%= esc(k) %>" value="<%= esc(fv) %>" />
                   <% } else { %>
                     <input type="text" name="field_<%= esc(k) %>" value="<%= esc(fv) %>" />
                   <% } %>
@@ -1360,8 +1449,8 @@
                 <tr>
                   <td><%= esc(safe(a.changedAt)) %></td>
                   <td><%= esc(safe(a.mode)) %></td>
-                  <td><%= esc(safe(a.fromUserUuid)) %></td>
-                  <td><%= esc(safe(a.toUserUuid)) %></td>
+                  <td><%= esc(userCsvLabel(safe(a.fromUserUuid), userEmailByUuid)) %></td>
+                  <td><%= esc(userCsvLabel(safe(a.toUserUuid), userEmailByUuid)) %></td>
                   <td><%= esc(safe(a.changedBy)) %></td>
                   <td><%= esc(safe(a.reason)) %></td>
                 </tr>
