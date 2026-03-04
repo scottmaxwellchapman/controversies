@@ -604,10 +604,7 @@
                  Login / Logout UI
                  ========================= -->
             <% if (tenantLoggedIn) { %>
-                <div class="user-chip" title="Tenant">
-                    <span class="user-chip-label">Tenant</span>
-                    <span class="user-chip-name"><%= esc(tenantLabel) %></span>
-                </div>
+                
             <% } %>
 
             <% if (userLoggedIn) { %>
@@ -616,10 +613,7 @@
                     <span class="user-chip-name"><%= esc(userEmail) %></span>
                 </div>
                 <% if (roleLabel != null && !roleLabel.isBlank()) { %>
-                    <div class="user-chip" title="Role">
-                        <span class="user-chip-label">Role</span>
-                        <span class="user-chip-name"><%= esc(roleLabel) %></span>
-                    </div>
+                    
                 <% } %>
                 <a class="btn btn-ghost btn-sm" href="<%= logoutHref %>">Logout</a>
 

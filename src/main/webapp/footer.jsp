@@ -24,7 +24,7 @@
 <footer class="site-footer">
     <div class="container footer-row">
         <div class="footer-left">
-            <span class="muted">© <%= Year.now() %> Controversies</span>
+            <span class="muted"></span>
             <span class="dot">•</span>
             <span id="footerServerClock" class="muted">Server time loading...</span>
         </div>
@@ -70,7 +70,7 @@
   function tickClock() {
     if (!clockEl) return;
     const ms = baseEpochMs + (Date.now() - startedClientMs);
-    clockEl.textContent = "Server Time (" + serverZone + "): " + formatServerDateTime(ms);
+    clockEl.textContent =   formatServerDateTime(ms)+" (" + serverZone + ")";
   }
 
   tickClock();
