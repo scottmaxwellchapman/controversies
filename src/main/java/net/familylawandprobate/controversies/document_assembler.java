@@ -3,6 +3,7 @@ package net.familylawandprobate.controversies;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.StringReader;
+import java.awt.image.BufferedImage;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -12,12 +13,16 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -28,10 +33,25 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.swing.text.Document;
 import javax.swing.text.rtf.RTFEditorKit;
+import javax.imageio.ImageIO;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
+import org.apache.pdfbox.pdmodel.interactive.form.PDCheckBox;
+import org.apache.pdfbox.pdmodel.interactive.form.PDChoice;
+import org.apache.pdfbox.pdmodel.interactive.form.PDComboBox;
 import org.apache.pdfbox.pdmodel.interactive.form.PDField;
+import org.apache.pdfbox.pdmodel.interactive.form.PDListBox;
+import org.apache.pdfbox.pdmodel.interactive.form.PDNonTerminalField;
+import org.apache.pdfbox.pdmodel.interactive.form.PDPushButton;
+import org.apache.pdfbox.pdmodel.interactive.form.PDRadioButton;
+import org.apache.pdfbox.pdmodel.interactive.form.PDSignatureField;
+import org.apache.pdfbox.pdmodel.interactive.form.PDTextField;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.hwpf.usermodel.Range;
@@ -70,6 +90,7 @@ import org.xml.sax.InputSource;
  *   nested bracket placeholders such as [a[b]c] and [a/b/c[d]e]
  */
 public final class document_assembler {
+    private static final Logger LOG = Logger.getLogger(document_assembler.class.getName());
     private static final int MAX_TOKEN_BODY_LEN = 600;
     private static final Pattern FORMAT_DATE_PATTERN = Pattern.compile("\\{\\{\\s*format\\.date\\s+([^\\s}]+)\\s+\"([^\"]+)\"\\s*}}", Pattern.CASE_INSENSITIVE);
 
@@ -134,6 +155,49 @@ public final class document_assembler {
             this.fieldName = safe(fieldName).trim();
             this.tokenLiteral = safe(tokenLiteral).trim();
             this.replacement = replacement;
+        }
+    }
+
+    public static final class PdfFieldOption {
+        public final String value;
+        public final String label;
+
+        public PdfFieldOption(String value, String label) {
+            this.value = safe(value);
+            this.label = safe(label);
+        }
+    }
+
+    public static final class PdfFieldDescriptor {
+        public final String fieldName;
+        public final String tokenLiteral;
+        public final String fieldType;
+        public final boolean multiSelect;
+        public final ArrayList<PdfFieldOption> options;
+        public final String defaultValue;
+
+        public PdfFieldDescriptor(String fieldName,
+                                  String tokenLiteral,
+                                  String fieldType,
+                                  boolean multiSelect,
+                                  ArrayList<PdfFieldOption> options,
+                                  String defaultValue) {
+            this.fieldName = safe(fieldName).trim();
+            this.tokenLiteral = safe(tokenLiteral).trim();
+            this.fieldType = safe(fieldType).trim().toLowerCase(Locale.ROOT);
+            this.multiSelect = multiSelect;
+            this.options = options == null ? new ArrayList<PdfFieldOption>() : options;
+            this.defaultValue = safe(defaultValue);
+        }
+    }
+
+    private static final class PdfFillResult {
+        final boolean applied;
+        final String warning;
+
+        PdfFillResult(boolean applied, String warning) {
+            this.applied = applied;
+            this.warning = safe(warning).trim();
         }
     }
 
@@ -473,12 +537,29 @@ public final class document_assembler {
      */
     public LinkedHashMap<String, String> workspacePdfFieldDefaults(byte[] templateBytes, Map<String, String> values) {
         LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
-        ArrayList<PdfFieldBinding> bindings = collectPdfFieldBindings(templateBytes, values);
-        for (PdfFieldBinding binding : bindings) {
-            if (binding == null) continue;
-            String literal = safe(binding.tokenLiteral).trim();
+        LinkedHashMap<String, PdfFieldDescriptor> descriptors = workspacePdfFieldDescriptors(templateBytes, values);
+        for (Map.Entry<String, PdfFieldDescriptor> entry : descriptors.entrySet()) {
+            if (entry == null) continue;
+            String literal = safe(entry.getKey()).trim();
             if (literal.isBlank()) continue;
-            out.putIfAbsent(literal, safe(binding.replacement));
+            PdfFieldDescriptor descriptor = entry.getValue();
+            out.putIfAbsent(literal, descriptor == null ? "" : safe(descriptor.defaultValue));
+        }
+        return out;
+    }
+
+    /**
+     * Returns PDF field metadata for typed UI prompting in forms.jsp.
+     * Keys are token literals and values include control type/options/defaults.
+     */
+    public LinkedHashMap<String, PdfFieldDescriptor> workspacePdfFieldDescriptors(byte[] templateBytes, Map<String, String> values) {
+        LinkedHashMap<String, PdfFieldDescriptor> out = new LinkedHashMap<String, PdfFieldDescriptor>();
+        ArrayList<PdfFieldDescriptor> descriptors = collectPdfFieldDescriptors(templateBytes, values);
+        for (PdfFieldDescriptor descriptor : descriptors) {
+            if (descriptor == null) continue;
+            String literal = safe(descriptor.tokenLiteral).trim();
+            if (literal.isBlank()) continue;
+            out.putIfAbsent(literal, descriptor);
         }
         return out;
     }
@@ -911,17 +992,179 @@ public final class document_assembler {
                 if (literal.isBlank()) continue;
 
                 String replacement = resolvePdfFieldValue(values, fieldName);
-                if (replacement == null) {
-                    try {
-                        String current = safe(field.getValueAsString());
-                        if (!current.isBlank()) replacement = current;
-                    } catch (Exception ignored) {}
-                }
+                if (replacement == null) replacement = resolveExistingPdfFieldValue(field);
 
                 out.add(new PdfFieldBinding(fieldName, literal, replacement));
             }
         } catch (Exception ignored) {}
         return out;
+    }
+
+    private static ArrayList<PdfFieldDescriptor> collectPdfFieldDescriptors(byte[] templateBytes, Map<String, String> values) {
+        ArrayList<PdfFieldDescriptor> out = new ArrayList<PdfFieldDescriptor>();
+        if (templateBytes == null || templateBytes.length == 0) return out;
+
+        try (PDDocument doc = PDDocument.load(templateBytes)) {
+            if (doc.getDocumentCatalog() == null) return out;
+            PDAcroForm form = doc.getDocumentCatalog().getAcroForm();
+            if (form == null) return out;
+
+            for (PDField field : form.getFieldTree()) {
+                if (field == null) continue;
+                String fieldName = safe(field.getFullyQualifiedName()).trim();
+                if (fieldName.isBlank()) continue;
+                String literal = pdfFieldTokenLiteral(fieldName);
+                if (literal.isBlank()) continue;
+
+                String replacement = resolvePdfFieldValue(values, fieldName);
+                if (replacement == null) replacement = resolveExistingPdfFieldValue(field);
+
+                out.add(new PdfFieldDescriptor(
+                        fieldName,
+                        literal,
+                        detectPdfFieldType(field),
+                        isPdfMultiSelectField(field),
+                        collectPdfFieldOptions(field),
+                        safe(replacement)
+                ));
+            }
+        } catch (Exception ignored) {}
+        return out;
+    }
+
+    private static String detectPdfFieldType(PDField field) {
+        if (field instanceof PDCheckBox) return "checkbox";
+        if (field instanceof PDRadioButton) return "radio";
+        if (field instanceof PDComboBox) return "select";
+        if (field instanceof PDListBox) return "list";
+        if (field instanceof PDTextField) return "text";
+        if (field instanceof PDSignatureField) return "signature";
+        if (field instanceof PDPushButton) return "button";
+        if (field instanceof PDNonTerminalField) return "group";
+        return "text";
+    }
+
+    private static boolean isPdfMultiSelectField(PDField field) {
+        if (!(field instanceof PDChoice)) return false;
+        try {
+            return ((PDChoice) field).isMultiSelect();
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static ArrayList<PdfFieldOption> collectPdfFieldOptions(PDField field) {
+        ArrayList<PdfFieldOption> out = new ArrayList<PdfFieldOption>();
+        if (field == null) return out;
+
+        if (field instanceof PDCheckBox) {
+            out.add(new PdfFieldOption("true", "Checked"));
+            out.add(new PdfFieldOption("false", "Unchecked"));
+            return out;
+        }
+        if (field instanceof PDRadioButton) {
+            PDRadioButton radio = (PDRadioButton) field;
+            ArrayList<String> exports = toArrayList(radio.getExportValues());
+            ArrayList<String> onValues = toArrayList(radio.getOnValues());
+            if (!exports.isEmpty()) {
+                for (int i = 0; i < exports.size(); i++) {
+                    String exportVal = safe(exports.get(i)).trim();
+                    if (exportVal.isBlank()) continue;
+                    String label = exportVal;
+                    if (i < onValues.size()) {
+                        String onVal = safe(onValues.get(i)).trim();
+                        if (!onVal.isBlank()) label = onVal;
+                    }
+                    putPdfOption(out, exportVal, label);
+                }
+            }
+            for (String onValRaw : onValues) {
+                String onVal = safe(onValRaw).trim();
+                if (onVal.isBlank() || "Off".equalsIgnoreCase(onVal)) continue;
+                putPdfOption(out, onVal, onVal);
+            }
+            return out;
+        }
+        if (field instanceof PDChoice) {
+            PDChoice choice = (PDChoice) field;
+            ArrayList<String> exports = toArrayList(choice.getOptionsExportValues());
+            ArrayList<String> displays = toArrayList(choice.getOptionsDisplayValues());
+            if (!exports.isEmpty()) {
+                for (int i = 0; i < exports.size(); i++) {
+                    String exportVal = safe(exports.get(i)).trim();
+                    if (exportVal.isBlank()) continue;
+                    String label = exportVal;
+                    if (i < displays.size()) {
+                        String displayVal = safe(displays.get(i)).trim();
+                        if (!displayVal.isBlank()) label = displayVal;
+                    }
+                    putPdfOption(out, exportVal, label);
+                }
+            }
+            if (out.isEmpty() && !displays.isEmpty()) {
+                for (String displayValRaw : displays) {
+                    String displayVal = safe(displayValRaw).trim();
+                    if (displayVal.isBlank()) continue;
+                    putPdfOption(out, displayVal, displayVal);
+                }
+            }
+            if (out.isEmpty()) {
+                ArrayList<String> options = toArrayList(choice.getOptions());
+                for (String optionRaw : options) {
+                    String option = safe(optionRaw).trim();
+                    if (option.isBlank()) continue;
+                    putPdfOption(out, option, option);
+                }
+            }
+        }
+        return out;
+    }
+
+    private static void putPdfOption(ArrayList<PdfFieldOption> out, String value, String label) {
+        if (out == null) return;
+        String v = safe(value).trim();
+        if (v.isBlank()) return;
+        String l = safe(label).trim();
+        if (l.isBlank()) l = v;
+
+        for (PdfFieldOption existing : out) {
+            if (existing == null) continue;
+            if (v.equalsIgnoreCase(safe(existing.value).trim())) return;
+        }
+        out.add(new PdfFieldOption(v, l));
+    }
+
+    private static ArrayList<String> toArrayList(List<String> values) {
+        ArrayList<String> out = new ArrayList<String>();
+        if (values == null) return out;
+        for (String value : values) {
+            String v = safe(value);
+            out.add(v);
+        }
+        return out;
+    }
+
+    private static ArrayList<String> toArrayList(Iterable<String> values) {
+        ArrayList<String> out = new ArrayList<String>();
+        if (values == null) return out;
+        for (String value : values) {
+            out.add(safe(value));
+        }
+        return out;
+    }
+
+    private static String resolveExistingPdfFieldValue(PDField field) {
+        if (field == null) return "";
+        try {
+            if (field instanceof PDChoice) {
+                PDChoice choice = (PDChoice) field;
+                ArrayList<String> selected = toArrayList(choice.getValue());
+                if (!selected.isEmpty()) return String.join("\n", selected);
+            }
+            String current = safe(field.getValueAsString());
+            if (!current.isBlank()) return current;
+        } catch (Exception ignored) {}
+        return "";
     }
 
     static String pdfFieldTokenLiteral(String fieldName) {
@@ -980,6 +1223,11 @@ public final class document_assembler {
                 PDAcroForm form = doc.getDocumentCatalog().getAcroForm();
                 if (form != null) {
                     boolean changed = false;
+                    int attempted = 0;
+                    int applied = 0;
+                    int skipped = 0;
+                    int warningOverflow = 0;
+                    ArrayList<String> warnings = new ArrayList<String>();
                     for (PDField field : form.getFieldTree()) {
                         if (field == null) continue;
                         String fieldName = safe(field.getFullyQualifiedName()).trim();
@@ -987,13 +1235,34 @@ public final class document_assembler {
 
                         String value = resolvePdfFieldValue(values, fieldName);
                         if (value == null) continue;
+                        attempted++;
 
-                        try {
-                            field.setValue(value);
+                        PdfFillResult result = applyPdfFieldValue(doc, field, value);
+                        if (result.applied) {
                             changed = true;
-                        } catch (Exception ignored) {
-                            // Ignore unsupported field/value combinations and continue.
+                            applied++;
+                        } else {
+                            skipped++;
+                            if (!result.warning.isBlank()) {
+                                String warning = "PDF field fill skipped for "
+                                        + safe(fieldName)
+                                        + " [type=" + detectPdfFieldType(field) + "]: "
+                                        + result.warning;
+                                if (warnings.size() < 20) warnings.add(warning);
+                                else warningOverflow++;
+                            }
                         }
+                    }
+
+                    for (String warning : warnings) {
+                        LOG.log(Level.WARNING, warning);
+                    }
+                    if (warningOverflow > 0) {
+                        LOG.log(Level.WARNING, "Additional PDF field fill warnings suppressed: {0}", warningOverflow);
+                    }
+                    if (attempted > 0) {
+                        LOG.log(Level.INFO, "PDF assembly applied values to {0}/{1} fields; skipped {2}",
+                                new Object[] { applied, attempted, skipped });
                     }
 
                     if (changed) {
@@ -1006,6 +1275,395 @@ public final class document_assembler {
             }
             doc.save(out);
             return out.toByteArray();
+        }
+    }
+
+    private static PdfFillResult applyPdfFieldValue(PDDocument doc, PDField field, String rawValue) {
+        if (field == null) return new PdfFillResult(false, "Field is missing.");
+        String value = safe(rawValue);
+        String trimmed = value.trim();
+
+        try {
+            if (field instanceof PDNonTerminalField) {
+                return new PdfFillResult(false, "Group/non-terminal fields are not directly writable.");
+            }
+            if (field instanceof PDSignatureField) {
+                return applyPdfSignatureValue(doc, (PDSignatureField) field, value);
+            }
+            if (field instanceof PDPushButton) {
+                return new PdfFillResult(false, "Push button fields are action-only and do not accept values.");
+            }
+            if (field instanceof PDCheckBox) {
+                return applyPdfCheckBoxValue((PDCheckBox) field, trimmed);
+            }
+            if (field instanceof PDRadioButton) {
+                return applyPdfRadioValue((PDRadioButton) field, trimmed);
+            }
+            if (field instanceof PDListBox) {
+                return applyPdfListBoxValue((PDListBox) field, value);
+            }
+            if (field instanceof PDComboBox) {
+                return applyPdfComboBoxValue((PDComboBox) field, value);
+            }
+            if (field instanceof PDChoice) {
+                return applyPdfChoiceValue((PDChoice) field, value);
+            }
+            field.setValue(value);
+            return new PdfFillResult(true, "");
+        } catch (Exception ex) {
+            return new PdfFillResult(false, safe(ex.getMessage()));
+        }
+    }
+
+    private static PdfFillResult applyPdfSignatureValue(PDDocument doc, PDSignatureField field, String rawValue) {
+        if (doc == null || field == null) return new PdfFillResult(false, "Signature field context is unavailable.");
+        String value = safe(rawValue).trim();
+        if (value.isBlank()) return new PdfFillResult(false, "No signature value was provided.");
+
+        byte[] imageBytes = decodePdfSignatureImage(value);
+        if (imageBytes == null || imageBytes.length == 0) {
+            return new PdfFillResult(false, "Signature value is not a PNG data URL/base64 image.");
+        }
+
+        try {
+            BufferedImage image = ImageIO.read(new ByteArrayInputStream(imageBytes));
+            if (image == null) return new PdfFillResult(false, "Decoded signature image is not readable.");
+            PDImageXObject signatureImage = LosslessFactory.createFromImage(doc, image);
+            int drawn = drawSignatureImageToWidgets(doc, field, signatureImage);
+            if (drawn <= 0) return new PdfFillResult(false, "Signature field does not expose drawable widget bounds.");
+            return new PdfFillResult(true, "");
+        } catch (Exception ex) {
+            return new PdfFillResult(false, safe(ex.getMessage()));
+        }
+    }
+
+    private static byte[] decodePdfSignatureImage(String rawValue) {
+        String raw = safe(rawValue).trim();
+        if (raw.isBlank()) return new byte[0];
+
+        String payload = raw;
+        if (raw.startsWith("data:")) {
+            int comma = raw.indexOf(',');
+            if (comma < 0) return new byte[0];
+            String header = safe(raw.substring(0, comma)).toLowerCase(Locale.ROOT);
+            if (!header.contains(";base64")) return new byte[0];
+            if (!header.contains("image/png") && !header.contains("image/")) return new byte[0];
+            payload = safe(raw.substring(comma + 1)).trim();
+        }
+
+        try {
+            return Base64.getDecoder().decode(payload);
+        } catch (Exception ignored) {
+            return new byte[0];
+        }
+    }
+
+    private static int drawSignatureImageToWidgets(PDDocument doc, PDSignatureField field, PDImageXObject image) throws Exception {
+        if (doc == null || field == null || image == null) return 0;
+        int drawn = 0;
+        List<PDAnnotationWidget> widgets = field.getWidgets();
+        if (widgets == null || widgets.isEmpty()) return 0;
+
+        for (PDAnnotationWidget widget : widgets) {
+            if (widget == null || widget.getRectangle() == null) continue;
+            float width = widget.getRectangle().getWidth();
+            float height = widget.getRectangle().getHeight();
+            if (width <= 0f || height <= 0f) continue;
+
+            PDPage page = widget.getPage();
+            if (page == null) page = findWidgetPage(doc, widget);
+            if (page == null) continue;
+
+            float x = widget.getRectangle().getLowerLeftX();
+            float y = widget.getRectangle().getLowerLeftY();
+
+            try (PDPageContentStream cs = new PDPageContentStream(
+                    doc,
+                    page,
+                    PDPageContentStream.AppendMode.APPEND,
+                    true,
+                    true)) {
+                cs.drawImage(image, x, y, width, height);
+            }
+            drawn++;
+        }
+        return drawn;
+    }
+
+    private static PDPage findWidgetPage(PDDocument doc, PDAnnotationWidget widget) {
+        if (doc == null || widget == null) return null;
+        for (PDPage page : doc.getPages()) {
+            if (page == null) continue;
+            try {
+                List<?> ann = page.getAnnotations();
+                if (ann == null) continue;
+                for (Object obj : ann) {
+                    if (obj == widget) return page;
+                }
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    private static PdfFillResult applyPdfCheckBoxValue(PDCheckBox field, String value) {
+        try {
+            String v = safe(value).trim();
+            if (v.isBlank() || isPdfFalseLike(v)) {
+                field.unCheck();
+                return new PdfFillResult(true, "");
+            }
+
+            if (isPdfTrueLike(v)) {
+                field.check();
+                return new PdfFillResult(true, "");
+            }
+
+            String onValue = safe(field.getOnValue()).trim();
+            if (!onValue.isBlank() && valuesEqualIgnoreCase(v, onValue)) {
+                field.check();
+                return new PdfFillResult(true, "");
+            }
+
+            ArrayList<String> onValues = toArrayList(field.getOnValues());
+            for (String on : onValues) {
+                String candidate = safe(on).trim();
+                if (candidate.isBlank() || "off".equalsIgnoreCase(candidate)) continue;
+                if (!valuesEqualIgnoreCase(v, candidate)) continue;
+                field.setValue(candidate);
+                return new PdfFillResult(true, "");
+            }
+
+            field.setValue(v);
+            return new PdfFillResult(true, "");
+        } catch (Exception ex) {
+            return new PdfFillResult(false, safe(ex.getMessage()));
+        }
+    }
+
+    private static PdfFillResult applyPdfRadioValue(PDRadioButton field, String value) {
+        try {
+            String v = safe(value).trim();
+            if (v.isBlank() || isPdfFalseLike(v)) {
+                field.setValue("Off");
+                return new PdfFillResult(true, "");
+            }
+
+            ArrayList<String> exportValues = toArrayList(field.getExportValues());
+            ArrayList<String> onValues = toArrayList(field.getOnValues());
+
+            int matchedExport = findMatchingValueIndex(exportValues, v);
+            if (matchedExport >= 0) {
+                try {
+                    field.setValue(matchedExport);
+                    return new PdfFillResult(true, "");
+                } catch (Exception ignored) {
+                    if (matchedExport < onValues.size()) {
+                        String on = safe(onValues.get(matchedExport)).trim();
+                        if (!on.isBlank()) {
+                            field.setValue(on);
+                            return new PdfFillResult(true, "");
+                        }
+                    }
+                    field.setValue(safe(exportValues.get(matchedExport)).trim());
+                    return new PdfFillResult(true, "");
+                }
+            }
+
+            int matchedOn = findMatchingValueIndex(onValues, v);
+            if (matchedOn >= 0) {
+                String on = safe(onValues.get(matchedOn)).trim();
+                if (!on.isBlank()) {
+                    field.setValue(on);
+                    return new PdfFillResult(true, "");
+                }
+            }
+
+            Integer index = parseInteger(v);
+            if (index != null) {
+                int idx = index.intValue();
+                if (idx >= 1 && idx <= exportValues.size()) idx = idx - 1;
+                if (idx >= 0 && idx < exportValues.size()) {
+                    field.setValue(idx);
+                    return new PdfFillResult(true, "");
+                }
+            }
+
+            if (isPdfTrueLike(v) && !exportValues.isEmpty()) {
+                field.setValue(0);
+                return new PdfFillResult(true, "");
+            }
+
+            field.setValue(v);
+            return new PdfFillResult(true, "");
+        } catch (Exception ex) {
+            return new PdfFillResult(false, safe(ex.getMessage()));
+        }
+    }
+
+    private static PdfFillResult applyPdfComboBoxValue(PDComboBox field, String value) {
+        return applyPdfChoiceValue(field, value);
+    }
+
+    private static PdfFillResult applyPdfListBoxValue(PDListBox field, String value) {
+        try {
+            String raw = safe(value);
+            if (raw.trim().isBlank()) {
+                try {
+                    field.setValue("");
+                } catch (Exception ignored) {
+                    field.setSelectedOptionsIndex(new ArrayList<Integer>());
+                }
+                return new PdfFillResult(true, "");
+            }
+
+            if (field.isMultiSelect()) {
+                ArrayList<String> pieces = splitPdfMultiValues(raw);
+                ArrayList<String> resolved = resolvePdfChoiceValues(field, pieces);
+                if (resolved.isEmpty() && !pieces.isEmpty()) resolved.add(pieces.get(0));
+                field.setValue(resolved);
+                return new PdfFillResult(true, "");
+            }
+            return applyPdfChoiceValue(field, raw);
+        } catch (Exception ex) {
+            return new PdfFillResult(false, safe(ex.getMessage()));
+        }
+    }
+
+    private static PdfFillResult applyPdfChoiceValue(PDChoice field, String value) {
+        try {
+            String raw = safe(value);
+            String trimmed = raw.trim();
+            if (trimmed.isBlank()) {
+                field.setValue("");
+                return new PdfFillResult(true, "");
+            }
+
+            if (field.isMultiSelect()) {
+                ArrayList<String> pieces = splitPdfMultiValues(raw);
+                ArrayList<String> resolved = resolvePdfChoiceValues(field, pieces);
+                if (resolved.isEmpty() && !pieces.isEmpty()) resolved.add(pieces.get(0));
+                field.setValue(resolved);
+                return new PdfFillResult(true, "");
+            }
+
+            String resolvedSingle = resolvePdfChoiceSingleValue(field, trimmed);
+            field.setValue(resolvedSingle);
+            return new PdfFillResult(true, "");
+        } catch (Exception ex) {
+            return new PdfFillResult(false, safe(ex.getMessage()));
+        }
+    }
+
+    private static String resolvePdfChoiceSingleValue(PDChoice field, String value) {
+        String wanted = safe(value).trim();
+        if (wanted.isBlank()) return "";
+        ArrayList<PdfFieldOption> options = collectPdfFieldOptions(field);
+        for (PdfFieldOption option : options) {
+            if (option == null) continue;
+            String ov = safe(option.value).trim();
+            String ol = safe(option.label).trim();
+            if (valuesEqualIgnoreCase(wanted, ov) || valuesEqualIgnoreCase(wanted, ol)) return ov;
+            if (normalizeLooseKey(wanted).equals(normalizeLooseKey(ov)) && !ov.isBlank()) return ov;
+            if (normalizeLooseKey(wanted).equals(normalizeLooseKey(ol)) && !ov.isBlank()) return ov;
+        }
+        return wanted;
+    }
+
+    private static ArrayList<String> resolvePdfChoiceValues(PDChoice field, ArrayList<String> rawValues) {
+        ArrayList<String> out = new ArrayList<String>();
+        if (rawValues == null || rawValues.isEmpty()) return out;
+
+        for (String raw : rawValues) {
+            String resolved = resolvePdfChoiceSingleValue(field, raw);
+            String candidate = safe(resolved).trim();
+            if (candidate.isBlank()) continue;
+            if (!containsIgnoreCase(out, candidate)) out.add(candidate);
+        }
+        return out;
+    }
+
+    private static ArrayList<String> splitPdfMultiValues(String raw) {
+        ArrayList<String> out = new ArrayList<String>();
+        String src = safe(raw);
+        if (src.trim().isBlank()) return out;
+
+        String[] firstPass = src.split("\\r?\\n");
+        for (String row : firstPass) {
+            String r = safe(row).trim();
+            if (r.isBlank()) continue;
+
+            String[] parts;
+            if (r.indexOf('|') >= 0) parts = r.split("\\|");
+            else if (r.indexOf(';') >= 0) parts = r.split(";");
+            else if (r.indexOf(',') >= 0) parts = r.split(",");
+            else parts = new String[] { r };
+
+            for (String part : parts) {
+                String p = safe(part).trim();
+                if (p.isBlank()) continue;
+                out.add(p);
+            }
+        }
+        return out;
+    }
+
+    private static boolean containsIgnoreCase(ArrayList<String> values, String wanted) {
+        if (values == null) return false;
+        String w = safe(wanted).trim();
+        if (w.isBlank()) return false;
+        for (String value : values) {
+            if (valuesEqualIgnoreCase(value, w)) return true;
+        }
+        return false;
+    }
+
+    private static int findMatchingValueIndex(ArrayList<String> values, String wanted) {
+        if (values == null || values.isEmpty()) return -1;
+        String w = safe(wanted).trim();
+        if (w.isBlank()) return -1;
+
+        String normalizedWanted = normalizeLooseKey(w);
+        for (int i = 0; i < values.size(); i++) {
+            String candidate = safe(values.get(i)).trim();
+            if (candidate.isBlank()) continue;
+            if (valuesEqualIgnoreCase(candidate, w)) return i;
+            if (!normalizedWanted.isBlank() && normalizedWanted.equals(normalizeLooseKey(candidate))) return i;
+        }
+        return -1;
+    }
+
+    private static boolean valuesEqualIgnoreCase(String a, String b) {
+        return safe(a).trim().equalsIgnoreCase(safe(b).trim());
+    }
+
+    private static boolean isPdfTrueLike(String value) {
+        String v = safe(value).trim().toLowerCase(Locale.ROOT);
+        return "1".equals(v)
+                || "true".equals(v)
+                || "yes".equals(v)
+                || "y".equals(v)
+                || "on".equals(v)
+                || "checked".equals(v)
+                || "enabled".equals(v);
+    }
+
+    private static boolean isPdfFalseLike(String value) {
+        String v = safe(value).trim().toLowerCase(Locale.ROOT);
+        return v.isBlank()
+                || "0".equals(v)
+                || "false".equals(v)
+                || "no".equals(v)
+                || "n".equals(v)
+                || "off".equals(v)
+                || "unchecked".equals(v)
+                || "disabled".equals(v);
+    }
+
+    private static Integer parseInteger(String value) {
+        try {
+            return Integer.valueOf(Integer.parseInt(safe(value).trim()));
+        } catch (Exception ignored) {
+            return null;
         }
     }
 

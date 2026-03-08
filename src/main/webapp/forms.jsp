@@ -389,6 +389,10 @@
       templateIsPdf
           ? assembler.workspacePdfFieldDefaults(templateBytes, mergeValues)
           : assembler.workspaceTokenDefaults(sourcePreviewText, mergeValues);
+  LinkedHashMap<String, document_assembler.PdfFieldDescriptor> workspacePdfFieldMeta =
+      templateIsPdf
+          ? assembler.workspacePdfFieldDescriptors(templateBytes, mergeValues)
+          : new LinkedHashMap<String, document_assembler.PdfFieldDescriptor>();
 
   document_assembler.StyledPreview styledPreview = assembler.previewStyled(templateBytes, templateExt);
   ArrayList<document_assembler.StyledSegment> workspaceSegments =
@@ -944,6 +948,85 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  .replace-value-controls,
+  .typed-prompt-controls {
+    display: grid;
+    gap: 8px;
+  }
+
+  .replace-control-hidden {
+    display: none !important;
+  }
+
+  .replace-checkbox-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: var(--surface);
+    width: fit-content;
+  }
+
+  .replace-checkbox-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+  }
+
+  .replace-radio-grid {
+    display: grid;
+    gap: 8px;
+  }
+
+  .replace-radio-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    background: var(--surface);
+  }
+
+  .replace-radio-option input[type="radio"] {
+    margin: 0;
+  }
+
+  .replace-signature-wrap {
+    display: grid;
+    gap: 8px;
+  }
+
+  .replace-signature-wrap canvas {
+    width: 100%;
+    max-width: 520px;
+    height: 130px;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    background: #fff;
+    touch-action: none;
+  }
+
+  .replace-signature-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .typed-prompt-dialog {
+    width: min(620px, 100%);
+    max-height: min(84vh, 860px);
+  }
+
+  .typed-prompt-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin: 0;
+  }
+
   #contextPreviewViewport {
     flex: 1 1 auto;
     height: 100%;
@@ -1403,8 +1486,14 @@
                        if (tokenEntry == null) continue;
                        String token = safe(tokenEntry.getKey());
                        String defVal = safe(tokenEntry.getValue());
+                       document_assembler.PdfFieldDescriptor pdfMeta = workspacePdfFieldMeta.get(token);
+                       String pdfType = pdfMeta == null ? "" : safe(pdfMeta.fieldType);
+                       String typeHint = pdfType.isBlank() ? "" : " [" + pdfType + "]";
                 %>
-                  <option value="<%= esc(token) %>" data-default-value="<%= esc(defVal) %>"><%= esc(token) %></option>
+                  <option
+                    value="<%= esc(token) %>"
+                    data-default-value="<%= esc(defVal) %>"
+                    data-field-type="<%= esc(pdfType) %>"><%= esc(token + typeHint) %></option>
                 <%   }
                    } %>
               </select>
@@ -1412,7 +1501,23 @@
 
             <label>
               <span>Replacement Value</span>
-              <input type="text" id="replaceValue" value="" />
+              <div class="replace-value-controls" id="replaceValueControls">
+                <input type="text" id="replaceValue" value="" />
+                <label class="replace-checkbox-row replace-control-hidden" id="replaceValueCheckboxWrap">
+                  <input type="checkbox" id="replaceValueCheckbox" />
+                  <span>Checked</span>
+                </label>
+                <select id="replaceValueSelect" class="replace-control-hidden"></select>
+                <select id="replaceValueMulti" class="replace-control-hidden" multiple size="6"></select>
+                <div id="replaceValueRadioWrap" class="replace-radio-grid replace-control-hidden"></div>
+                <div id="replaceValueSignatureWrap" class="replace-signature-wrap replace-control-hidden">
+                  <canvas id="replaceValueSignatureCanvas" width="420" height="130" aria-label="Draw signature"></canvas>
+                  <div class="replace-signature-actions">
+                    <button type="button" class="btn btn-ghost" id="btnClearSignatureCanvas">Clear Signature</button>
+                  </div>
+                </div>
+              </div>
+              <div class="meta" id="replaceControlHint" style="margin-top:6px; display:none;"></div>
             </label>
           </div>
           <div class="forms-toolbar-actions">
@@ -1529,9 +1634,71 @@
 <textarea id="workspaceText" rows="2" style="position:absolute; left:-10000px; top:auto; width:1px; height:1px; opacity:0;"><%= esc(sourcePreviewText) %></textarea>
 </div>
 
+<div class="template-modal" id="typedPromptModal" hidden>
+  <div class="template-modal-backdrop" data-typed-prompt-close="1"></div>
+  <div class="template-modal-dialog typed-prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="typedPromptTitle">
+    <div class="template-modal-head">
+      <div>
+        <h3 id="typedPromptTitle" style="margin:0;">Missing Value Prompt</h3>
+        <div class="meta" id="typedPromptTokenMeta"></div>
+      </div>
+      <button type="button" class="btn btn-ghost" id="btnTypedPromptCancelTop">Cancel</button>
+    </div>
+    <div class="meta" id="typedPromptHelp">Provide a value using the control type inferred from the PDF field.</div>
+    <div class="typed-prompt-controls" id="typedPromptControls">
+      <input type="text" id="typedPromptText" value="" />
+      <label class="replace-checkbox-row replace-control-hidden" id="typedPromptCheckboxWrap">
+        <input type="checkbox" id="typedPromptCheckbox" />
+        <span>Checked</span>
+      </label>
+      <select id="typedPromptSelect" class="replace-control-hidden"></select>
+      <select id="typedPromptMulti" class="replace-control-hidden" multiple size="6"></select>
+      <div id="typedPromptRadioWrap" class="replace-radio-grid replace-control-hidden"></div>
+      <div id="typedPromptSignatureWrap" class="replace-signature-wrap replace-control-hidden">
+        <canvas id="typedPromptSignatureCanvas" width="420" height="130" aria-label="Draw signature"></canvas>
+        <div class="replace-signature-actions">
+          <button type="button" class="btn btn-ghost" id="btnTypedPromptClearSignature">Clear Signature</button>
+        </div>
+      </div>
+    </div>
+    <div class="actions typed-prompt-actions">
+      <button type="button" class="btn btn-ghost" id="btnTypedPromptSkip">Skip</button>
+      <button type="button" class="btn btn-ghost" id="btnTypedPromptCancel">Cancel</button>
+      <button type="button" class="btn" id="btnTypedPromptApply">Apply</button>
+    </div>
+  </div>
+</div>
+
 <script>
   var tokenSelect = document.getElementById("tokenSelect");
   var replaceValue = document.getElementById("replaceValue");
+  var replaceValueCheckboxWrap = document.getElementById("replaceValueCheckboxWrap");
+  var replaceValueCheckbox = document.getElementById("replaceValueCheckbox");
+  var replaceValueSelect = document.getElementById("replaceValueSelect");
+  var replaceValueMulti = document.getElementById("replaceValueMulti");
+  var replaceValueRadioWrap = document.getElementById("replaceValueRadioWrap");
+  var replaceValueSignatureWrap = document.getElementById("replaceValueSignatureWrap");
+  var replaceValueSignatureCanvas = document.getElementById("replaceValueSignatureCanvas");
+  var btnClearSignatureCanvas = document.getElementById("btnClearSignatureCanvas");
+  var replaceControlHint = document.getElementById("replaceControlHint");
+
+  var typedPromptModal = document.getElementById("typedPromptModal");
+  var typedPromptCloseTriggers = Array.prototype.slice.call(document.querySelectorAll("[data-typed-prompt-close]"));
+  var typedPromptTokenMeta = document.getElementById("typedPromptTokenMeta");
+  var typedPromptHelp = document.getElementById("typedPromptHelp");
+  var typedPromptText = document.getElementById("typedPromptText");
+  var typedPromptCheckboxWrap = document.getElementById("typedPromptCheckboxWrap");
+  var typedPromptCheckbox = document.getElementById("typedPromptCheckbox");
+  var typedPromptSelect = document.getElementById("typedPromptSelect");
+  var typedPromptMulti = document.getElementById("typedPromptMulti");
+  var typedPromptRadioWrap = document.getElementById("typedPromptRadioWrap");
+  var typedPromptSignatureWrap = document.getElementById("typedPromptSignatureWrap");
+  var typedPromptSignatureCanvas = document.getElementById("typedPromptSignatureCanvas");
+  var btnTypedPromptClearSignature = document.getElementById("btnTypedPromptClearSignature");
+  var btnTypedPromptApply = document.getElementById("btnTypedPromptApply");
+  var btnTypedPromptSkip = document.getElementById("btnTypedPromptSkip");
+  var btnTypedPromptCancel = document.getElementById("btnTypedPromptCancel");
+  var btnTypedPromptCancelTop = document.getElementById("btnTypedPromptCancelTop");
   var workspace = document.getElementById("workspaceText");
   var workspaceStyled = null;
   var tokenMatchMeta = document.getElementById("tokenMatchMeta");
@@ -1580,7 +1747,11 @@
   var imagePreviewAnchorHits = Object.create(null);
   var serverContextPreview = null;
   var tokenDefaultValues = Object.create(null);
+  var tokenFieldMeta = Object.create(null);
   var tokenOverrideValues = Object.create(null);
+  var activeReplacementControl = "text";
+  var typedPromptResolver = null;
+  var typedPromptState = null;
   var initialMissingKeys = [
     <% int mki = 0; for (String t : missingTokens) { if (mki > 0) { %>, <% } %>"<%= js(t) %>"<% mki++; } %>
   ];
@@ -1608,6 +1779,10 @@
   var btnPreviewMode = document.getElementById("btnPreviewMode");
   var previewMode = "context";
   var fullPreviewScrollTop = 0;
+  var replaceControlPack = null;
+  var typedPromptControlPack = null;
+  var replaceSignaturePad = null;
+  var typedPromptSignaturePad = null;
   try {
     var storedPreviewMode = String(localStorage.getItem("forms.preview.mode") || "");
     if (storedPreviewMode === "full" || storedPreviewMode === "context") previewMode = storedPreviewMode;
@@ -1644,6 +1819,34 @@
        String defVal = safe(tokenEntry.getValue());
   %>
   tokenDefaultValues["<%= js(token) %>"] = "<%= js(defVal) %>";
+  <% } %>
+
+  <% for (Map.Entry<String, document_assembler.PdfFieldDescriptor> metaEntry : workspacePdfFieldMeta.entrySet()) {
+       if (metaEntry == null) continue;
+       String metaToken = safe(metaEntry.getKey());
+       document_assembler.PdfFieldDescriptor meta = metaEntry.getValue();
+       if (meta == null) continue;
+  %>
+  tokenFieldMeta["<%= js(metaToken) %>"] = {
+    fieldType: "<%= js(safe(meta.fieldType)) %>",
+    multiSelect: <%= meta.multiSelect ? "true" : "false" %>,
+    options: [
+      <% ArrayList<document_assembler.PdfFieldOption> metaOptions = meta.options == null
+           ? new ArrayList<document_assembler.PdfFieldOption>()
+           : meta.options;
+         boolean firstMetaOpt = true;
+         for (int oi = 0; oi < metaOptions.size(); oi++) {
+           document_assembler.PdfFieldOption opt = metaOptions.get(oi);
+           if (opt == null) continue;
+           if (!firstMetaOpt) {
+      %>,<%
+           }
+      %>
+      { value: "<%= js(safe(opt.value)) %>", label: "<%= js(safe(opt.label)) %>" }
+      <%   firstMetaOpt = false;
+         } %>
+    ]
+  };
   <% } %>
 
   function cloneHitMap(src) {
@@ -2282,7 +2485,498 @@
     selectTokenByOrdinal(ord + 1, { skipRecord: !!skipRecord });
   }
 
+  function normalizePdfFieldType(fieldType) {
+    var t = String(fieldType || "").trim().toLowerCase();
+    if (t === "checkbox") return "checkbox";
+    if (t === "radio") return "radio";
+    if (t === "select" || t === "dropdown" || t === "combobox" || t === "combo") return "select";
+    if (t === "list" || t === "listbox") return "list";
+    if (t === "signature") return "signature";
+    return "text";
+  }
+
+  function normalizePdfFieldOptions(options) {
+    var src = Array.isArray(options) ? options : [];
+    var out = [];
+    var seen = Object.create(null);
+    for (var i = 0; i < src.length; i++) {
+      var opt = src[i] || {};
+      var value = String(opt.value == null ? "" : opt.value).trim();
+      if (!value) continue;
+      var key = value.toLowerCase();
+      if (hasOwn(seen, key)) continue;
+      seen[key] = true;
+      var label = String(opt.label == null ? "" : opt.label).trim();
+      if (!label) label = value;
+      out.push({ value: value, label: label });
+    }
+    return out;
+  }
+
+  function fieldMetaForToken(tokenLiteral) {
+    var literal = displayTokenLiteral(tokenLiteral);
+    if (!literal) return { fieldType: "text", multiSelect: false, options: [] };
+
+    if (hasOwn(tokenFieldMeta, literal)) {
+      var direct = tokenFieldMeta[literal] || {};
+      return {
+        fieldType: normalizePdfFieldType(direct.fieldType),
+        multiSelect: !!direct.multiSelect,
+        options: normalizePdfFieldOptions(direct.options)
+      };
+    }
+
+    var keys = Object.keys(tokenFieldMeta);
+    for (var i = 0; i < keys.length; i++) {
+      var k = String(keys[i] || "");
+      if (!k) continue;
+      if (!equivalentPromptTokens(k, literal)) continue;
+      var meta = tokenFieldMeta[k] || {};
+      return {
+        fieldType: normalizePdfFieldType(meta.fieldType),
+        multiSelect: !!meta.multiSelect,
+        options: normalizePdfFieldOptions(meta.options)
+      };
+    }
+    return { fieldType: "text", multiSelect: false, options: [] };
+  }
+
+  function parseMultiValue(value) {
+    var raw = String(value == null ? "" : value);
+    if (!raw.trim()) return [];
+    var rows = raw.split(/\r?\n/);
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = String(rows[i] || "").trim();
+      if (!row) continue;
+      var parts;
+      if (row.indexOf("|") >= 0) parts = row.split("|");
+      else if (row.indexOf(";") >= 0) parts = row.split(";");
+      else if (row.indexOf(",") >= 0) parts = row.split(",");
+      else parts = [row];
+      for (var j = 0; j < parts.length; j++) {
+        var piece = String(parts[j] || "").trim();
+        if (!piece) continue;
+        out.push(piece);
+      }
+    }
+    return out;
+  }
+
+  function buildControlPack(prefix) {
+    if (prefix === "typedPrompt") {
+      return {
+        text: typedPromptText,
+        checkboxWrap: typedPromptCheckboxWrap,
+        checkbox: typedPromptCheckbox,
+        select: typedPromptSelect,
+        multi: typedPromptMulti,
+        radioWrap: typedPromptRadioWrap,
+        signatureWrap: typedPromptSignatureWrap,
+        signatureCanvas: typedPromptSignatureCanvas,
+        hint: typedPromptHelp
+      };
+    }
+    return {
+      text: replaceValue,
+      checkboxWrap: replaceValueCheckboxWrap,
+      checkbox: replaceValueCheckbox,
+      select: replaceValueSelect,
+      multi: replaceValueMulti,
+      radioWrap: replaceValueRadioWrap,
+      signatureWrap: replaceValueSignatureWrap,
+      signatureCanvas: replaceValueSignatureCanvas,
+      hint: replaceControlHint
+    };
+  }
+
+  function clearSelectControl(selectEl) {
+    if (!selectEl) return;
+    while (selectEl.options && selectEl.options.length > 0) selectEl.remove(0);
+  }
+
+  function clearRadioControl(radioWrap) {
+    if (!radioWrap) return;
+    radioWrap.innerHTML = "";
+  }
+
+  function setControlHidden(el, hidden) {
+    if (!el) return;
+    if (hidden) el.classList.add("replace-control-hidden");
+    else el.classList.remove("replace-control-hidden");
+  }
+
+  function addSelectOptions(selectEl, options, includeBlank) {
+    if (!selectEl) return;
+    clearSelectControl(selectEl);
+    if (includeBlank) {
+      var blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = "Not set";
+      selectEl.appendChild(blank);
+    }
+    var opts = normalizePdfFieldOptions(options);
+    for (var i = 0; i < opts.length; i++) {
+      var opt = opts[i] || {};
+      var op = document.createElement("option");
+      op.value = String(opt.value || "");
+      op.textContent = String(opt.label || opt.value || "");
+      selectEl.appendChild(op);
+    }
+  }
+
+  function addRadioOptions(radioWrap, options, namePrefix) {
+    if (!radioWrap) return;
+    clearRadioControl(radioWrap);
+    var noneRow = document.createElement("label");
+    noneRow.className = "replace-radio-option";
+    var noneInput = document.createElement("input");
+    noneInput.type = "radio";
+    noneInput.name = String(namePrefix || "radioPrompt");
+    noneInput.value = "";
+    noneRow.appendChild(noneInput);
+    var noneSpan = document.createElement("span");
+    noneSpan.textContent = "Not set";
+    noneRow.appendChild(noneSpan);
+    radioWrap.appendChild(noneRow);
+
+    var opts = normalizePdfFieldOptions(options);
+    for (var i = 0; i < opts.length; i++) {
+      var opt = opts[i] || {};
+      var row = document.createElement("label");
+      row.className = "replace-radio-option";
+      var input = document.createElement("input");
+      input.type = "radio";
+      input.name = String(namePrefix || "radioPrompt");
+      input.value = String(opt.value || "");
+      row.appendChild(input);
+      var span = document.createElement("span");
+      span.textContent = String(opt.label || opt.value || "");
+      row.appendChild(span);
+      radioWrap.appendChild(row);
+    }
+  }
+
+  function selectedValueFromSelect(selectEl) {
+    if (!selectEl) return "";
+    return String(selectEl.value || "");
+  }
+
+  function selectedValueFromMultiSelect(selectEl) {
+    if (!selectEl) return "";
+    var picked = [];
+    var opts = selectEl.options || [];
+    for (var i = 0; i < opts.length; i++) {
+      var op = opts[i];
+      if (!op || !op.selected) continue;
+      var v = String(op.value || "").trim();
+      if (!v) continue;
+      picked.push(v);
+    }
+    return picked.join("\n");
+  }
+
+  function selectedValueFromRadios(radioWrap) {
+    if (!radioWrap) return "";
+    var checked = radioWrap.querySelector("input[type='radio']:checked");
+    if (!checked) return "";
+    return String(checked.value || "");
+  }
+
+  function selectRadioValue(radioWrap, value) {
+    if (!radioWrap) return;
+    var wanted = String(value == null ? "" : value).trim();
+    var radios = radioWrap.querySelectorAll("input[type='radio']");
+    var matched = false;
+    for (var i = 0; i < radios.length; i++) {
+      var r = radios[i];
+      if (!r) continue;
+      var rv = String(r.value || "").trim();
+      var isMatch = (rv === wanted) || (wanted && rv.toLowerCase() === wanted.toLowerCase());
+      r.checked = isMatch;
+      if (isMatch) matched = true;
+    }
+    if (!matched && radios.length > 0) {
+      radios[0].checked = true;
+    }
+  }
+
+  function setSelectValue(selectEl, value) {
+    if (!selectEl) return;
+    var wanted = String(value == null ? "" : value).trim();
+    var found = false;
+    for (var i = 0; i < selectEl.options.length; i++) {
+      var op = selectEl.options[i];
+      if (!op) continue;
+      var ov = String(op.value || "").trim();
+      if (ov === wanted || (wanted && ov.toLowerCase() === wanted.toLowerCase())) {
+        selectEl.selectedIndex = i;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      if (wanted) {
+        var extra = document.createElement("option");
+        extra.value = wanted;
+        extra.textContent = wanted;
+        selectEl.appendChild(extra);
+        selectEl.value = wanted;
+      } else {
+        selectEl.value = "";
+      }
+    }
+  }
+
+  function setMultiSelectValues(selectEl, value) {
+    if (!selectEl) return;
+    var wanted = parseMultiValue(value);
+    var wantedLower = Object.create(null);
+    for (var i = 0; i < wanted.length; i++) {
+      var key = String(wanted[i] || "").toLowerCase();
+      if (!key) continue;
+      wantedLower[key] = true;
+    }
+
+    var any = false;
+    for (var oi = 0; oi < selectEl.options.length; oi++) {
+      var op = selectEl.options[oi];
+      if (!op) continue;
+      var ov = String(op.value || "");
+      var selected = hasOwn(wantedLower, ov.toLowerCase());
+      op.selected = selected;
+      if (selected) any = true;
+    }
+
+    if (!any && wanted.length > 0) {
+      for (var wi = 0; wi < wanted.length; wi++) {
+        var v = String(wanted[wi] || "").trim();
+        if (!v) continue;
+        var extra = document.createElement("option");
+        extra.value = v;
+        extra.textContent = v;
+        extra.selected = true;
+        selectEl.appendChild(extra);
+      }
+    }
+  }
+
+  function clearSignaturePad(pad) {
+    if (!pad || typeof pad.clear !== "function") return;
+    pad.clear();
+  }
+
+  function signatureDataUrlFromPad(pad) {
+    if (!pad || typeof pad.toDataUrl !== "function") return "";
+    return String(pad.toDataUrl() || "");
+  }
+
+  function configureControlPack(pack, meta, value, mode) {
+    if (!pack) return "text";
+    var type = normalizePdfFieldType(meta ? meta.fieldType : "");
+    var options = meta && Array.isArray(meta.options) ? meta.options : [];
+    var multiSelect = !!(meta && meta.multiSelect);
+    var v = String(value == null ? "" : value);
+
+    setControlHidden(pack.text, true);
+    setControlHidden(pack.checkboxWrap, true);
+    setControlHidden(pack.select, true);
+    setControlHidden(pack.multi, true);
+    setControlHidden(pack.radioWrap, true);
+    setControlHidden(pack.signatureWrap, true);
+    if (pack.hint) pack.hint.style.display = "none";
+
+    if (type === "checkbox") {
+      setControlHidden(pack.checkboxWrap, false);
+      var low = v.trim().toLowerCase();
+      pack.checkbox.checked = !(low === "" || low === "0" || low === "false" || low === "no" || low === "off" || low === "unchecked");
+      if (pack.hint) {
+        pack.hint.style.display = "";
+        pack.hint.textContent = "Checkbox field";
+      }
+      return "checkbox";
+    }
+
+    if (type === "radio") {
+      addRadioOptions(pack.radioWrap, options, mode + "_radio");
+      setControlHidden(pack.radioWrap, false);
+      selectRadioValue(pack.radioWrap, v);
+      if (pack.hint) {
+        pack.hint.style.display = "";
+        pack.hint.textContent = "Radio choice field";
+      }
+      return "radio";
+    }
+
+    if (type === "select") {
+      addSelectOptions(pack.select, options, true);
+      setControlHidden(pack.select, false);
+      setSelectValue(pack.select, v);
+      if (pack.hint) {
+        pack.hint.style.display = "";
+        pack.hint.textContent = "Dropdown field";
+      }
+      return "select";
+    }
+
+    if (type === "list") {
+      if (multiSelect) {
+        addSelectOptions(pack.multi, options, false);
+        setControlHidden(pack.multi, false);
+        setMultiSelectValues(pack.multi, v);
+        if (pack.hint) {
+          pack.hint.style.display = "";
+          pack.hint.textContent = "Multi-select list field";
+        }
+        return "list";
+      }
+      addSelectOptions(pack.select, options, true);
+      setControlHidden(pack.select, false);
+      setSelectValue(pack.select, v);
+      if (pack.hint) {
+        pack.hint.style.display = "";
+        pack.hint.textContent = "List field";
+      }
+      return "select";
+    }
+
+    if (type === "signature") {
+      setControlHidden(pack.signatureWrap, false);
+      if (pack.hint) {
+        pack.hint.style.display = "";
+        pack.hint.textContent = "Signature field (draw signature)";
+      }
+      return "signature";
+    }
+
+    setControlHidden(pack.text, false);
+    pack.text.value = v;
+    if (pack.hint) pack.hint.style.display = "none";
+    return "text";
+  }
+
+  function readControlPackValue(pack, activeType, signaturePad) {
+    if (!pack) return "";
+    var t = normalizePdfFieldType(activeType);
+    if (t === "checkbox") return pack.checkbox && pack.checkbox.checked ? "true" : "false";
+    if (t === "radio") return selectedValueFromRadios(pack.radioWrap);
+    if (t === "select") return selectedValueFromSelect(pack.select);
+    if (t === "list") return selectedValueFromMultiSelect(pack.multi);
+    if (t === "signature") return signatureDataUrlFromPad(signaturePad);
+    return String(pack.text && pack.text.value ? pack.text.value : "");
+  }
+
+  function syncMainReplaceHiddenValue() {
+    if (!replaceValue) return;
+    var meta = fieldMetaForToken(tokenSelect ? tokenSelect.value : "");
+    var type = activeReplacementControl || normalizePdfFieldType(meta.fieldType);
+    var value = readControlPackValue(replaceControlPack, type, replaceSignaturePad);
+    replaceValue.value = value;
+  }
+
+  function installSignaturePad(canvas, onChange) {
+    if (!canvas || !canvas.getContext) return null;
+    var ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    var drawing = false;
+    var dirty = false;
+    var lastX = 0;
+    var lastY = 0;
+
+    function clear() {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = "#111827";
+      ctx.lineWidth = 2.2;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      dirty = false;
+      if (typeof onChange === "function") onChange();
+    }
+
+    function relativePoint(ev) {
+      var rect = canvas.getBoundingClientRect();
+      var cx = 0;
+      var cy = 0;
+      if (ev && ev.touches && ev.touches.length > 0) {
+        cx = ev.touches[0].clientX;
+        cy = ev.touches[0].clientY;
+      } else {
+        cx = Number(ev.clientX || 0);
+        cy = Number(ev.clientY || 0);
+      }
+      var x = (cx - rect.left) * (canvas.width / Math.max(1, rect.width));
+      var y = (cy - rect.top) * (canvas.height / Math.max(1, rect.height));
+      return { x: x, y: y };
+    }
+
+    function begin(ev) {
+      if (ev && ev.preventDefault) ev.preventDefault();
+      var p = relativePoint(ev || {});
+      drawing = true;
+      lastX = p.x;
+      lastY = p.y;
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+    }
+
+    function move(ev) {
+      if (!drawing) return;
+      if (ev && ev.preventDefault) ev.preventDefault();
+      var p = relativePoint(ev || {});
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      lastX = p.x;
+      lastY = p.y;
+      dirty = true;
+      if (typeof onChange === "function") onChange();
+    }
+
+    function end(ev) {
+      if (!drawing) return;
+      if (ev && ev.preventDefault) ev.preventDefault();
+      drawing = false;
+      ctx.closePath();
+      if (typeof onChange === "function") onChange();
+    }
+
+    canvas.addEventListener("mousedown", begin);
+    canvas.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", end);
+    canvas.addEventListener("mouseleave", end);
+    canvas.addEventListener("touchstart", begin, { passive: false });
+    canvas.addEventListener("touchmove", move, { passive: false });
+    canvas.addEventListener("touchend", end, { passive: false });
+    canvas.addEventListener("touchcancel", end, { passive: false });
+    clear();
+
+    return {
+      clear: clear,
+      toDataUrl: function () {
+        if (!dirty) return "";
+        try {
+          return canvas.toDataURL("image/png");
+        } catch (ignored) {
+          return "";
+        }
+      },
+      loadDataUrl: function (dataUrl) {
+        var url = String(dataUrl || "").trim();
+        clear();
+        if (!url) return;
+        var img = new Image();
+        img.onload = function () {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          dirty = true;
+          if (typeof onChange === "function") onChange();
+        };
+        img.src = url;
+      }
+    };
+  }
+
   function selectedReplacementValue() {
+    syncMainReplaceHiddenValue();
     return replaceValue ? String(replaceValue.value || "") : "";
   }
 
@@ -2826,6 +3520,74 @@
     }, wait);
   }
 
+  function closeTypedPrompt(result) {
+    if (typedPromptModal) typedPromptModal.hidden = true;
+    var resolve = typedPromptResolver;
+    typedPromptResolver = null;
+    typedPromptState = null;
+    if (typeof resolve === "function") resolve(result || { action: "cancel" });
+  }
+
+  function openTypedPromptForToken(tokenLiteral, currentValue) {
+    var token = displayTokenLiteral(tokenLiteral);
+    var current = String(currentValue == null ? "" : currentValue);
+    var meta = fieldMetaForToken(token);
+    var type = normalizePdfFieldType(meta.fieldType);
+
+    if (!typedPromptModal) {
+      var fallback = window.prompt(
+        "Enter value for " + token + "\\nLeave blank to keep unresolved. Click Cancel to stop prompting.",
+        current
+      );
+      if (fallback === null) return Promise.resolve({ action: "cancel", value: "", fieldType: type });
+      return Promise.resolve({ action: "apply", value: String(fallback), fieldType: type });
+    }
+
+    if (!typedPromptControlPack) typedPromptControlPack = buildControlPack("typedPrompt");
+    typedPromptState = { token: token, fieldType: type };
+
+    if (typedPromptTokenMeta) typedPromptTokenMeta.textContent = token;
+    if (typedPromptHelp) typedPromptHelp.textContent = "Provide a value and click Apply. Skip leaves this token unresolved.";
+    var active = configureControlPack(typedPromptControlPack, meta, current, "typedPrompt");
+    typedPromptState.fieldType = active;
+    if (active === "signature" && typedPromptSignaturePad) {
+      if (current && current.indexOf("data:image") === 0) typedPromptSignaturePad.loadDataUrl(current);
+      else typedPromptSignaturePad.clear();
+    }
+    typedPromptModal.hidden = false;
+
+    if (active === "checkbox" && typedPromptCheckbox) typedPromptCheckbox.focus();
+    else if ((active === "select") && typedPromptSelect) typedPromptSelect.focus();
+    else if (active === "list" && typedPromptMulti) typedPromptMulti.focus();
+    else if (active === "radio" && typedPromptRadioWrap) {
+      var firstRadio = typedPromptRadioWrap.querySelector("input[type='radio']");
+      if (firstRadio) firstRadio.focus();
+    } else if (active === "signature" && typedPromptSignatureCanvas) typedPromptSignatureCanvas.focus();
+    else if (typedPromptText) typedPromptText.focus();
+
+    return new Promise(function (resolve) {
+      typedPromptResolver = resolve;
+    });
+  }
+
+  function finalizeMissingPromptFlow(shouldAssemble) {
+    syncDownloadOverrides();
+    syncDefaultReplaceValue();
+    recalcMatches();
+    refreshMissingValuesBanner();
+
+    saveDraftOverridesNow().then(function (saved) {
+      if (!saved) return;
+      if (renderPreviewEnabled) {
+        refreshRenderedPreviewNow().then(function () {
+          if (shouldAssemble) submitDownloadAssembled();
+        });
+      } else if (shouldAssemble) {
+        submitDownloadAssembled();
+      }
+    });
+  }
+
   function promptForMissingValues(assembleAfterSave) {
     var shouldAssemble = !!assembleAfterSave;
     ensureAdvancedModeForPrompt();
@@ -2865,9 +3627,19 @@
       return;
     }
 
-    for (var i = 0; i < targets.length; i++) {
-      var token = String(targets[i] || "");
-      if (!token) continue;
+    var idx = 0;
+    function promptNext() {
+      if (idx >= targets.length) {
+        finalizeMissingPromptFlow(shouldAssemble);
+        return;
+      }
+
+      var token = String(targets[idx] || "");
+      idx++;
+      if (!token) {
+        promptNext();
+        return;
+      }
 
       if (isListOrGridToken(token)) {
         var datasetKey = canonicalPromptKey(token);
@@ -2883,38 +3655,34 @@
           });
           return;
         }
-        continue;
+        promptNext();
+        return;
       }
 
       var current = tokenValueForPrompt(token);
-      var answer = window.prompt(
-        "Enter value for " + displayTokenLiteral(token) + "\\nLeave blank to keep unresolved. Click Cancel to stop prompting.",
-        current
-      );
-      if (answer === null) break;
-      var value = String(answer);
-      if (value.trim() === "") {
-        clearPromptTokenValue(token);
-      } else {
-        applyPromptTokenValue(token, value);
-      }
+      openTypedPromptForToken(token, current).then(function (result) {
+        var r = result || {};
+        var action = String(r.action || "cancel");
+        if (action === "cancel") {
+          finalizeMissingPromptFlow(shouldAssemble);
+          return;
+        }
+        if (action === "apply") {
+          var value = String(r.value == null ? "" : r.value);
+          var fieldType = normalizePdfFieldType(r.fieldType || "");
+          if (fieldType === "checkbox") {
+            applyPromptTokenValue(token, value);
+          } else if (value.trim() === "") {
+            clearPromptTokenValue(token);
+          } else {
+            applyPromptTokenValue(token, value);
+          }
+        }
+        promptNext();
+      });
     }
 
-    syncDownloadOverrides();
-    syncDefaultReplaceValue();
-    recalcMatches();
-    refreshMissingValuesBanner();
-
-    saveDraftOverridesNow().then(function (saved) {
-      if (!saved) return;
-      if (renderPreviewEnabled) {
-        refreshRenderedPreviewNow().then(function () {
-          if (shouldAssemble) submitDownloadAssembled();
-        });
-      } else if (shouldAssemble) {
-        submitDownloadAssembled();
-      }
-    });
+    promptNext();
   }
 
   function syncDownloadOverrides() {
@@ -3186,24 +3954,36 @@
     tokenOverrideValues = Object.create(null);
     livePreviewEnabled = false;
     syncDownloadOverrides();
+    if (replaceSignaturePad) replaceSignaturePad.clear();
     syncWorkspaceTextValue();
     refreshMissingValuesBanner();
     scheduleDraftSave(0);
+    syncDefaultReplaceValue();
     recalcMatches();
     scheduleRenderedPreviewRefresh();
   }
 
   function syncDefaultReplaceValue() {
     if (!tokenSelect || !replaceValue) return;
+    if (!replaceControlPack) replaceControlPack = buildControlPack("replace");
     livePreviewEnabled = false;
     var opt = tokenSelect.options[tokenSelect.selectedIndex];
     if (!opt) {
       replaceValue.value = "";
+      activeReplacementControl = "text";
       return;
     }
     var token = String(opt.value || "");
     var def = defaultValueForToken(token, opt);
-    replaceValue.value = hasOwn(tokenOverrideValues, token) ? String(tokenOverrideValues[token]) : def;
+    var value = hasOwn(tokenOverrideValues, token) ? String(tokenOverrideValues[token]) : def;
+    var meta = fieldMetaForToken(token);
+    activeReplacementControl = configureControlPack(replaceControlPack, meta, value, "replace");
+
+    if (activeReplacementControl === "signature" && replaceSignaturePad) {
+      if (value && value.indexOf("data:image") === 0) replaceSignaturePad.loadDataUrl(value);
+      else replaceSignaturePad.clear();
+    }
+    syncMainReplaceHiddenValue();
   }
 
   function submitDownloadAssembled() {
@@ -3219,6 +3999,7 @@
 
   function handleHotKeys(ev) {
     if (templatePickerModal && !templatePickerModal.hidden) return;
+    if (typedPromptModal && !typedPromptModal.hidden) return;
     if (!ev || !ev.altKey || ev.ctrlKey || ev.metaKey) return;
     var key = String(ev.key || "").toLowerCase();
     if (!key) return;
@@ -3307,6 +4088,57 @@
       });
     })();
   }
+  for (var tpc = 0; tpc < typedPromptCloseTriggers.length; tpc++) {
+    (function () {
+      var trigger = typedPromptCloseTriggers[tpc];
+      if (!trigger) return;
+      trigger.addEventListener("click", function (ev) {
+        if (ev) ev.preventDefault();
+        closeTypedPrompt({ action: "cancel" });
+      });
+    })();
+  }
+  if (btnTypedPromptCancelTop) {
+    btnTypedPromptCancelTop.addEventListener("click", function (ev) {
+      if (ev) ev.preventDefault();
+      closeTypedPrompt({ action: "cancel" });
+    });
+  }
+  if (btnTypedPromptCancel) {
+    btnTypedPromptCancel.addEventListener("click", function (ev) {
+      if (ev) ev.preventDefault();
+      closeTypedPrompt({ action: "cancel" });
+    });
+  }
+  if (btnTypedPromptSkip) {
+    btnTypedPromptSkip.addEventListener("click", function (ev) {
+      if (ev) ev.preventDefault();
+      closeTypedPrompt({ action: "skip" });
+    });
+  }
+  if (btnTypedPromptApply) {
+    btnTypedPromptApply.addEventListener("click", function (ev) {
+      if (ev) ev.preventDefault();
+      var fieldType = typedPromptState && typedPromptState.fieldType ? typedPromptState.fieldType : "text";
+      var value = readControlPackValue(typedPromptControlPack, fieldType, typedPromptSignaturePad);
+      closeTypedPrompt({ action: "apply", value: value, fieldType: fieldType });
+    });
+  }
+  if (btnTypedPromptClearSignature) {
+    btnTypedPromptClearSignature.addEventListener("click", function (ev) {
+      if (ev) ev.preventDefault();
+      if (typedPromptSignaturePad) typedPromptSignaturePad.clear();
+    });
+  }
+  if (typedPromptText) {
+    typedPromptText.addEventListener("keydown", function (ev) {
+      if (!ev) return;
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      var fieldType = typedPromptState && typedPromptState.fieldType ? typedPromptState.fieldType : "text";
+      closeTypedPrompt({ action: "apply", value: String(typedPromptText.value || ""), fieldType: fieldType });
+    });
+  }
   for (var tpi = 0; tpi < templatePickerItems.length; tpi++) {
     (function () {
       var item = templatePickerItems[tpi];
@@ -3321,6 +4153,22 @@
     templatePickerSearch.addEventListener("input", filterTemplatePickerList);
   }
 
+  replaceControlPack = buildControlPack("replace");
+  typedPromptControlPack = buildControlPack("typedPrompt");
+  replaceSignaturePad = installSignaturePad(replaceValueSignatureCanvas, function () {
+    if (activeReplacementControl !== "signature") return;
+    syncMainReplaceHiddenValue();
+    livePreviewEnabled = true;
+    scheduleRenderedPreviewRefresh();
+  });
+  typedPromptSignaturePad = installSignaturePad(typedPromptSignatureCanvas, function () {});
+
+  function onMainReplacementControlChanged() {
+    syncMainReplaceHiddenValue();
+    livePreviewEnabled = true;
+    scheduleRenderedPreviewRefresh();
+  }
+
   if (tokenSelect) {
     tokenSelect.addEventListener("change", function () {
       livePreviewEnabled = false;
@@ -3333,16 +4181,37 @@
 
   if (replaceValue) {
     replaceValue.addEventListener("input", function () {
+      if (activeReplacementControl !== "text") return;
       // Keep typed value local (not persisted), but update preview with a transient server-side override.
       livePreviewEnabled = true;
       scheduleRenderedPreviewRefresh();
     });
     replaceValue.addEventListener("keydown", function (ev) {
       if (!ev) return;
+      if (activeReplacementControl !== "text") return;
       if (ev.key === "Enter") {
         ev.preventDefault();
         replaceOnce();
       }
+    });
+  }
+  if (replaceValueCheckbox) {
+    replaceValueCheckbox.addEventListener("change", onMainReplacementControlChanged);
+  }
+  if (replaceValueSelect) {
+    replaceValueSelect.addEventListener("change", onMainReplacementControlChanged);
+  }
+  if (replaceValueMulti) {
+    replaceValueMulti.addEventListener("change", onMainReplacementControlChanged);
+  }
+  if (replaceValueRadioWrap) {
+    replaceValueRadioWrap.addEventListener("change", onMainReplacementControlChanged);
+  }
+  if (btnClearSignatureCanvas) {
+    btnClearSignatureCanvas.addEventListener("click", function (ev) {
+      if (ev) ev.preventDefault();
+      if (replaceSignaturePad) replaceSignaturePad.clear();
+      onMainReplacementControlChanged();
     });
   }
 
@@ -3359,10 +4228,16 @@
   }
   document.addEventListener("keydown", function (ev) {
     if (!ev) return;
-    if (!templatePickerModal || templatePickerModal.hidden) return;
     if (ev.key === "Escape") {
-      ev.preventDefault();
-      closeTemplatePicker();
+      if (typedPromptModal && !typedPromptModal.hidden) {
+        ev.preventDefault();
+        closeTypedPrompt({ action: "cancel" });
+        return;
+      }
+      if (templatePickerModal && !templatePickerModal.hidden) {
+        ev.preventDefault();
+        closeTemplatePicker();
+      }
     }
   }, true);
   document.addEventListener("keydown", handleHotKeys, true);
