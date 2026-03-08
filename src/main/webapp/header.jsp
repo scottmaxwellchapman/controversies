@@ -12,6 +12,7 @@
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.custom_objects" %>
+<%@ page import="net.familylawandprobate.controversies.permission_layers" %>
 
 <%!
     // -----------------------------
@@ -75,7 +76,8 @@
 
         // Path-first mapping keeps menu and page heading icons consistent.
         if ("/index.jsp".equals(h)) return "home";
-        if ("/cases.jsp".equals(h) || "/case_lists.jsp".equals(h)) return "cases";
+        if ("/cases.jsp".equals(h) || "/case_lists.jsp".equals(h) || "/case_focus.jsp".equals(h)) return "cases";
+        if ("/contacts.jsp".equals(h)) return "contacts";
         if ("/documents.jsp".equals(h) || "/parts.jsp".equals(h) || "/versions.jsp".equals(h) || "/pdf_redact.jsp".equals(h)) return "documents";
         if ("/facts.jsp".equals(h)) return "facts";
         if ("/tasks.jsp".equals(h)) return "tasks";
@@ -86,7 +88,7 @@
         if ("/forms.jsp".equals(h) || "/assembled_forms.jsp".equals(h)) return "forms";
         if ("/template_library.jsp".equals(h)) return "templates";
         if ("/template_editor.jsp".equals(h) || "/markup_notation.jsp".equals(h)) return "editor";
-        if ("/users_roles.jsp".equals(h) || "/security.jsp".equals(h)) return "security";
+        if ("/users_roles.jsp".equals(h) || "/permissions_management.jsp".equals(h) || "/security.jsp".equals(h)) return "security";
         if ("/user_settings.jsp".equals(h) || "/tenant_login.jsp".equals(h) || "/user_login.jsp".equals(h)) return "user";
         if ("/change_email.jsp".equals(h)) return "email";
         if ("/change_password.jsp".equals(h) || "/forgot_password.jsp".equals(h)) return "password";
@@ -98,12 +100,14 @@
         if ("/plugin_manager.jsp".equals(h)) return "plugins";
         if ("/log_viewer.jsp".equals(h)) return "logs";
         if ("/help_center.jsp".equals(h) || "/help_getting_started.jsp".equals(h) || "/token_guide.jsp".equals(h)) return "info";
+        if ("/help_permissions.jsp".equals(h)) return "security";
         if (h.startsWith("/help_")) return "help";
 
         // Label fallback handles heading defaults and submenu labels without href.
         if (containsKey(l, "home")) return "home";
         if (containsKey(l, "case") && containsKey(l, "field")) return "fields";
         if (containsKey(l, "case") && !containsKey(l, "workflow")) return "cases";
+        if (containsKey(l, "contact")) return "contacts";
         if (containsKey(l, "document")) return "documents";
         if (containsKey(l, "fact")) return "facts";
         if (containsKey(l, "task")) return "tasks";
@@ -239,6 +243,7 @@
         g.items.add(new MenuNode("Texas Law", "/texas_law.jsp"));
         MenuNode settings = new MenuNode("Settings", "");
         settings.children.add(new MenuNode("Users & Security", "/users_roles.jsp"));
+        settings.children.add(new MenuNode("Permission Layers", "/permissions_management.jsp"));
         settings.children.add(new MenuNode("User Settings", "/user_settings.jsp"));
         settings.children.add(new MenuNode("Change E-Mail Address", "/change_email.jsp"));
         settings.children.add(new MenuNode("Change Password", "/change_password.jsp"));
@@ -262,10 +267,108 @@
         help.children.add(new MenuNode("Tasks Guide (Expert)", "/help_tasks_expert.jsp"));
         help.children.add(new MenuNode("Threads Guide (Novice)", "/help_threads_novice.jsp"));
         help.children.add(new MenuNode("Threads Guide (Expert)", "/help_threads_expert.jsp"));
+        help.children.add(new MenuNode("Permissions Guide", "/help_permissions.jsp"));
         help.children.add(new MenuNode("Token Guide", "/token_guide.jsp"));
         help.children.add(new MenuNode("Markup Notation", "/markup_notation.jsp"));
         g.items.add(help);
         return java.util.List.of(g);
+    }
+
+    private static String requiredPermissionForHref(String href) {
+        String h = normalizeHref(href).toLowerCase(Locale.ROOT);
+        if (h.isBlank()) return "";
+        int q = h.indexOf('?');
+        if (q >= 0) h = h.substring(0, q);
+
+        if ("/index.jsp".equals(h)) return "home.access";
+        if ("/cases.jsp".equals(h) || "/case_lists.jsp".equals(h) || "/case_focus.jsp".equals(h)) return "cases.access";
+        if ("/case_fields.jsp".equals(h)) return "case_fields.access";
+        if ("/contacts.jsp".equals(h)) return "contacts.access";
+        if ("/documents.jsp".equals(h)
+                || "/document_preview.jsp".equals(h)
+                || "/parts.jsp".equals(h)
+                || "/versions.jsp".equals(h)
+                || "/pdf_redact.jsp".equals(h)) return "documents.access";
+        if ("/facts.jsp".equals(h)) return "facts.access";
+        if ("/tasks.jsp".equals(h)) return "tasks.access";
+        if ("/omnichannel.jsp".equals(h) || "/omnichannel_manifest.jsp".equals(h)) return "threads.access";
+        if ("/wiki.jsp".equals(h)) return "wiki.access";
+        if ("/texas_law.jsp".equals(h)) return "texas_law.access";
+
+        if ("/forms.jsp".equals(h)
+                || "/assembled_forms.jsp".equals(h)
+                || "/template_library.jsp".equals(h)
+                || "/template_editor.jsp".equals(h)) return "forms.access";
+
+        if ("/custom_objects.jsp".equals(h)) return "custom_objects.manage";
+        if ("/custom_object_attributes.jsp".equals(h)) return "attributes.manage";
+
+        if ("/users_roles.jsp".equals(h)) return "security.manage";
+        if ("/permissions_management.jsp".equals(h)) return "permissions.manage";
+        if ("/tenant_fields.jsp".equals(h)) return "tenant_fields.manage";
+        if ("/attribute_editor.jsp".equals(h)
+                || "/case_attributes.jsp".equals(h)
+                || "/document_attributes.jsp".equals(h)
+                || "/task_attributes.jsp".equals(h)) return "attributes.manage";
+        if ("/business_processes.jsp".equals(h)) return "business_processes.manage";
+        if ("/business_process_reviews.jsp".equals(h)) return "business_process_reviews.manage";
+        if ("/tenant_settings.jsp".equals(h)) return "tenant_settings.manage";
+        if ("/plugin_manager.jsp".equals(h)) return "plugin_manager.manage";
+        if ("/log_viewer.jsp".equals(h) || "/activity.jsp".equals(h)) return "logs.view";
+
+        if ("/user_settings.jsp".equals(h)
+                || "/change_email.jsp".equals(h)
+                || "/change_password.jsp".equals(h)) return "user_settings.access";
+
+        if ("/help_center.jsp".equals(h)
+                || "/token_guide.jsp".equals(h)
+                || "/markup_notation.jsp".equals(h)
+                || "/help_permissions.jsp".equals(h)
+                || h.startsWith("/help_")) return "help.access";
+
+        return "";
+    }
+
+    private static MenuNode filterMenuNodeByPermission(MenuNode node, jakarta.servlet.http.HttpSession session) {
+        if (node == null) return null;
+
+        ArrayList<MenuNode> keptChildren = new ArrayList<MenuNode>();
+        if (node.children != null) {
+            for (int i = 0; i < node.children.size(); i++) {
+                MenuNode kept = filterMenuNodeByPermission(node.children.get(i), session);
+                if (kept != null) keptChildren.add(kept);
+            }
+        }
+
+        String href = normalizeHref(node.href);
+        String required = requiredPermissionForHref(href);
+        boolean selfAllowed = required.isBlank() || users_roles.hasPermissionTrue(session, required);
+
+        boolean hasLink = !href.isBlank();
+        if (hasLink && !selfAllowed && keptChildren.isEmpty()) return null;
+        if (!hasLink && keptChildren.isEmpty()) return null;
+
+        MenuNode copy = new MenuNode(node.label, node.href);
+        copy.children.addAll(keptChildren);
+        return copy;
+    }
+
+    private static List<MenuGroup> filterMenuGroupsByPermission(List<MenuGroup> groups, jakarta.servlet.http.HttpSession session) {
+        if (groups == null) return new ArrayList<MenuGroup>();
+        if (session == null) return groups;
+
+        ArrayList<MenuGroup> out = new ArrayList<MenuGroup>();
+        for (int i = 0; i < groups.size(); i++) {
+            MenuGroup g = groups.get(i);
+            if (g == null) continue;
+            MenuGroup filtered = new MenuGroup(g.label);
+            for (int j = 0; j < g.items.size(); j++) {
+                MenuNode kept = filterMenuNodeByPermission(g.items.get(j), session);
+                if (kept != null) filtered.items.add(kept);
+            }
+            if (!filtered.items.isEmpty()) out.add(filtered);
+        }
+        return out;
     }
 
     private static boolean isActive(String requestUri, String ctx, String href) {
@@ -470,11 +573,17 @@
             List<custom_objects.ObjectRec> publishedObjects = custom_objects.defaultStore().listPublished(tenantUuid);
             if (publishedObjects != null && !publishedObjects.isEmpty()) {
                 MenuNode customRoot = new MenuNode("Custom Objects", "");
+                boolean tenantAdmin = users_roles.hasPermissionTrue(session, "tenant_admin");
                 for (int i = 0; i < publishedObjects.size(); i++) {
                     custom_objects.ObjectRec r = publishedObjects.get(i);
                     if (r == null) continue;
                     String objectUuid = safe(r.uuid).trim();
                     if (objectUuid.isBlank()) continue;
+                    String objectKey = safe(r.key).trim();
+                    if (!tenantAdmin) {
+                        List<String> keys = permission_layers.customObjectPermissionKeys(objectKey, "access");
+                        if (!permission_layers.sessionHasAnyPermission(session, keys)) continue;
+                    }
                     String label = safe(r.pluralLabel).trim();
                     if (label.isBlank()) label = safe(r.label).trim();
                     if (label.isBlank()) label = "Object";
@@ -495,6 +604,13 @@
                 }
             }
         } catch (Exception ignored) {}
+    }
+
+    if (navVisible) {
+        menuGroups = filterMenuGroupsByPermission(menuGroups, session);
+        if (menuGroups == null || menuGroups.isEmpty()) {
+            navVisible = false;
+        }
     }
 
     String uiThemeDefaultMode = "auto";

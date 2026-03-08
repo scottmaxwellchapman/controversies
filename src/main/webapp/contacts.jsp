@@ -2,6 +2,7 @@
 
 <%@ page import="java.net.URLEncoder" %>
 <%@ page import="java.nio.charset.StandardCharsets" %>
+<%@ page import="java.time.Instant" %>
 <%@ page import="java.util.ArrayList" %>
 <%@ page import="java.util.HashMap" %>
 <%@ page import="java.util.LinkedHashMap" %>
@@ -10,6 +11,7 @@
 <%@ page import="java.util.Map" %>
 
 <%@ page import="net.familylawandprobate.controversies.contacts" %>
+<%@ page import="net.familylawandprobate.controversies.contact_vcards" %>
 <%@ page import="net.familylawandprobate.controversies.matter_contacts" %>
 <%@ page import="net.familylawandprobate.controversies.matters" %>
 <%@ page import="net.familylawandprobate.controversies.integrations.clio.ClioIntegrationService" %>
@@ -81,19 +83,53 @@
     in.state = safe(req.getParameter("state")).trim();
     in.postalCode = safe(req.getParameter("postal_code")).trim();
     in.country = safe(req.getParameter("country")).trim();
+    in.streetSecondary = safe(req.getParameter("street_secondary")).trim();
+    in.citySecondary = safe(req.getParameter("city_secondary")).trim();
+    in.stateSecondary = safe(req.getParameter("state_secondary")).trim();
+    in.postalCodeSecondary = safe(req.getParameter("postal_code_secondary")).trim();
+    in.countrySecondary = safe(req.getParameter("country_secondary")).trim();
+    in.streetTertiary = safe(req.getParameter("street_tertiary")).trim();
+    in.cityTertiary = safe(req.getParameter("city_tertiary")).trim();
+    in.stateTertiary = safe(req.getParameter("state_tertiary")).trim();
+    in.postalCodeTertiary = safe(req.getParameter("postal_code_tertiary")).trim();
+    in.countryTertiary = safe(req.getParameter("country_tertiary")).trim();
     in.notes = safe(req.getParameter("notes"));
     return in;
   }
 
+  private static String nonBlank(String a, String b) {
+    String x = safe(a).trim();
+    if (!x.isBlank()) return x;
+    return safe(b).trim();
+  }
+
+  private static String nonBlank(String a, String b, String c) {
+    String x = nonBlank(a, b);
+    if (!x.isBlank()) return x;
+    return safe(c).trim();
+  }
+
   private static String contactSummary(contacts.ContactRec c) {
     if (c == null) return "";
-    String email = safe(c.emailPrimary).trim();
-    String phone = safe(c.mobilePhone).trim();
-    if (phone.isBlank()) phone = safe(c.businessPhone).trim();
+    String email = nonBlank(c.emailPrimary, c.emailSecondary, c.emailTertiary);
+    String phone = nonBlank(c.mobilePhone, c.businessPhone, c.homePhone);
     if (!email.isBlank() && !phone.isBlank()) return email + " • " + phone;
     if (!email.isBlank()) return email;
     if (!phone.isBlank()) return phone;
     return "";
+  }
+
+  private static void writeVCardDownload(jakarta.servlet.http.HttpServletResponse resp, String fileName, String payload) throws Exception {
+    String safeName = safe(fileName).trim();
+    if (safeName.isBlank()) safeName = "contacts.vcf";
+    if (!safeName.toLowerCase(Locale.ROOT).endsWith(".vcf")) safeName = safeName + ".vcf";
+    byte[] bytes = safe(payload).getBytes(StandardCharsets.UTF_8);
+    resp.reset();
+    resp.setCharacterEncoding(StandardCharsets.UTF_8.name());
+    resp.setContentType("text/vcard; charset=UTF-8");
+    resp.setHeader("Content-Disposition", "attachment; filename=\"" + safeName.replace("\"", "") + "\"");
+    resp.setContentLength(bytes.length);
+    resp.getOutputStream().write(bytes);
   }
 %>
 
@@ -192,16 +228,42 @@
         error = "Unable to sync Clio contacts: " + safe(ex.getMessage());
       }
     }
+
+    if ("import_vcards".equalsIgnoreCase(action)) {
+      String payload = safe(request.getParameter("vcard_payload"));
+      String matterUuid = safe(request.getParameter("import_matter_uuid")).trim();
+      try {
+        List<contacts.ContactInput> imports = contact_vcards.parseMany(payload);
+        if (imports.isEmpty()) throw new IllegalArgumentException("No valid vCard entries were found.");
+        int imported = 0;
+        for (int i = 0; i < imports.size(); i++) {
+          contacts.ContactInput in = imports.get(i);
+          if (in == null) continue;
+          contacts.ContactRec created = contactStore.createNative(tenantUuid, in);
+          if (!matterUuid.isBlank() && created != null && !safe(created.uuid).trim().isBlank()) {
+            linkStore.replaceNativeLinksForContact(tenantUuid, created.uuid, List.of(matterUuid));
+          }
+          imported++;
+        }
+        response.sendRedirect(ctx + "/contacts.jsp?imported=" + imported);
+        return;
+      } catch (Exception ex) {
+        error = "Unable to import vCards: " + safe(ex.getMessage());
+      }
+    }
   }
 
   if ("1".equals(request.getParameter("created"))) message = "Contact created.";
   if ("1".equals(request.getParameter("saved"))) message = "Contact saved.";
   if ("1".equals(request.getParameter("archived"))) message = "Contact archived.";
   if ("1".equals(request.getParameter("restored"))) message = "Contact restored.";
+  String importedCount = safe(request.getParameter("imported")).trim();
+  if (!importedCount.isBlank()) message = "Imported " + importedCount + " contact(s) from vCard.";
 
   String q = safe(request.getParameter("q")).trim();
   String show = safe(request.getParameter("show")).trim().toLowerCase(Locale.ROOT);
   if (show.isBlank()) show = "active";
+  String reqAction = safe(request.getParameter("action")).trim().toLowerCase(Locale.ROOT);
   String sourceFilter = safe(request.getParameter("source")).trim().toLowerCase(Locale.ROOT);
   if (!"native".equals(sourceFilter) && !"clio".equals(sourceFilter)) sourceFilter = "all";
   String matterFilter = safe(request.getParameter("matter")).trim();
@@ -253,10 +315,32 @@
       StringBuilder hay = new StringBuilder(512);
       hay.append(safe(c.displayName)).append(" ")
          .append(safe(c.givenName)).append(" ")
+         .append(safe(c.middleName)).append(" ")
          .append(safe(c.surname)).append(" ")
          .append(safe(c.companyName)).append(" ")
          .append(safe(c.emailPrimary)).append(" ")
-         .append(safe(c.mobilePhone)).append(" ");
+         .append(safe(c.emailSecondary)).append(" ")
+         .append(safe(c.emailTertiary)).append(" ")
+         .append(safe(c.mobilePhone)).append(" ")
+         .append(safe(c.businessPhone)).append(" ")
+         .append(safe(c.businessPhone2)).append(" ")
+         .append(safe(c.homePhone)).append(" ")
+         .append(safe(c.otherPhone)).append(" ")
+         .append(safe(c.street)).append(" ")
+         .append(safe(c.city)).append(" ")
+         .append(safe(c.state)).append(" ")
+         .append(safe(c.postalCode)).append(" ")
+         .append(safe(c.country)).append(" ")
+         .append(safe(c.streetSecondary)).append(" ")
+         .append(safe(c.citySecondary)).append(" ")
+         .append(safe(c.stateSecondary)).append(" ")
+         .append(safe(c.postalCodeSecondary)).append(" ")
+         .append(safe(c.countrySecondary)).append(" ")
+         .append(safe(c.streetTertiary)).append(" ")
+         .append(safe(c.cityTertiary)).append(" ")
+         .append(safe(c.stateTertiary)).append(" ")
+         .append(safe(c.postalCodeTertiary)).append(" ")
+         .append(safe(c.countryTertiary)).append(" ");
       for (matter_contacts.LinkRec link : contactLinks) {
         if (link == null) continue;
         hay.append(safe(matterLabelByUuid.get(safe(link.matterUuid)))).append(" ");
@@ -264,6 +348,32 @@
       if (!hay.toString().toLowerCase(Locale.ROOT).contains(ql)) continue;
     }
     filtered.add(c);
+  }
+
+  if ("GET".equalsIgnoreCase(request.getMethod())) {
+    if ("export_vcard".equals(reqAction)) {
+      String contactUuid = safe(request.getParameter("uuid")).trim();
+      contacts.ContactRec rec = contactStore.getByUuid(tenantUuid, contactUuid);
+      if (rec == null) {
+        response.sendError(404, "Contact not found.");
+        return;
+      }
+      String baseName = safe(rec.displayName).trim().replaceAll("[^A-Za-z0-9._-]+", "_");
+      if (baseName.isBlank()) baseName = "contact";
+      writeVCardDownload(response, baseName + ".vcf", contact_vcards.exportOne(rec));
+      return;
+    }
+    if ("export_vcard_filtered".equals(reqAction) || "export_vcard_all".equals(reqAction)) {
+      List<contacts.ContactRec> rows = "export_vcard_all".equals(reqAction) ? contactsAll : filtered;
+      if (rows == null || rows.isEmpty()) {
+        response.sendError(400, "No contacts available to export.");
+        return;
+      }
+      String stamp = String.valueOf(Instant.now().toEpochMilli());
+      String name = "export_vcard_all".equals(reqAction) ? ("contacts-all-" + stamp + ".vcf") : ("contacts-filtered-" + stamp + ".vcf");
+      writeVCardDownload(response, name, contact_vcards.exportMany(rows));
+      return;
+    }
   }
 
   String baseQs =
@@ -280,13 +390,16 @@
     <div>
       <h1 style="margin:0;">Contacts</h1>
       <div class="meta">Manage native contacts and Clio-synced contacts linked to matters. Clio contacts are read-only in Controversies.</div>
-      <div class="meta" style="margin-top:4px;">Field names align with Microsoft Graph contact conventions (`displayName`, `givenName`, `surname`, email and phone slots) for interoperability.</div>
+      <div class="meta" style="margin-top:4px;">Field names align with Microsoft Graph contact conventions (`displayName`, `givenName`, `surname`, email/phone/address slots) and vCard interoperability.</div>
     </div>
-    <form method="post" action="<%= ctx %>/contacts.jsp" style="margin:0;">
-      <input type="hidden" name="action" value="sync_clio_contacts_now" />
-      <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-      <button class="btn btn-ghost" type="submit">Sync Clio Contacts Now</button>
-    </form>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <a class="btn btn-ghost" href="<%= ctx %>/contacts.jsp?action=export_vcard_all">Export All vCards</a>
+      <form method="post" action="<%= ctx %>/contacts.jsp" style="margin:0;">
+        <input type="hidden" name="action" value="sync_clio_contacts_now" />
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <button class="btn btn-ghost" type="submit">Sync Clio Contacts Now</button>
+      </form>
+    </div>
   </div>
 
   <% if (message != null) { %>
@@ -364,6 +477,36 @@
       <label>Country/Region
         <input type="text" name="country" />
       </label>
+      <label>Street (address 2)
+        <input type="text" name="street_secondary" />
+      </label>
+      <label>City (address 2)
+        <input type="text" name="city_secondary" />
+      </label>
+      <label>State/Province (address 2)
+        <input type="text" name="state_secondary" />
+      </label>
+      <label>Postal Code (address 2)
+        <input type="text" name="postal_code_secondary" />
+      </label>
+      <label>Country/Region (address 2)
+        <input type="text" name="country_secondary" />
+      </label>
+      <label>Street (address 3)
+        <input type="text" name="street_tertiary" />
+      </label>
+      <label>City (address 3)
+        <input type="text" name="city_tertiary" />
+      </label>
+      <label>State/Province (address 3)
+        <input type="text" name="state_tertiary" />
+      </label>
+      <label>Postal Code (address 3)
+        <input type="text" name="postal_code_tertiary" />
+      </label>
+      <label>Country/Region (address 3)
+        <input type="text" name="country_tertiary" />
+      </label>
       <label>Linked Case
         <select name="matter_uuid">
           <option value=""></option>
@@ -382,6 +525,35 @@
 
     <div class="actions" style="display:flex; gap:10px; margin-top:10px;">
       <button class="btn" type="submit">Create Contact</button>
+    </div>
+  </form>
+</section>
+
+<section class="card" style="margin-top:12px;">
+  <h2 style="margin-top:0;">vCard Import / Export</h2>
+  <div class="meta" style="margin-bottom:10px;">Bulk import supports one or many cards in one payload (`BEGIN:VCARD` ... `END:VCARD`).</div>
+  <form class="form" method="post" action="<%= ctx %>/contacts.jsp">
+    <input type="hidden" name="action" value="import_vcards" />
+    <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+    <label>Load `.vcf` file (single or bulk)
+      <input type="file" id="vcard_file_input" accept=".vcf,text/vcard,text/x-vcard" />
+    </label>
+    <label>Link imported contacts to case (optional)
+      <select name="import_matter_uuid">
+        <option value=""></option>
+        <% for (matters.MatterRec m : mattersAll) {
+             if (m == null || m.trashed) continue;
+        %>
+          <option value="<%= esc(safe(m.uuid)) %>"><%= esc(safe(m.label)) %></option>
+        <% } %>
+      </select>
+    </label>
+    <label>vCard payload (single or bulk)
+      <textarea id="vcard_payload_textarea" name="vcard_payload" rows="8" placeholder="BEGIN:VCARD&#10;VERSION:3.0&#10;FN:Alex Taylor&#10;EMAIL:alex@example.com&#10;END:VCARD"></textarea>
+    </label>
+    <div class="actions" style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+      <button class="btn" type="submit">Import vCards</button>
+      <a class="btn btn-ghost" href="<%= ctx %>/contacts.jsp?action=export_vcard_filtered&q=<%= URLEncoder.encode(q, StandardCharsets.UTF_8) %>&show=<%= URLEncoder.encode(show, StandardCharsets.UTF_8) %>&source=<%= URLEncoder.encode(sourceFilter, StandardCharsets.UTF_8) %>&matter=<%= URLEncoder.encode(matterFilter, StandardCharsets.UTF_8) %>">Export Filtered vCards</a>
     </div>
   </form>
 </section>
@@ -495,6 +667,7 @@
             <% } else { %>
               <button class="btn btn-ghost" type="button" disabled title="Edit in Clio">Edit (Clio only)</button>
             <% } %>
+            <a class="btn btn-ghost" href="<%= ctx %>/contacts.jsp?action=export_vcard&uuid=<%= URLEncoder.encode(contactUuid, StandardCharsets.UTF_8) %>">Export vCard</a>
             <% if (!c.trashed) { %>
               <form method="post" action="<%= ctx %>/contacts.jsp?<%= baseQs %>" style="display:inline;">
                 <input type="hidden" name="action" value="archive_contact" />
@@ -585,6 +758,36 @@
                     <label>Country/Region
                       <input type="text" name="country" value="<%= esc(safe(c.country)) %>" />
                     </label>
+                    <label>Street (address 2)
+                      <input type="text" name="street_secondary" value="<%= esc(safe(c.streetSecondary)) %>" />
+                    </label>
+                    <label>City (address 2)
+                      <input type="text" name="city_secondary" value="<%= esc(safe(c.citySecondary)) %>" />
+                    </label>
+                    <label>State/Province (address 2)
+                      <input type="text" name="state_secondary" value="<%= esc(safe(c.stateSecondary)) %>" />
+                    </label>
+                    <label>Postal Code (address 2)
+                      <input type="text" name="postal_code_secondary" value="<%= esc(safe(c.postalCodeSecondary)) %>" />
+                    </label>
+                    <label>Country/Region (address 2)
+                      <input type="text" name="country_secondary" value="<%= esc(safe(c.countrySecondary)) %>" />
+                    </label>
+                    <label>Street (address 3)
+                      <input type="text" name="street_tertiary" value="<%= esc(safe(c.streetTertiary)) %>" />
+                    </label>
+                    <label>City (address 3)
+                      <input type="text" name="city_tertiary" value="<%= esc(safe(c.cityTertiary)) %>" />
+                    </label>
+                    <label>State/Province (address 3)
+                      <input type="text" name="state_tertiary" value="<%= esc(safe(c.stateTertiary)) %>" />
+                    </label>
+                    <label>Postal Code (address 3)
+                      <input type="text" name="postal_code_tertiary" value="<%= esc(safe(c.postalCodeTertiary)) %>" />
+                    </label>
+                    <label>Country/Region (address 3)
+                      <input type="text" name="country_tertiary" value="<%= esc(safe(c.countryTertiary)) %>" />
+                    </label>
                     <label>Linked Case
                       <select name="matter_uuid">
                         <option value=""></option>
@@ -625,6 +828,21 @@
     if (!row) return;
     row.style.display = (row.style.display === "none" || row.style.display === "") ? "table-row" : "none";
   }
+
+  (function () {
+    var fileInput = document.getElementById("vcard_file_input");
+    var payload = document.getElementById("vcard_payload_textarea");
+    if (!fileInput || !payload) return;
+    fileInput.addEventListener("change", function () {
+      if (!fileInput.files || fileInput.files.length === 0) return;
+      var f = fileInput.files[0];
+      var reader = new FileReader();
+      reader.onload = function () {
+        payload.value = String(reader.result || "");
+      };
+      reader.readAsText(f);
+    });
+  })();
 </script>
 
 <jsp:include page="footer.jsp" />

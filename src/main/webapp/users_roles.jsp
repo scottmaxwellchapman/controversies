@@ -84,9 +84,8 @@
   }
 %>
 
-<jsp:include page="header.jsp" />
 <%@ include file="security.jspf" %>
-<% if (!require_permission("tenant_admin")) return; %>
+<jsp:include page="header.jsp" />
 
 <%
   String ctx = request.getContextPath();
@@ -294,14 +293,17 @@
 
 <div class="container main">
   <section class="card">
-    <div class="section-head">
-      <div>
-        <h1>Users & Roles</h1>
-        <div class="meta">
-          Logged in tenant: <strong><%= u_esc(sessionTenantLabel.isBlank() ? "(Unnamed tenant)" : sessionTenantLabel) %></strong>
+      <div class="section-head">
+        <div>
+          <h1>Users & Roles</h1>
+          <div class="meta">
+            Logged in tenant: <strong><%= u_esc(sessionTenantLabel.isBlank() ? "(Unnamed tenant)" : sessionTenantLabel) %></strong>
+          </div>
+          <div class="meta" style="margin-top:6px;">
+            Need tenant/group/user layered overrides? Use <a href="<%= ctx %>/permissions_management.jsp">Permission Layers</a>.
+          </div>
         </div>
       </div>
-    </div>
 
     <% if (message != null && !message.isBlank()) { %>
       <div class="alert alert-ok"><%= u_esc(message) %></div>

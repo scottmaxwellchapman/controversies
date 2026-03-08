@@ -23,11 +23,17 @@
 
   <% if (!tenantLoggedInIndex) { %>
     <div class="alert alert-warn" style="margin-top:12px;">
-      Sign in is required before accessing users, cases, tenant fields, and forms.
+      You must sign in before using Controversies features.
+      <div style="margin-top:8px;">
+        <a class="btn btn-ghost" href="<%= request.getContextPath() %>/tenant_login.jsp?next=%2Findex.jsp">Go To Login</a>
+      </div>
     </div>
   <% } else if (!userLoggedInIndex) { %>
     <div class="alert alert-warn" style="margin-top:12px;">
-      Session is incomplete. Sign in again to continue.
+      Your session is not fully authenticated. Sign in again to continue.
+      <div style="margin-top:8px;">
+        <a class="btn btn-ghost" href="<%= request.getContextPath() %>/tenant_login.jsp?next=%2Findex.jsp">Go To Login</a>
+      </div>
     </div>
   <% } else { %>
     <div class="alert alert-ok" style="margin-top:12px;">
@@ -46,25 +52,31 @@
     </article>
 
     <article class="card" style="padding:14px; margin:0;">
-      <h3 style="margin-top:0;">2. Cases</h3>
+      <h3 style="margin-top:0;">2. Permission Layers</h3>
+      <p class="muted">Manage tenant, group, and user-level permission overrides with reusable permission profiles.</p>
+      <a class="btn" href="<%= request.getContextPath() %>/permissions_management.jsp">Open Permission Layers</a>
+    </article>
+
+    <article class="card" style="padding:14px; margin:0;">
+      <h3 style="margin-top:0;">3. Cases</h3>
       <p class="muted">Create and maintain case records plus key/value replacement fields for each case.</p>
       <a class="btn" href="<%= request.getContextPath() %>/cases.jsp">Open Cases</a>
     </article>
 
     <article class="card" style="padding:14px; margin:0;">
-      <h3 style="margin-top:0;">3. Tenant Fields</h3>
+      <h3 style="margin-top:0;">4. Tenant Fields</h3>
       <p class="muted">Maintain global tenant replacement keys used across all cases and templates.</p>
       <a class="btn" href="<%= request.getContextPath() %>/tenant_fields.jsp">Open Tenant Fields</a>
     </article>
 
     <article class="card" style="padding:14px; margin:0;">
-      <h3 style="margin-top:0;">4. Attribute Editor</h3>
+      <h3 style="margin-top:0;">5. Attribute Editor</h3>
       <p class="muted">Tenant administrators configure custom matter and document attributes, including dropdown fields.</p>
       <a class="btn" href="<%= request.getContextPath() %>/attribute_editor.jsp">Open Attribute Editor</a>
     </article>
 
     <article class="card" style="padding:14px; margin:0;">
-      <h3 style="margin-top:0;">5. Form Assembly</h3>
+      <h3 style="margin-top:0;">6. Form Assembly</h3>
       <p class="muted">Assemble DOCX/DOC/RTF/ODT/TXT templates with style preservation and replace-once/all preview tools.</p>
       <a class="btn" href="<%= request.getContextPath() %>/forms.jsp">Open Form Assembly</a>
     </article>

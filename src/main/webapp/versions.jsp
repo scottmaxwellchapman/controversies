@@ -14,6 +14,7 @@
 <%@ page import="net.familylawandprobate.controversies.documents" %>
 <%@ page import="net.familylawandprobate.controversies.pdf_redaction_service" %>
 <%@ page import="net.familylawandprobate.controversies.pdf_version_background_jobs" %>
+<%@ page import="net.familylawandprobate.controversies.texas_pdf_compatibility_checker" %>
 <%@ include file="security.jspf" %>
 <% if (!require_login()) return; %>
 <%!
@@ -125,6 +126,8 @@ response.setDateHeader("Expires", 0L);
 String csrfToken = csrfForRender(request);
 String tenantUuid = safe((String)session.getAttribute(S_TENANT_UUID)).trim();
 if (tenantUuid.isBlank()) { response.sendRedirect(ctx + "/tenant_login.jsp"); return; }
+String actingUser = safe((String)session.getAttribute("user.email")).trim();
+if (actingUser.isBlank()) actingUser = safe((String)session.getAttribute("user.uuid")).trim();
 String caseUuid = safe(request.getParameter("case_uuid")).trim();
 String docUuid = safe(request.getParameter("doc_uuid")).trim();
 String partUuid = safe(request.getParameter("part_uuid")).trim();
@@ -250,14 +253,14 @@ if ("POST".equalsIgnoreCase(request.getMethod())) {
       versions.create(tenantUuid, caseUuid, docUuid, partUuid,
         request.getParameter("version_label"), request.getParameter("source"), request.getParameter("mime_type"),
         finalSha, String.valueOf(assembledSize), outputPath.toUri().toString(),
-        request.getParameter("created_by"), request.getParameter("notes"), "1".equals(request.getParameter("make_current")));
+        actingUser, request.getParameter("notes"), "1".equals(request.getParameter("make_current")));
       response.sendRedirect(ctx + "/versions.jsp?case_uuid=" + java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) + "&doc_uuid=" + java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) + "&part_uuid=" + java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) + "&uploaded=1");
       return;
     } else {
       versions.create(tenantUuid, caseUuid, docUuid, partUuid,
         request.getParameter("version_label"), request.getParameter("source"), request.getParameter("mime_type"),
         request.getParameter("checksum"), request.getParameter("file_size_bytes"), request.getParameter("storage_path"),
-        request.getParameter("created_by"), request.getParameter("notes"), "1".equals(request.getParameter("make_current")));
+        actingUser, request.getParameter("notes"), "1".equals(request.getParameter("make_current")));
       response.sendRedirect(ctx + "/versions.jsp?case_uuid=" + java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) + "&doc_uuid=" + java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) + "&part_uuid=" + java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8));
       return;
     }
@@ -276,6 +279,29 @@ if ("1".equals(request.getParameter("redacted"))) message = "Redacted PDF saved 
 if ("1".equals(request.getParameter("ocr_queued"))) message = "OCR job queued in background.";
 if ("1".equals(request.getParameter("flat_queued"))) message = "Flatten job queued in background.";
 List<part_versions.VersionRec> rows = versions.listAll(tenantUuid, caseUuid, docUuid, partUuid);
+String checkPdfVersionUuid = safe(request.getParameter("check_pdf_version_uuid")).trim();
+part_versions.VersionRec checkedPdfVersion = null;
+texas_pdf_compatibility_checker.Report checkedPdfReport = null;
+if (!checkPdfVersionUuid.isBlank()) {
+  checkedPdfVersion = findVersion(rows, checkPdfVersionUuid);
+  if (checkedPdfVersion == null) {
+    if (safe(error).isBlank()) error = "Compatibility check version not found.";
+  } else if (!isPdfVersion(checkedPdfVersion)) {
+    if (safe(error).isBlank()) error = "Compatibility check is available for PDF versions only.";
+  } else {
+    try {
+      Path checkedPdfPath = pdf_redaction_service.resolveStoragePath(checkedPdfVersion.storagePath);
+      pdf_redaction_service.requirePathWithinTenant(checkedPdfPath, tenantUuid, "Compatibility check file path");
+      if (checkedPdfPath == null || !Files.isRegularFile(checkedPdfPath)) {
+        if (safe(error).isBlank()) error = "Compatibility check file not found.";
+      } else {
+        checkedPdfReport = texas_pdf_compatibility_checker.evaluate(checkedPdfPath);
+      }
+    } catch (Exception ex) {
+      if (safe(error).isBlank()) error = "Unable to run compatibility check: " + safe(ex.getMessage());
+    }
+  }
+}
 String viewVersionUuid = safe(request.getParameter("view_version_uuid")).trim();
 int viewPageParam = intOrDefault(request.getParameter("page"), 0);
 int gotoPageParam = intOrDefault(request.getParameter("goto_page"), -1);
@@ -320,6 +346,14 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
   .versions-preview-copy-btn svg { width:15px; height:15px; display:block; fill:currentColor; }
   .versions-preview-copy-status { min-height:1em; }
   .versions-preview-hidden-text { position:absolute; left:-9999px; width:1px; height:1px; opacity:0; pointer-events:none; }
+  .tx-compat-summary { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .tx-compat-badge { display:inline-flex; align-items:center; border:1px solid var(--border); border-radius:999px; padding:2px 8px; font-size:12px; font-weight:600; text-transform:uppercase; }
+  .tx-compat-badge.pass { color:#065f46; border-color:#34d399; background:#ecfdf5; }
+  .tx-compat-badge.warn { color:#92400e; border-color:#f59e0b; background:#fffbeb; }
+  .tx-compat-badge.fail { color:#991b1b; border-color:#f87171; background:#fef2f2; }
+  .tx-compat-badge.info { color:#1e3a8a; border-color:#93c5fd; background:#eff6ff; }
+  .tx-compat-req { font-weight:600; color:var(--text); }
+  .tx-compat-detail { color:var(--muted); font-size:12px; margin-top:2px; }
   .versions-preview-doc-nav { margin-top:8px; border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:6px 8px; }
   .versions-preview-doc-nav summary { cursor:pointer; font-weight:600; color:var(--text); }
   .versions-preview-doc-nav-list { margin-top:8px; display:grid; gap:6px; }
@@ -362,7 +396,7 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
 <div class="grid grid-3"><div><label>Version Label</label><input type="text" name="version_label" required <%= docReadOnly ? "disabled" : "" %> /></div><div><label>Source</label><input type="text" name="source" placeholder="uploaded/ocr/generated" <%= docReadOnly ? "disabled" : "" %> /></div><div><label>MIME Type</label><input type="text" name="mime_type" placeholder="application/pdf" <%= docReadOnly ? "disabled" : "" %>/></div></div>
 <div class="grid grid-3"><div><label>Checksum</label><input type="text" name="checksum" <%= docReadOnly ? "disabled" : "" %>/></div><div><label>File Size (bytes)</label><input type="text" name="file_size_bytes" <%= docReadOnly ? "disabled" : "" %>/></div><div><label>Storage Path</label><input type="text" name="storage_path" placeholder="vault://..." <%= docReadOnly ? "disabled" : "" %>/></div></div>
 <div class="grid grid-3"><div><label>Version File (chunk upload)</label><input type="file" id="version_upload_file" <%= docReadOnly ? "disabled" : "" %> /></div><div><label>Chunk Status</label><div id="chunk_upload_status" class="meta"><%= docReadOnly ? "Read-only document." : "No file selected." %></div></div><div></div></div>
-<div class="grid grid-3"><div><label>Created By</label><input type="text" name="created_by" <%= docReadOnly ? "disabled" : "" %>/></div><div><label>Notes</label><input type="text" name="notes" <%= docReadOnly ? "disabled" : "" %>/></div><div><label><input type="checkbox" name="make_current" value="1" checked <%= docReadOnly ? "disabled" : "" %> /> Mark current</label></div></div>
+<div class="grid grid-3"><div><label>Created By</label><input type="text" name="created_by" value="<%= esc(actingUser) %>" readonly <%= docReadOnly ? "disabled" : "" %>/></div><div><label>Notes</label><input type="text" name="notes" <%= docReadOnly ? "disabled" : "" %>/></div><div><label><input type="checkbox" name="make_current" value="1" checked <%= docReadOnly ? "disabled" : "" %> /> Mark current</label></div></div>
 <button class="btn" type="submit" <%= docReadOnly ? "disabled" : "" %>>Add Version</button>
 </form>
 <% if (!safe(message).isBlank()) { %><div class="alert" style="margin-top:10px;"><%= esc(message) %></div><% } %>
@@ -385,6 +419,9 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
     <% if (rowPreviewRenderable) { %>
       <a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(docUuid) %>&part_uuid=<%= enc(partUuid) %>&view_version_uuid=<%= enc(safe(r.uuid)) %>&page=0">Preview</a>
     <% } %>
+    <% if (isPdfVersion(r)) { %>
+      <a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(docUuid) %>&part_uuid=<%= enc(partUuid) %>&check_pdf_version_uuid=<%= enc(safe(r.uuid)) %>">TX Check</a>
+    <% } %>
     <% if (!docReadOnly && isPdfVersion(r)) { %>
       <a class="btn btn-ghost" href="<%= ctx %>/pdf_redact.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>&source_version_uuid=<%= java.net.URLEncoder.encode(safe(r.uuid), java.nio.charset.StandardCharsets.UTF_8) %>">Redact</a>
       <form method="post" action="<%= ctx %>/versions.jsp?case_uuid=<%= java.net.URLEncoder.encode(caseUuid, java.nio.charset.StandardCharsets.UTF_8) %>&doc_uuid=<%= java.net.URLEncoder.encode(docUuid, java.nio.charset.StandardCharsets.UTF_8) %>&part_uuid=<%= java.net.URLEncoder.encode(partUuid, java.nio.charset.StandardCharsets.UTF_8) %>" style="display:inline;">
@@ -404,6 +441,59 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
 </tr>
 <% } %>
 </tbody></table></section>
+<% if (checkedPdfReport != null && checkedPdfVersion != null) { %>
+<section class="card" style="margin-top:12px;">
+  <div class="section-head">
+    <div>
+      <h2 style="margin:0;">Texas PDF Compatibility Check</h2>
+      <div class="meta">
+        Version: <strong><%= esc(displayVersionLabel(checkedPdfVersion)) %></strong>
+        |
+        Standard:
+        <a href="<%= esc(checkedPdfReport.standardsUrl) %>" target="_blank" rel="noopener noreferrer"><%= esc(checkedPdfReport.standardsLabel) %></a>
+      </div>
+    </div>
+    <div class="tx-compat-summary">
+      <% if (checkedPdfReport.compatible) { %>
+        <span class="tx-compat-badge pass">Compatible</span>
+      <% } else { %>
+        <span class="tx-compat-badge fail">Not Compatible</span>
+      <% } %>
+      <span class="meta">Fails: <strong><%= checkedPdfReport.failCount %></strong></span>
+      <span class="meta">Warnings: <strong><%= checkedPdfReport.warnCount %></strong></span>
+      <span class="meta">Pages: <strong><%= checkedPdfReport.pageCount %></strong></span>
+      <span class="meta">PDF v<strong><%= esc(checkedPdfReport.pdfVersion) %></strong></span>
+    </div>
+  </div>
+  <div class="meta" style="margin-top:6px;">Checked at: <%= esc(checkedPdfReport.checkedAt) %> | File: <%= esc(checkedPdfReport.fileName) %></div>
+  <div class="table-wrap" style="margin-top:10px;">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:110px;">Rule</th>
+          <th style="width:130px;">Status</th>
+          <th>Requirement + Result</th>
+        </tr>
+      </thead>
+      <tbody>
+      <% for (texas_pdf_compatibility_checker.CheckResult c : checkedPdfReport.checks) {
+           if (c == null) continue;
+           String status = safe(c.status == null ? "" : c.status.name()).toLowerCase(java.util.Locale.ROOT);
+      %>
+        <tr>
+          <td><code><%= esc(c.code) %></code></td>
+          <td><span class="tx-compat-badge <%= esc(status) %>"><%= esc(status) %></span></td>
+          <td>
+            <div class="tx-compat-req"><%= esc(c.requirement) %></div>
+            <div class="tx-compat-detail"><%= esc(c.detail) %></div>
+          </td>
+        </tr>
+      <% } %>
+      </tbody>
+    </table>
+  </div>
+</section>
+<% } %>
 <% if (viewedPage != null && viewedVersion != null && !safe(viewedPage.base64Png).isBlank()) {
      int viewedPageOne = viewedPage.pageIndex + 1;
      String viewedTotalLabel = viewedPage.totalKnown ? String.valueOf(viewedPage.totalPages) : (viewedPage.totalPages + "+");
@@ -658,7 +748,6 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
       commitParams.set("version_label", form.elements["version_label"].value || "");
       commitParams.set("source", form.elements["source"].value || "");
       commitParams.set("mime_type", form.elements["mime_type"].value || "");
-      commitParams.set("created_by", form.elements["created_by"].value || "");
       commitParams.set("notes", form.elements["notes"].value || "");
       commitParams.set("make_current", form.elements["make_current"] && form.elements["make_current"].checked ? "1" : "0");
 

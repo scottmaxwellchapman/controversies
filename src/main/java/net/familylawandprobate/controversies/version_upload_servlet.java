@@ -23,6 +23,8 @@ public final class version_upload_servlet extends HttpServlet {
     private static final Logger LOG = Logger.getLogger(version_upload_servlet.class.getName());
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String S_TENANT_UUID = "tenant.uuid";
+    private static final String S_USER_UUID = users_roles.S_USER_UUID;
+    private static final String S_USER_EMAIL = users_roles.S_USER_EMAIL;
 
     private final version_upload_service service = version_upload_service.defaultService();
 
@@ -31,9 +33,16 @@ public final class version_upload_servlet extends HttpServlet {
         String requestId = UUID.randomUUID().toString();
         try {
             HttpSession sess = req.getSession(false);
+            security.sec_bind(req, resp, null, sess);
+            if (!security.require_login()) return;
+            if (!security.require_permission("documents.access")) return;
+
+            sess = req.getSession(false);
             String tenantUuid = safe(sess == null ? null : (String) sess.getAttribute(S_TENANT_UUID)).trim();
-            if (tenantUuid.isBlank()) {
-                writeError(resp, 401, "unauthorized", "Authentication required.", requestId);
+            String userUuid = safe(sess == null ? null : (String) sess.getAttribute(S_USER_UUID)).trim();
+            String userEmail = safe(sess == null ? null : (String) sess.getAttribute(S_USER_EMAIL)).trim();
+            if (tenantUuid.isBlank() || (userUuid.isBlank() && userEmail.isBlank())) {
+                writeError(resp, 401, "unauthorized", "Authenticated user context is required.", requestId);
                 return;
             }
 
@@ -45,7 +54,8 @@ public final class version_upload_servlet extends HttpServlet {
                 return;
             }
             if ("commit".equals(action)) {
-                handleCommit(req, resp, tenantUuid, requestId);
+                String createdBy = !userEmail.isBlank() ? userEmail : userUuid;
+                handleCommit(req, resp, tenantUuid, createdBy, requestId);
                 return;
             }
             if ("diag".equals(action) || "diagnostics".equals(action)) {
@@ -101,6 +111,7 @@ public final class version_upload_servlet extends HttpServlet {
     private void handleCommit(HttpServletRequest req,
                               HttpServletResponse resp,
                               String tenantUuid,
+                              String createdBy,
                               String requestId) throws Exception {
         String caseUuid = pick(req, "case_uuid", "X-Case-UUID");
         String docUuid = pick(req, "doc_uuid", "X-Doc-UUID");
@@ -115,7 +126,7 @@ public final class version_upload_servlet extends HttpServlet {
         commitReq.versionLabel = req.getParameter("version_label");
         commitReq.source = req.getParameter("source");
         commitReq.mimeType = req.getParameter("mime_type");
-        commitReq.createdBy = req.getParameter("created_by");
+        commitReq.createdBy = safe(createdBy).trim();
         commitReq.notes = req.getParameter("notes");
         commitReq.makeCurrent = "1".equals(req.getParameter("make_current"));
 

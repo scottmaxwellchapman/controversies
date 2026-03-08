@@ -109,6 +109,24 @@ public final class business_process_manager {
         public String undoState = "active"; // active, undone, undo_partial, redo_partial
     }
 
+    public static final class RunHealthIssue {
+        public String runUuid = "";
+        public String processUuid = "";
+        public String processName = "";
+        public String status = "";
+        public String startedAt = "";
+        public String completedAt = "";
+        public String humanReviewUuid = "";
+        public String issueType = "";
+        public String severity = "";
+        public String summary = "";
+        public String recommendation = "";
+        public long ageMinutes = -1L;
+        public boolean canMarkFailed = false;
+        public boolean canRetry = false;
+        public boolean canResolveReview = false;
+    }
+
     public static final class HumanReviewTask {
         public String reviewUuid = "";
         public String processUuid = "";
@@ -594,6 +612,7 @@ public final class business_process_manager {
             found.comment = safe(comment);
             found.input = in;
 
+            RunResult resumed = null;
             if (approved) {
                 ProcessDefinition process = getProcess(tu, found.processUuid);
                 if (process == null || !process.enabled) {
@@ -610,7 +629,7 @@ public final class business_process_manager {
                     }
 
                     LinkedHashMap<String, String> payload = extractEventPayload(context);
-                    RunResult resumed = executeProcess(
+                    resumed = executeProcess(
                             tu,
                             process,
                             safe(found.eventType),
@@ -628,6 +647,15 @@ public final class business_process_manager {
             } else {
                 found.resumeStatus = "rejected";
                 found.resumeMessage = "Human review rejected.";
+            }
+
+            try {
+                updateRequestRunAfterReviewLocked(tu, found, approved, resumed);
+            } catch (Exception ex) {
+                LOG.log(Level.WARNING,
+                        "Unable to finalize request run after review tenant=" + tu + ", review=" + safe(found.reviewUuid)
+                                + ": " + safe(ex.getMessage()),
+                        ex);
             }
 
             writeReviewsLocked(tu, rows);
@@ -680,6 +708,264 @@ public final class business_process_manager {
         } finally {
             lock.readLock().unlock();
         }
+    }
+
+    public List<RunHealthIssue> inspectRunHealth(String tenantUuid,
+                                                 int runningStaleMinutes,
+                                                 int reviewStaleMinutes,
+                                                 int limit) throws Exception {
+        String tu = safeFileToken(tenantUuid);
+        if (tu.isBlank()) return List.of();
+        ensureTenant(tu);
+
+        int runningCutoffMinutes = Math.max(1, Math.min(43200, runningStaleMinutes));
+        int reviewCutoffMinutes = Math.max(1, Math.min(43200, reviewStaleMinutes));
+        int max = Math.max(1, Math.min(2000, limit));
+        Instant now = Instant.now();
+
+        ReentrantReadWriteLock lock = lockFor(tu);
+        lock.readLock().lock();
+        try {
+            LinkedHashMap<String, HumanReviewTask> reviewsByUuid = new LinkedHashMap<String, HumanReviewTask>();
+            for (HumanReviewTask review : readReviewsLocked(tu)) {
+                if (review == null) continue;
+                String reviewUuid = safe(review.reviewUuid).trim();
+                if (reviewUuid.isBlank()) continue;
+                reviewsByUuid.put(reviewUuid, review);
+            }
+
+            ArrayList<RunHealthIssue> out = new ArrayList<RunHealthIssue>();
+            Path dir = runsDir(tu);
+            if (!Files.isDirectory(dir)) return out;
+
+            try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir, "*.xml")) {
+                for (Path p : ds) {
+                    RunSnapshot snap = readRunSnapshot(p);
+                    if (snap == null || snap.result == null) continue;
+
+                    RunResult run = snap.result;
+                    String status = safe(run.status).trim().toLowerCase(Locale.ROOT);
+                    if (!"running".equals(status) && !"waiting_human_review".equals(status)) continue;
+
+                    if ("running".equals(status)) {
+                        long ageMinutes = ageMinutes(run.startedAt, now);
+                        if (ageMinutes < runningCutoffMinutes) continue;
+                        RunHealthIssue issue = baseRunIssue(run);
+                        issue.issueType = "stale_running_run";
+                        issue.severity = "high";
+                        issue.ageMinutes = ageMinutes;
+                        issue.summary = "Run has remained in running state beyond the stale threshold.";
+                        issue.recommendation = "Mark failed, then retry after validating downstream dependencies.";
+                        issue.canMarkFailed = true;
+                        issue.canRetry = true;
+                        out.add(issue);
+                        continue;
+                    }
+
+                    String reviewUuid = safe(run.humanReviewUuid).trim();
+                    HumanReviewTask review = reviewsByUuid.get(reviewUuid);
+                    if (review == null) {
+                        RunHealthIssue issue = baseRunIssue(run);
+                        issue.issueType = "orphaned_waiting_run";
+                        issue.severity = "high";
+                        issue.ageMinutes = ageMinutes(run.startedAt, now);
+                        issue.summary = "Run is waiting for human review, but the review task is missing.";
+                        issue.recommendation = "Mark failed and retry if still needed.";
+                        issue.canMarkFailed = true;
+                        issue.canRetry = true;
+                        out.add(issue);
+                        continue;
+                    }
+
+                    String reviewStatus = safe(review.status).trim().toLowerCase(Locale.ROOT);
+                    if (!"pending".equals(reviewStatus)) {
+                        RunHealthIssue issue = baseRunIssue(run);
+                        issue.issueType = "resolved_review_waiting_run";
+                        issue.severity = "high";
+                        issue.ageMinutes = ageMinutes(run.startedAt, now);
+                        issue.summary = "Run is still waiting even though its review task is " + reviewStatus + ".";
+                        issue.recommendation = "Mark failed, or retry if process should continue from event payload.";
+                        issue.canMarkFailed = true;
+                        issue.canRetry = true;
+                        out.add(issue);
+                        continue;
+                    }
+
+                    long reviewAgeMinutes = ageMinutes(review.createdAt, now);
+                    if (reviewAgeMinutes < reviewCutoffMinutes) continue;
+
+                    RunHealthIssue issue = baseRunIssue(run);
+                    issue.issueType = "stale_human_review";
+                    issue.severity = "medium";
+                    issue.ageMinutes = reviewAgeMinutes;
+                    issue.summary = "Human review has been pending beyond the configured threshold.";
+                    issue.recommendation = "Reject the review if obsolete, or complete the review queue to resume.";
+                    issue.canMarkFailed = true;
+                    issue.canRetry = true;
+                    issue.canResolveReview = true;
+                    out.add(issue);
+                }
+            }
+
+            out.sort((a, b) -> {
+                int bySeverity = Integer.compare(severityRank(safe(b.severity)), severityRank(safe(a.severity)));
+                if (bySeverity != 0) return bySeverity;
+                int byAge = Long.compare(Math.max(0L, b.ageMinutes), Math.max(0L, a.ageMinutes));
+                if (byAge != 0) return byAge;
+                return safe(b.startedAt).compareTo(safe(a.startedAt));
+            });
+            if (out.size() > max) return new ArrayList<RunHealthIssue>(out.subList(0, max));
+            return out;
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public RunResult markRunFailed(String tenantUuid,
+                                   String runUuid,
+                                   String actorUserUuid,
+                                   String operatorNote) throws Exception {
+        String tu = safeFileToken(tenantUuid);
+        String ru = safeFileToken(runUuid);
+        if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
+        if (ru.isBlank()) throw new IllegalArgumentException("runUuid required");
+        ensureTenant(tu);
+
+        ReentrantReadWriteLock lock = lockFor(tu);
+        lock.writeLock().lock();
+        try {
+            Path p = runPath(tu, ru);
+            if (!Files.exists(p)) throw new IllegalArgumentException("Run not found.");
+            RunSnapshot snap = readRunSnapshot(p);
+            if (snap == null || snap.result == null) throw new IllegalArgumentException("Run data missing.");
+
+            String status = safe(snap.result.status).trim().toLowerCase(Locale.ROOT);
+            if ("completed".equals(status) || "completed_with_errors".equals(status) || "failed".equals(status)) {
+                snap.logs.add(new RunLogEntry(nowIso(), "info", "run.force_failed.noop", "", "Run is already terminal."));
+                writeRunSnapshot(tu, snap);
+                return snap.result;
+            }
+
+            String note = safe(operatorNote).trim();
+            String message = "Run marked failed by operator.";
+            if (!note.isBlank()) message = message + " " + note;
+
+            snap.result.status = "failed";
+            snap.result.completedAt = nowIso();
+            snap.result.message = message;
+            snap.logs.add(new RunLogEntry(nowIso(), "warning", "run.force_failed", "", message));
+
+            String reviewUuid = safe(snap.result.humanReviewUuid).trim();
+            if (!reviewUuid.isBlank()) {
+                markReviewErrorLocked(tu, reviewUuid, safe(actorUserUuid), message);
+            }
+
+            writeRunSnapshot(tu, snap);
+
+            activity_log.defaultStore().logWarning(
+                    "bpm.run.force_failed",
+                    tu,
+                    safe(actorUserUuid),
+                    safe(snap.context.get("event.matter_uuid")),
+                    safe(snap.context.get("event.doc_uuid")),
+                    Map.of(
+                            "run_uuid", safe(snap.result.runUuid),
+                            "process_uuid", safe(snap.result.processUuid),
+                            "status_before", status
+                    )
+            );
+            return snap.result;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public RunResult retryRun(String tenantUuid,
+                              String runUuid,
+                              String actorUserUuid,
+                              String reason) throws Exception {
+        String tu = safeFileToken(tenantUuid);
+        String ru = safeFileToken(runUuid);
+        if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
+        if (ru.isBlank()) throw new IllegalArgumentException("runUuid required");
+        ensureTenant(tu);
+
+        RunSnapshot source;
+        ReentrantReadWriteLock lock = lockFor(tu);
+        lock.readLock().lock();
+        try {
+            Path p = runPath(tu, ru);
+            if (!Files.exists(p)) throw new IllegalArgumentException("Run not found.");
+            source = readRunSnapshot(p);
+            if (source == null || source.result == null) throw new IllegalArgumentException("Run data missing.");
+        } finally {
+            lock.readLock().unlock();
+        }
+
+        String processUuid = safe(source.result.processUuid).trim();
+        if (processUuid.isBlank()) throw new IllegalArgumentException("Run does not have process_uuid.");
+        ProcessDefinition process = getProcess(tu, processUuid);
+        if (process == null || !process.enabled) {
+            throw new IllegalArgumentException("Unable to retry because process is missing or disabled.");
+        }
+
+        LinkedHashMap<String, String> payload = extractEventPayload(source.context);
+        RunResult retried = executeProcess(
+                tu,
+                process,
+                safe(source.result.eventType),
+                payload,
+                safe(actorUserUuid),
+                "bpm.run.retry",
+                0,
+                0,
+                new LinkedHashMap<String, String>()
+        );
+
+        lock.writeLock().lock();
+        try {
+            Path p = runPath(tu, ru);
+            if (Files.exists(p)) {
+                RunSnapshot refresh = readRunSnapshot(p);
+                if (refresh != null && refresh.result != null) {
+                    String statusBefore = safe(refresh.result.status).trim().toLowerCase(Locale.ROOT);
+                    String msg = "Retried as run " + safe(retried.runUuid) + ".";
+                    String note = safe(reason).trim();
+                    if (!note.isBlank()) msg = msg + " " + note;
+
+                    if (!("completed".equals(statusBefore) || "completed_with_errors".equals(statusBefore) || "failed".equals(statusBefore))) {
+                        refresh.result.status = "failed";
+                        refresh.result.completedAt = nowIso();
+                    }
+                    refresh.result.message = msg;
+                    refresh.logs.add(new RunLogEntry(nowIso(), "warning", "run.retry", "", msg));
+
+                    String reviewUuid = safe(refresh.result.humanReviewUuid).trim();
+                    if (!reviewUuid.isBlank()) {
+                        markReviewErrorLocked(tu, reviewUuid, safe(actorUserUuid), msg);
+                    }
+
+                    writeRunSnapshot(tu, refresh);
+                }
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
+
+        activity_log.defaultStore().logWarning(
+                "bpm.run.retry",
+                tu,
+                safe(actorUserUuid),
+                safe(source.context.get("event.matter_uuid")),
+                safe(source.context.get("event.doc_uuid")),
+                Map.of(
+                        "source_run_uuid", safe(source.result.runUuid),
+                        "retry_run_uuid", safe(retried.runUuid),
+                        "process_uuid", safe(source.result.processUuid),
+                        "event_type", safe(source.result.eventType)
+                )
+        );
+        return retried;
     }
 
     public RunResult undoRun(String tenantUuid, String runUuid, String actorUserUuid) throws Exception {
@@ -2574,6 +2860,106 @@ public final class business_process_manager {
         return out;
     }
 
+    private static RunHealthIssue baseRunIssue(RunResult run) {
+        RunHealthIssue issue = new RunHealthIssue();
+        if (run == null) return issue;
+        issue.runUuid = safe(run.runUuid);
+        issue.processUuid = safe(run.processUuid);
+        issue.processName = safe(run.processName);
+        issue.status = safe(run.status);
+        issue.startedAt = safe(run.startedAt);
+        issue.completedAt = safe(run.completedAt);
+        issue.humanReviewUuid = safe(run.humanReviewUuid);
+        return issue;
+    }
+
+    private static int severityRank(String severity) {
+        String s = safe(severity).trim().toLowerCase(Locale.ROOT);
+        if ("high".equals(s)) return 3;
+        if ("medium".equals(s)) return 2;
+        if ("low".equals(s)) return 1;
+        return 0;
+    }
+
+    private static void markReviewErrorLocked(String tenantUuid,
+                                              String reviewUuid,
+                                              String actorUserUuid,
+                                              String message) throws Exception {
+        String target = safe(reviewUuid).trim();
+        if (target.isBlank()) return;
+
+        List<HumanReviewTask> rows = readReviewsLocked(tenantUuid);
+        boolean changed = false;
+        for (HumanReviewTask row : rows) {
+            if (row == null) continue;
+            if (!target.equals(safe(row.reviewUuid).trim())) continue;
+            if (!"pending".equalsIgnoreCase(safe(row.status))) continue;
+
+            row.status = "error";
+            row.reviewedByUserUuid = safe(actorUserUuid);
+            row.resolvedAt = nowIso();
+            row.resumeStatus = "error";
+            row.resumeMessage = safe(message).isBlank() ? "Run marked failed by operator." : safe(message);
+
+            String comment = safe(row.comment).trim();
+            String note = safe(message).trim();
+            if (!note.isBlank()) {
+                if (comment.isBlank()) row.comment = note;
+                else if (!comment.contains(note)) row.comment = comment + " | " + note;
+            }
+            changed = true;
+            break;
+        }
+
+        if (changed) {
+            writeReviewsLocked(tenantUuid, rows);
+        }
+    }
+
+    private static void updateRequestRunAfterReviewLocked(String tenantUuid,
+                                                          HumanReviewTask review,
+                                                          boolean approved,
+                                                          RunResult resumed) throws Exception {
+        if (review == null) return;
+        String requestRunUuid = safe(review.requestRunUuid).trim();
+        if (requestRunUuid.isBlank()) return;
+
+        Path runFile = runPath(tenantUuid, requestRunUuid);
+        if (!Files.exists(runFile)) return;
+        RunSnapshot snap = readRunSnapshot(runFile);
+        if (snap == null || snap.result == null) return;
+
+        String current = safe(snap.result.status).trim().toLowerCase(Locale.ROOT);
+        if (!"waiting_human_review".equals(current) && !"running".equals(current)) return;
+
+        String now = nowIso();
+        snap.result.completedAt = now;
+
+        if (approved) {
+            String downstreamRunUuid = safe(resumed == null ? review.resumedRunUuid : resumed.runUuid);
+            String downstreamStatus = safe(resumed == null ? review.resumeStatus : resumed.status).trim().toLowerCase(Locale.ROOT);
+
+            if ("failed".equals(downstreamStatus)) snap.result.status = "failed";
+            else if ("completed_with_errors".equals(downstreamStatus)) snap.result.status = "completed_with_errors";
+            else snap.result.status = "completed";
+
+            String msg = "Human review approved.";
+            if (!downstreamRunUuid.isBlank()) msg = msg + " Continued in run " + downstreamRunUuid + ".";
+            if (!downstreamStatus.isBlank()) msg = msg + " Resume status=" + downstreamStatus + ".";
+            snap.result.message = msg;
+            snap.logs.add(new RunLogEntry(now, "info", "review.approved", "", msg));
+        } else {
+            snap.result.status = "failed";
+            String msg = "Human review rejected.";
+            String comment = safe(review.comment).trim();
+            if (!comment.isBlank()) msg = msg + " Comment: " + comment;
+            snap.result.message = msg;
+            snap.logs.add(new RunLogEntry(now, "warning", "review.rejected", "", msg));
+        }
+
+        writeRunSnapshot(tenantUuid, snap);
+    }
+
     private static LinkedHashMap<String, String> extractEventPayload(Map<String, String> context) {
         LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
         if (context == null) return out;
@@ -3160,6 +3546,25 @@ public final class business_process_manager {
         } catch (Exception ignored) {
             return def;
         }
+    }
+
+    private static Instant parseInstant(String raw) {
+        String s = safe(raw).trim();
+        if (s.isBlank()) return null;
+        try {
+            return Instant.parse(s);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static long ageMinutes(String startedAt, Instant now) {
+        Instant start = parseInstant(startedAt);
+        if (start == null) return -1L;
+        Instant ref = now == null ? Instant.now() : now;
+        long seconds = ref.getEpochSecond() - start.getEpochSecond();
+        if (seconds < 0) return 0L;
+        return seconds / 60L;
     }
 
     private static String nowIso() {

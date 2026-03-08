@@ -26,14 +26,32 @@ public class contacts_test {
             contacts.ContactInput nativeInput = new contacts.ContactInput();
             nativeInput.displayName = "Native Contact";
             nativeInput.emailPrimary = "native@example.test";
+            nativeInput.street = "100 Main St";
+            nativeInput.city = "Dallas";
+            nativeInput.state = "TX";
+            nativeInput.postalCode = "75001";
+            nativeInput.country = "US";
+            nativeInput.streetSecondary = "200 Oak Ave";
+            nativeInput.citySecondary = "Austin";
+            nativeInput.stateSecondary = "TX";
+            nativeInput.postalCodeSecondary = "73301";
+            nativeInput.countrySecondary = "US";
             contacts.ContactRec nativeRec = store.createNative(tenantUuid, nativeInput);
             assertFalse(contacts.isClioLocked(nativeRec));
+            assertEquals("200 Oak Ave", nativeRec.streetSecondary);
 
             contacts.ContactInput update = new contacts.ContactInput();
             update.displayName = "Native Contact Updated";
+            update.streetTertiary = "300 Pine Rd";
+            update.cityTertiary = "Houston";
+            update.stateTertiary = "TX";
+            update.postalCodeTertiary = "77001";
+            update.countryTertiary = "US";
             assertTrue(store.updateNative(tenantUuid, nativeRec.uuid, update));
             contacts.ContactRec updated = store.getByUuid(tenantUuid, nativeRec.uuid);
             assertEquals("Native Contact Updated", updated.displayName);
+            assertEquals("300 Pine Rd", updated.streetTertiary);
+            assertEquals("Houston", updated.cityTertiary);
 
             contacts.ContactInput clioInput = new contacts.ContactInput();
             clioInput.displayName = "Clio Contact";

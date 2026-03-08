@@ -65,6 +65,8 @@ String ctx = safe(request.getContextPath());
 String csrfToken = csrfForRender(request);
 String tenantUuid = safe((String)session.getAttribute(S_TENANT_UUID)).trim();
 if (tenantUuid.isBlank()) { response.sendRedirect(ctx + "/tenant_login.jsp"); return; }
+String actingUser = safe((String)session.getAttribute("user.email")).trim();
+if (actingUser.isBlank()) actingUser = safe((String)session.getAttribute("user.uuid")).trim();
 
 String caseUuid = safe(request.getParameter("case_uuid")).trim();
 String docUuid = safe(request.getParameter("doc_uuid")).trim();
@@ -200,7 +202,7 @@ if ("POST".equalsIgnoreCase(request.getMethod())) {
         sha256,
         String.valueOf(bytes),
         outputPath.toUri().toString(),
-        request.getParameter("created_by"),
+        actingUser,
         notes,
         "1".equals(request.getParameter("make_current"))
       );
@@ -333,7 +335,7 @@ if (totalPages > 0 && initialPage > totalPages) initialPage = totalPages;
           </div>
           <div>
             <label>Created By</label>
-            <input type="text" name="created_by" value="<%= esc(safe((String)session.getAttribute("user.email"))) %>" />
+            <input type="text" name="created_by" value="<%= esc(actingUser) %>" readonly />
           </div>
           <div>
             <label><input type="checkbox" name="make_current" value="1" checked /> Mark as current version</label>

@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.logging.Logger;
 
 import jakarta.servlet.http.HttpSession;
 
@@ -74,10 +75,14 @@ import org.xml.sax.InputSource;
  *
  * Tenant bootstrap (idempotent; called from ensure()):
  *   - Ensures a role "Tenant Administrator" exists, enabled, with permission tenant_admin=true
- *   - Ensures a user "tenant_admin" exists, enabled, assigned to that role, with default password "password"
- *     (only sets the default password if the user is new OR has a blank hash; does not reset existing hashes)
+ *   - Ensures a user "tenant_admin" exists, enabled, and assigned to that role.
+ *   - Bootstrap password source:
+ *     1) System property/env CONTROVERSIES_BOOTSTRAP_PASSWORD
+ *     2) Generated one-time random password (logged once at WARN level)
+ *     (only sets a password hash if the user is new OR has a blank hash; does not reset existing hashes)
  */
 public final class users_roles {
+    private static final Logger LOG = Logger.getLogger(users_roles.class.getName());
 
     // -----------------------------
     // Session keys (per-user auth)
@@ -88,6 +93,7 @@ public final class users_roles {
     public static final String S_ROLE_LABEL  = "user.role.label";
     public static final String S_PERMS_MAP   = "user.perms.map";     // Map<String,String>
     public static final String S_PERMS_PREFX = "perm.";              // perm.<key> = <value>
+    public static final String S_ROLE_PERMS_MAP = "user.role.perms.map";
 
     private static final SecureRandom RNG = new SecureRandom();
 
@@ -110,7 +116,10 @@ public final class users_roles {
     private static final String BOOTSTRAP_PERM_KEY   = "tenant_admin";
     private static final String BOOTSTRAP_PERM_VALUE = "true";
     private static final String BOOTSTRAP_ADMIN_EMAIL = "tenant_admin"; // stored in <email_address>
-    private static final String BOOTSTRAP_DEFAULT_PASSWORD = "password";
+    private static final String BOOTSTRAP_PASSWORD_ENV = "CONTROVERSIES_BOOTSTRAP_PASSWORD";
+    private static final int GENERATED_BOOTSTRAP_PASSWORD_LEN = 24;
+    private static final String BOOTSTRAP_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%*-_";
+    private static volatile String GENERATED_BOOTSTRAP_PASSWORD = null;
     private static final String USER_TWO_FACTOR_ENGINE_INHERIT = "inherit";
     private static final String USER_TWO_FACTOR_ENGINE_EMAIL_PIN = "email_pin";
     private static final String USER_TWO_FACTOR_ENGINE_FLOWROUTE_SMS = "flowroute_sms";
@@ -427,7 +436,7 @@ public final class users_roles {
         boolean usersChanged = false;
 
         if (adminUser == null) {
-            char[] pw = BOOTSTRAP_DEFAULT_PASSWORD.toCharArray();
+            char[] pw = resolveBootstrapPassword("tenant_admin.create");
             String hash;
             try {
                 hash = Argon2id.hash(pw, pepper);
@@ -470,8 +479,8 @@ public final class users_roles {
 
             String hash = safe(adminUser.algo2idPasswordHash).trim();
             if (hash.isBlank()) {
-                // Only set default if missing/blank; does NOT reset existing passwords.
-                char[] pw = BOOTSTRAP_DEFAULT_PASSWORD.toCharArray();
+                // Only set bootstrap hash if missing/blank; does NOT reset existing passwords.
+                char[] pw = resolveBootstrapPassword("tenant_admin.restore_hash");
                 try {
                     hash = Argon2id.hash(pw, pepper);
                 } finally {
@@ -560,12 +569,16 @@ public final class users_roles {
         session.setAttribute(S_ROLE_LABEL, ar.role.label);
 
         session.setAttribute(S_PERMS_MAP, new LinkedHashMap<>(ar.permissions));
+        session.setAttribute(S_ROLE_PERMS_MAP, new LinkedHashMap<>(ar.permissions));
 
         for (Map.Entry<String, String> e : ar.permissions.entrySet()) {
             String k = safe(e.getKey()).trim();
             if (k.isBlank()) continue;
             session.setAttribute(S_PERMS_PREFX + k, safe(e.getValue()));
         }
+
+        // Promote legacy role-only permissions into layered tenant/group/user effective permissions.
+        try { permission_layers.defaultStore().refreshSessionPermissions(session); } catch (Exception ignored) {}
     }
 
     /** Removes user auth info from session (does not invalidate session). */
@@ -585,6 +598,9 @@ public final class users_roles {
         session.removeAttribute(S_ROLE_UUID);
         session.removeAttribute(S_ROLE_LABEL);
         session.removeAttribute(S_PERMS_MAP);
+        session.removeAttribute(S_ROLE_PERMS_MAP);
+        session.removeAttribute("permission.layers.last_refresh_ms");
+        session.removeAttribute("permission.layers.refresh.in_progress");
     }
 
     /** Convenience for JSPs: returns permission value or "" if missing. */
@@ -598,7 +614,37 @@ public final class users_roles {
 
     /** Convenience: checks permission key equalsIgnoreCase("true"). */
     public static boolean hasPermissionTrue(HttpSession session, String key) {
-        return "true".equalsIgnoreCase(getPermission(session, key).trim());
+        String k = safe(key).trim();
+        if (session == null || k.isBlank()) return false;
+
+        // tenant_admin is always unlimited across all permission keys.
+        String admin = getPermission(session, "tenant_admin").trim();
+        if ("tenant_admin".equals(k)) return "true".equalsIgnoreCase(admin);
+        if ("true".equalsIgnoreCase(admin)) return true;
+
+        String direct = getPermission(session, k).trim();
+        if ("true".equalsIgnoreCase(direct)) return true;
+
+        // Lazy refresh lets long-lived sessions pick up layered permission updates.
+        try {
+            permission_layers.defaultStore().refreshSessionPermissions(session);
+        } catch (Exception ignored) {
+        }
+
+        admin = getPermission(session, "tenant_admin").trim();
+        if ("tenant_admin".equals(k)) return "true".equalsIgnoreCase(admin);
+        if ("true".equalsIgnoreCase(admin)) return true;
+        return "true".equalsIgnoreCase(getPermission(session, k).trim());
+    }
+
+    /** Convenience: true if any provided permission key resolves true. */
+    public static boolean hasAnyPermissionTrue(HttpSession session, String... keys) {
+        if (session == null || keys == null || keys.length == 0) return false;
+        if (hasPermissionTrue(session, "tenant_admin")) return true;
+        for (String key : keys) {
+            if (hasPermissionTrue(session, key)) return true;
+        }
+        return false;
     }
 
     // --------------------------------
@@ -1465,6 +1511,33 @@ public final class users_roles {
         if (digits.length() < 10) return "";
         if (digits.length() > 15) digits = digits.substring(digits.length() - 15);
         return plus ? ("+" + digits) : digits;
+    }
+
+    private static char[] resolveBootstrapPassword(String purpose) {
+        String configured = safe(System.getProperty(BOOTSTRAP_PASSWORD_ENV)).trim();
+        if (configured.isBlank()) configured = safe(System.getenv(BOOTSTRAP_PASSWORD_ENV)).trim();
+        if (!configured.isBlank()) return configured.toCharArray();
+
+        synchronized (users_roles.class) {
+            if (GENERATED_BOOTSTRAP_PASSWORD == null || GENERATED_BOOTSTRAP_PASSWORD.isBlank()) {
+                GENERATED_BOOTSTRAP_PASSWORD = generateBootstrapPassword();
+                LOG.warning("Security bootstrap generated one-time password for " + safe(purpose).trim()
+                        + ". Set " + BOOTSTRAP_PASSWORD_ENV + " to control this value. Password="
+                        + GENERATED_BOOTSTRAP_PASSWORD);
+            }
+            return GENERATED_BOOTSTRAP_PASSWORD.toCharArray();
+        }
+    }
+
+    private static String generateBootstrapPassword() {
+        String alphabet = BOOTSTRAP_PASSWORD_ALPHABET;
+        int len = Math.max(16, GENERATED_BOOTSTRAP_PASSWORD_LEN);
+        StringBuilder sb = new StringBuilder(len);
+        for (int i = 0; i < len; i++) {
+            int idx = RNG.nextInt(alphabet.length());
+            sb.append(alphabet.charAt(idx));
+        }
+        return sb.toString();
     }
 
     private static String emptyUsersXml() {

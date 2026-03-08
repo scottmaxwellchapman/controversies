@@ -4,18 +4,83 @@
   sec_bind(request, response, pageContext, session);
 
   String __secUri = request == null ? "" : String.valueOf(request.getRequestURI());
-  if (__secUri.endsWith("/tenant_settings.jsp") || __secUri.endsWith("tenant_settings.jsp")
-      || __secUri.endsWith("/tenant_fields.jsp") || __secUri.endsWith("tenant_fields.jsp")
-      || __secUri.endsWith("/attribute_editor.jsp") || __secUri.endsWith("attribute_editor.jsp")
-      || __secUri.endsWith("/case_attributes.jsp") || __secUri.endsWith("case_attributes.jsp")
-      || __secUri.endsWith("/document_attributes.jsp") || __secUri.endsWith("document_attributes.jsp")
-      || __secUri.endsWith("/task_attributes.jsp") || __secUri.endsWith("task_attributes.jsp")
-      || __secUri.endsWith("/custom_objects.jsp") || __secUri.endsWith("custom_objects.jsp")
-      || __secUri.endsWith("/custom_object_attributes.jsp") || __secUri.endsWith("custom_object_attributes.jsp")
-      || __secUri.endsWith("/plugin_manager.jsp") || __secUri.endsWith("plugin_manager.jsp")
-      || __secUri.endsWith("/business_processes.jsp") || __secUri.endsWith("business_processes.jsp")
-      || __secUri.endsWith("/business_process_reviews.jsp") || __secUri.endsWith("business_process_reviews.jsp")
-      || __secUri.endsWith("/log_viewer.jsp") || __secUri.endsWith("log_viewer.jsp")) {
-    if (!require_permission("tenant_admin")) return;
+  String __secPath = (__secUri == null) ? "" : __secUri;
+  String __secCtx = (request == null) ? "" : String.valueOf(request.getContextPath());
+  if (__secCtx != null && !__secCtx.isBlank() && __secPath.startsWith(__secCtx)) {
+    __secPath = __secPath.substring(__secCtx.length());
+  }
+  String __path = (__secPath == null ? "" : __secPath).toLowerCase();
+
+  String __requiredPerm = "";
+
+  if (__path.endsWith("/users_roles.jsp") || __path.endsWith("users_roles.jsp")) {
+    __requiredPerm = "security.manage";
+  } else if (__path.endsWith("/permissions_management.jsp") || __path.endsWith("permissions_management.jsp")) {
+    __requiredPerm = "permissions.manage";
+  } else if (__path.endsWith("/tenant_settings.jsp") || __path.endsWith("tenant_settings.jsp")) {
+    __requiredPerm = "tenant_settings.manage";
+  } else if (__path.endsWith("/tenant_fields.jsp") || __path.endsWith("tenant_fields.jsp")) {
+    __requiredPerm = "tenant_fields.manage";
+  } else if (__path.endsWith("/attribute_editor.jsp") || __path.endsWith("attribute_editor.jsp")
+          || __path.endsWith("/case_attributes.jsp") || __path.endsWith("case_attributes.jsp")
+          || __path.endsWith("/document_attributes.jsp") || __path.endsWith("document_attributes.jsp")
+          || __path.endsWith("/task_attributes.jsp") || __path.endsWith("task_attributes.jsp")
+          || __path.endsWith("/custom_object_attributes.jsp") || __path.endsWith("custom_object_attributes.jsp")) {
+    __requiredPerm = "attributes.manage";
+  } else if (__path.endsWith("/custom_objects.jsp") || __path.endsWith("custom_objects.jsp")) {
+    __requiredPerm = "custom_objects.manage";
+  } else if (__path.endsWith("/plugin_manager.jsp") || __path.endsWith("plugin_manager.jsp")) {
+    __requiredPerm = "plugin_manager.manage";
+  } else if (__path.endsWith("/business_processes.jsp") || __path.endsWith("business_processes.jsp")) {
+    __requiredPerm = "business_processes.manage";
+  } else if (__path.endsWith("/business_process_reviews.jsp") || __path.endsWith("business_process_reviews.jsp")) {
+    __requiredPerm = "business_process_reviews.manage";
+  } else if (__path.endsWith("/log_viewer.jsp") || __path.endsWith("log_viewer.jsp")
+          || __path.endsWith("/activity.jsp") || __path.endsWith("activity.jsp")) {
+    __requiredPerm = "logs.view";
+  } else if (__path.endsWith("/cases.jsp") || __path.endsWith("cases.jsp")
+          || __path.endsWith("/case_lists.jsp") || __path.endsWith("case_lists.jsp")
+          || __path.endsWith("/case_focus.jsp") || __path.endsWith("case_focus.jsp")) {
+    __requiredPerm = "cases.access";
+  } else if (__path.endsWith("/case_fields.jsp") || __path.endsWith("case_fields.jsp")) {
+    __requiredPerm = "case_fields.access";
+  } else if (__path.endsWith("/contacts.jsp") || __path.endsWith("contacts.jsp")) {
+    __requiredPerm = "contacts.access";
+  } else if (__path.endsWith("/documents.jsp") || __path.endsWith("documents.jsp")
+          || __path.endsWith("/document_preview.jsp") || __path.endsWith("document_preview.jsp")
+          || __path.endsWith("/parts.jsp") || __path.endsWith("parts.jsp")
+          || __path.endsWith("/versions.jsp") || __path.endsWith("versions.jsp")
+          || __path.endsWith("/pdf_redact.jsp") || __path.endsWith("pdf_redact.jsp")) {
+    __requiredPerm = "documents.access";
+  } else if (__path.endsWith("/facts.jsp") || __path.endsWith("facts.jsp")) {
+    __requiredPerm = "facts.access";
+  } else if (__path.endsWith("/tasks.jsp") || __path.endsWith("tasks.jsp")) {
+    __requiredPerm = "tasks.access";
+  } else if (__path.endsWith("/omnichannel.jsp") || __path.endsWith("omnichannel.jsp")
+          || __path.endsWith("/omnichannel_manifest.jsp") || __path.endsWith("omnichannel_manifest.jsp")) {
+    __requiredPerm = "threads.access";
+  } else if (__path.endsWith("/wiki.jsp") || __path.endsWith("wiki.jsp")) {
+    __requiredPerm = "wiki.access";
+  } else if (__path.endsWith("/texas_law.jsp") || __path.endsWith("texas_law.jsp")) {
+    __requiredPerm = "texas_law.access";
+  } else if (__path.endsWith("/forms.jsp") || __path.endsWith("forms.jsp")
+          || __path.endsWith("/assembled_forms.jsp") || __path.endsWith("assembled_forms.jsp")
+          || __path.endsWith("/template_library.jsp") || __path.endsWith("template_library.jsp")
+          || __path.endsWith("/template_editor.jsp") || __path.endsWith("template_editor.jsp")) {
+    __requiredPerm = "forms.access";
+  } else if (__path.endsWith("/user_settings.jsp") || __path.endsWith("user_settings.jsp")
+          || __path.endsWith("/change_email.jsp") || __path.endsWith("change_email.jsp")
+          || __path.endsWith("/change_password.jsp") || __path.endsWith("change_password.jsp")) {
+    __requiredPerm = "user_settings.access";
+  } else if (__path.endsWith("/help_center.jsp") || __path.endsWith("help_center.jsp")
+          || __path.endsWith("/token_guide.jsp") || __path.endsWith("token_guide.jsp")
+          || __path.endsWith("/markup_notation.jsp") || __path.endsWith("markup_notation.jsp")
+          || __path.endsWith("/help_permissions.jsp") || __path.endsWith("help_permissions.jsp")
+          || __path.contains("/help_")) {
+    __requiredPerm = "help.access";
+  }
+
+  if (!__requiredPerm.isBlank()) {
+    if (!require_permission(__requiredPerm)) return;
   }
 %>

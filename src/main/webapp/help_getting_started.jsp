@@ -14,7 +14,7 @@
   <h2 style="margin-top:0;">First 30 Minutes Checklist</h2>
   <ol style="margin:0; padding-left:20px; line-height:1.6;">
     <li>Complete tenant and user sign-in.</li>
-    <li>Verify your role permissions in <a href="<%= request.getContextPath() %>/users_roles.jsp">Users &amp; Security</a>.</li>
+    <li>Verify role permissions in <a href="<%= request.getContextPath() %>/users_roles.jsp">Users &amp; Security</a> and layered overrides in <a href="<%= request.getContextPath() %>/permissions_management.jsp">Permission Layers</a>.</li>
     <li>Set firm-wide values in <a href="<%= request.getContextPath() %>/tenant_fields.jsp">Tenant Fields</a> (firm name, address blocks, defaults).</li>
     <li>Create one test matter in <a href="<%= request.getContextPath() %>/cases.jsp">Cases</a>.</li>
     <li>Enter matter facts in <a href="<%= request.getContextPath() %>/case_fields.jsp">Case Fields</a>.</li>

@@ -16,7 +16,6 @@
 <%@ include file="security.jspf" %>
 <%
   if (!require_login()) return;
-  if (!require_permission("tenant_admin")) return;
 %>
 
 <%!
@@ -226,6 +225,11 @@
   business_process_manager bpm = business_process_manager.defaultService();
   try { bpm.ensureTenant(tenantUuid); } catch (Exception ignored) {}
 
+  int runningThresholdMinutes = Math.max(1, intLike(request.getParameter("running_threshold_mins"), 60));
+  int reviewThresholdMinutes = Math.max(1, intLike(request.getParameter("review_threshold_mins"), 1440));
+  String thresholdQuery = "&running_threshold_mins=" + runningThresholdMinutes
+      + "&review_threshold_mins=" + reviewThresholdMinutes;
+
   if ("POST".equalsIgnoreCase(request.getMethod())) {
     String action = safe(request.getParameter("action")).trim();
 
@@ -275,6 +279,42 @@
         response.sendRedirect(ctx + "/business_processes.jsp?redone=1");
         return;
       }
+
+      if ("mark_run_failed".equalsIgnoreCase(action)) {
+        bpm.markRunFailed(
+            tenantUuid,
+            safe(request.getParameter("run_uuid")),
+            userUuid,
+            safe(request.getParameter("operator_note"))
+        );
+        response.sendRedirect(ctx + "/business_processes.jsp?repair=failed" + thresholdQuery);
+        return;
+      }
+
+      if ("retry_run".equalsIgnoreCase(action)) {
+        business_process_manager.RunResult retried = bpm.retryRun(
+            tenantUuid,
+            safe(request.getParameter("run_uuid")),
+            userUuid,
+            safe(request.getParameter("operator_note"))
+        );
+        response.sendRedirect(ctx + "/business_processes.jsp?repair=retried&retry_run_uuid="
+            + enc(safe(retried == null ? "" : retried.runUuid)) + thresholdQuery);
+        return;
+      }
+
+      if ("reject_review".equalsIgnoreCase(action)) {
+        bpm.completeReview(
+            tenantUuid,
+            safe(request.getParameter("review_uuid")),
+            false,
+            userUuid,
+            new LinkedHashMap<String, String>(),
+            safe(request.getParameter("operator_note"))
+        );
+        response.sendRedirect(ctx + "/business_processes.jsp?repair=review_rejected" + thresholdQuery);
+        return;
+      }
     } catch (Exception ex) {
       response.sendRedirect(ctx + "/business_processes.jsp?error=" + enc(safe(ex.getMessage())));
       return;
@@ -287,6 +327,14 @@
   else if ("1".equals(request.getParameter("triggered"))) message = "Business process triggered.";
   else if ("1".equals(request.getParameter("undone"))) message = "Run undo operation completed.";
   else if ("1".equals(request.getParameter("redone"))) message = "Run redo operation completed.";
+  else if ("failed".equalsIgnoreCase(safe(request.getParameter("repair")))) message = "Run was marked failed.";
+  else if ("review_rejected".equalsIgnoreCase(safe(request.getParameter("repair")))) message = "Human review was rejected.";
+  else if ("retried".equalsIgnoreCase(safe(request.getParameter("repair")))) {
+    String retryRunUuid = safe(request.getParameter("retry_run_uuid")).trim();
+    message = retryRunUuid.isBlank()
+        ? "Run retry started."
+        : "Run retry started. New run UUID: " + retryRunUuid;
+  }
 
   String error = safe(request.getParameter("error")).trim();
 
@@ -320,6 +368,12 @@
   }
 
   List<business_process_manager.RunResult> runs = bpm.listRuns(tenantUuid, 100);
+  List<business_process_manager.RunHealthIssue> runHealth = bpm.inspectRunHealth(
+      tenantUuid,
+      runningThresholdMinutes,
+      reviewThresholdMinutes,
+      200
+  );
   int pendingReviews = bpm.listReviews(tenantUuid, true, 100).size();
 %>
 
@@ -619,6 +673,103 @@
       <button type="submit" class="btn btn-ghost">Trigger Process</button>
     </div>
   </form>
+</section>
+
+<section class="card" style="margin-top:12px;">
+  <h2 style="margin:0 0 8px 0;">Run Health Inspector (Stuck/Hung Detection)</h2>
+  <div class="meta" style="margin-bottom:8px;">
+    Inspect stale running runs and stale waiting-human-review runs. Use repair actions to fail, retry, or reject stale reviews.
+  </div>
+
+  <form method="get" action="<%= ctx %>/business_processes.jsp" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end;">
+    <label>
+      <div class="meta">Running Stale Threshold (minutes)</div>
+      <input type="number" name="running_threshold_mins" value="<%= runningThresholdMinutes %>" min="1" step="1" />
+    </label>
+    <label>
+      <div class="meta">Review Stale Threshold (minutes)</div>
+      <input type="number" name="review_threshold_mins" value="<%= reviewThresholdMinutes %>" min="1" step="1" />
+    </label>
+    <div>
+      <button type="submit" class="btn btn-ghost">Re-scan Run Health</button>
+    </div>
+  </form>
+
+  <% if (runHealth.isEmpty()) { %>
+    <div class="meta" style="margin-top:10px;">No stuck or hung runs detected for the current thresholds.</div>
+  <% } else { %>
+    <div class="table-wrap" style="margin-top:10px;">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Severity</th>
+            <th>Issue</th>
+            <th>Process</th>
+            <th>Run</th>
+            <th>Status</th>
+            <th>Age (min)</th>
+            <th>Recommended Fix</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+        <% for (business_process_manager.RunHealthIssue issue : runHealth) {
+             if (issue == null) continue;
+        %>
+          <tr>
+            <td><strong><%= esc(safe(issue.severity)) %></strong></td>
+            <td><%= esc(safe(issue.summary)) %></td>
+            <td>
+              <div><%= esc(safe(issue.processName)) %></div>
+              <div class="meta"><code><%= esc(safe(issue.processUuid)) %></code></div>
+            </td>
+            <td><code><%= esc(safe(issue.runUuid)) %></code></td>
+            <td><%= esc(safe(issue.status)) %></td>
+            <td><%= issue.ageMinutes < 0 ? "n/a" : String.valueOf(issue.ageMinutes) %></td>
+            <td><%= esc(safe(issue.recommendation)) %></td>
+            <td style="display:flex; gap:8px; flex-wrap:wrap;">
+              <% if (issue.canMarkFailed) { %>
+                <form method="post" action="<%= ctx %>/business_processes.jsp" style="display:inline;">
+                  <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                  <input type="hidden" name="action" value="mark_run_failed" />
+                  <input type="hidden" name="run_uuid" value="<%= esc(safe(issue.runUuid)) %>" />
+                  <input type="hidden" name="operator_note" value="Operator marked stale/hung run failed from inspector." />
+                  <input type="hidden" name="running_threshold_mins" value="<%= runningThresholdMinutes %>" />
+                  <input type="hidden" name="review_threshold_mins" value="<%= reviewThresholdMinutes %>" />
+                  <button type="submit" class="btn btn-ghost">Mark Failed</button>
+                </form>
+              <% } %>
+
+              <% if (issue.canRetry) { %>
+                <form method="post" action="<%= ctx %>/business_processes.jsp" style="display:inline;">
+                  <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                  <input type="hidden" name="action" value="retry_run" />
+                  <input type="hidden" name="run_uuid" value="<%= esc(safe(issue.runUuid)) %>" />
+                  <input type="hidden" name="operator_note" value="Operator retry from run-health inspector." />
+                  <input type="hidden" name="running_threshold_mins" value="<%= runningThresholdMinutes %>" />
+                  <input type="hidden" name="review_threshold_mins" value="<%= reviewThresholdMinutes %>" />
+                  <button type="submit" class="btn btn-ghost">Retry</button>
+                </form>
+              <% } %>
+
+              <% if (issue.canResolveReview && !safe(issue.humanReviewUuid).isBlank()) { %>
+                <form method="post" action="<%= ctx %>/business_processes.jsp" style="display:inline;">
+                  <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                  <input type="hidden" name="action" value="reject_review" />
+                  <input type="hidden" name="review_uuid" value="<%= esc(safe(issue.humanReviewUuid)) %>" />
+                  <input type="hidden" name="operator_note" value="Review rejected by run-health inspector due to staleness." />
+                  <input type="hidden" name="running_threshold_mins" value="<%= runningThresholdMinutes %>" />
+                  <input type="hidden" name="review_threshold_mins" value="<%= reviewThresholdMinutes %>" />
+                  <button type="submit" class="btn btn-ghost">Reject Review</button>
+                </form>
+              <% } %>
+            </td>
+          </tr>
+        <% } %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
 </section>
 
 <section class="card" style="margin-top:12px;">

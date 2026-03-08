@@ -523,7 +523,7 @@
           <th>Case</th>
           <th>Attributes</th>
           <th>Replacement Keys</th>
-          <th style="width:360px;">Actions</th>
+          <th style="width:180px;">Focus</th>
         </tr>
       </thead>
       <tbody>
@@ -541,7 +541,6 @@
             boolean clioManaged = isClioManagedMatter(m);
 
             String id = safe(m.uuid);
-            String editRowId = "edit_case_" + i;
 
             Map<String,String> kv = fieldCache.get(id);
             if (kv == null) kv = new LinkedHashMap<String,String>();
@@ -554,7 +553,6 @@
               if (attrKeySet.contains(nk)) continue;
               extraKv.put(nk, safe(e.getValue()));
             }
-            int rows = Math.max(4, extraKv.size() + 1);
       %>
         <tr>
           <td>
@@ -585,145 +583,14 @@
           </td>
           <td><%= extraKv.size() %></td>
           <td>
+            <a class="btn" href="<%= ctx %>/case_focus.jsp?case_uuid=<%= URLEncoder.encode(id, StandardCharsets.UTF_8) %>&q=<%= URLEncoder.encode(q, StandardCharsets.UTF_8) %>&show=<%= URLEncoder.encode(show, StandardCharsets.UTF_8) %>">
+              Focus
+            </a>
             <% if (clioManaged) { %>
-              <button class="btn btn-ghost" type="button" disabled title="Synced from Clio. Edit in Clio.">Edit</button>
-            <% } else { %>
-              <button class="btn btn-ghost" type="button" onclick="toggleEdit('<%= editRowId %>')">Edit</button>
-            <% } %>
-            <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= URLEncoder.encode(id, StandardCharsets.UTF_8) %>&<%= baseQs %>">Assemble Forms</a>
-            <% if (clioManaged) { %>
-              <span class="muted">Read-only. Edit in Clio.</span>
-            <% } else if (!m.trashed) { %>
-              <form method="post" action="<%= ctx %>/cases.jsp?<%= baseQs %>" style="display:inline;">
-                <input type="hidden" name="action" value="archive_case" />
-                <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-                <input type="hidden" name="uuid" value="<%= esc(id) %>" />
-                <button class="btn btn-ghost" type="submit" onclick="return confirm('Archive this case?');">Archive</button>
-              </form>
-            <% } else { %>
-              <form method="post" action="<%= ctx %>/cases.jsp?<%= baseQs %>" style="display:inline;">
-                <input type="hidden" name="action" value="restore_case" />
-                <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-                <input type="hidden" name="uuid" value="<%= esc(id) %>" />
-                <button class="btn" type="submit">Restore</button>
-              </form>
+              <div class="muted" style="margin-top:6px;">Synced from Clio (read-only source).</div>
             <% } %>
           </td>
         </tr>
-
-        <% if (!clioManaged) { %>
-        <tr id="<%= editRowId %>" style="display:none;">
-          <td colspan="4">
-            <div class="card" style="margin:8px 0; padding:14px; background:rgba(0,0,0,0.02);">
-              <form class="form" method="post" action="<%= ctx %>/cases.jsp?<%= baseQs %>">
-                <input type="hidden" name="action" value="save_case" />
-                <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-                <input type="hidden" name="uuid" value="<%= esc(id) %>" />
-
-                <label>
-                  <span>Case Label</span>
-                  <input type="text" name="label" value="<%= esc(safe(m.label)) %>" required />
-                </label>
-
-                <% if (!enabledAttrDefs.isEmpty()) { %>
-                  <div class="grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
-                    <%
-                      for (int di = 0; di < enabledAttrDefs.size(); di++) {
-                        case_attributes.AttributeRec def = enabledAttrDefs.get(di);
-                        if (def == null) continue;
-                        String key = attrsStore.normalizeKey(def.key);
-                        if (key.isBlank()) continue;
-                        String val = caseAttrValue(def, m, kv);
-                        List<String> opts = "select".equals(def.dataType) ? attrsStore.optionList(def.options) : new ArrayList<String>();
-                    %>
-                      <label>
-                        <span><%= esc(safe(def.label)) %><%= def.required ? " *" : "" %></span>
-                        <input type="hidden" name="attr_def_key" value="<%= esc(key) %>" />
-                        <% if ("textarea".equals(def.dataType)) { %>
-                          <textarea name="attr_def_value" rows="2"><%= esc(val) %></textarea>
-                        <% } else if ("date".equals(def.dataType)) { %>
-                          <input type="date" name="attr_def_value" value="<%= esc(val) %>" />
-                        <% } else if ("datetime".equals(def.dataType)) { %>
-                          <input type="datetime-local" name="attr_def_value" value="<%= esc(val) %>" />
-                        <% } else if ("time".equals(def.dataType)) { %>
-                          <input type="time" name="attr_def_value" value="<%= esc(val) %>" />
-                        <% } else if ("number".equals(def.dataType)) { %>
-                          <input type="number" name="attr_def_value" value="<%= esc(val) %>" />
-                        <% } else if ("boolean".equals(def.dataType)) { %>
-                          <select name="attr_def_value">
-                            <option value=""></option>
-                            <option value="true" <%= "true".equals(normalizeAttrValueByType("boolean", val)) ? "selected" : "" %>>Yes</option>
-                            <option value="false" <%= "false".equals(normalizeAttrValueByType("boolean", val)) ? "selected" : "" %>>No</option>
-                          </select>
-                        <% } else if ("email".equals(def.dataType)) { %>
-                          <input type="email" name="attr_def_value" value="<%= esc(val) %>" />
-                        <% } else if ("phone".equals(def.dataType)) { %>
-                          <input type="tel" name="attr_def_value" value="<%= esc(val) %>" />
-                        <% } else if ("url".equals(def.dataType)) { %>
-                          <input type="url" name="attr_def_value" value="<%= esc(val) %>" />
-                        <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
-                          <select name="attr_def_value">
-                            <option value=""></option>
-                            <% for (int oi = 0; oi < opts.size(); oi++) { String ov = safe(opts.get(oi)); %>
-                              <option value="<%= esc(ov) %>" <%= ov.equals(val) ? "selected" : "" %>><%= esc(ov) %></option>
-                            <% } %>
-                          </select>
-                        <% } else { %>
-                          <input type="text" name="attr_def_value" value="<%= esc(val) %>" />
-                        <% } %>
-                      </label>
-                    <% } %>
-                  </div>
-                <% } %>
-
-                <h4 style="margin:14px 0 8px 0;">Additional Replacement Fields</h4>
-                <div class="meta" style="margin-bottom:8px;">Custom keys (outside configured case attributes). Use keys like <code>client_name</code> referenced as <code>{{kv.client_name}}</code>.</div>
-
-                <div class="table-wrap">
-                  <table class="table">
-                    <thead>
-                      <tr>
-                        <th style="width:35%;">Key</th>
-                        <th>Value</th>
-                        <th style="width:90px;">&nbsp;</th>
-                      </tr>
-                    </thead>
-                    <tbody id="fields_tbl_<%= i %>">
-                    <%
-                      int idx = 0;
-                      for (Map.Entry<String,String> e : extraKv.entrySet()) {
-                        if (e == null) continue;
-                    %>
-                      <tr>
-                        <td><input type="text" name="field_key" value="<%= esc(safe(e.getKey())) %>" /></td>
-                        <td><input type="text" name="field_value" value="<%= esc(safe(e.getValue())) %>" /></td>
-                        <td><button type="button" class="btn btn-ghost" onclick="removeFieldRow(this)">Remove</button></td>
-                      </tr>
-                    <%
-                        idx++;
-                      }
-                      for (; idx < rows; idx++) {
-                    %>
-                      <tr>
-                        <td><input type="text" name="field_key" value="" /></td>
-                        <td><input type="text" name="field_value" value="" /></td>
-                        <td><button type="button" class="btn btn-ghost" onclick="removeFieldRow(this)">Remove</button></td>
-                      </tr>
-                    <% } %>
-                    </tbody>
-                  </table>
-                </div>
-
-                <div class="actions" style="display:flex; gap:10px; margin-top:10px;">
-                  <button type="button" class="btn btn-ghost" onclick="addFieldRow('fields_tbl_<%= i %>')">Add Field Row</button>
-                  <button type="submit" class="btn">Save Case</button>
-                  <button type="button" class="btn btn-ghost" onclick="toggleEdit('<%= editRowId %>')">Cancel</button>
-                </div>
-              </form>
-            </div>
-          </td>
-        </tr>
-        <% } %>
       <%
           }
         }
@@ -732,31 +599,5 @@
     </table>
   </div>
 </section>
-
-<script>
-  function toggleEdit(id) {
-    var row = document.getElementById(id);
-    if (!row) return;
-    row.style.display = (row.style.display === "none" || row.style.display === "") ? "table-row" : "none";
-  }
-
-  function addFieldRow(tbodyId) {
-    var tbody = document.getElementById(tbodyId);
-    if (!tbody) return;
-    var tr = document.createElement("tr");
-    tr.innerHTML =
-      '<td><input type="text" name="field_key" value="" /></td>' +
-      '<td><input type="text" name="field_value" value="" /></td>' +
-      '<td><button type="button" class="btn btn-ghost" onclick="removeFieldRow(this)">Remove</button></td>';
-    tbody.appendChild(tr);
-  }
-
-  function removeFieldRow(btn) {
-    if (!btn) return;
-    var tr = btn.closest("tr");
-    if (!tr) return;
-    tr.remove();
-  }
-</script>
 
 <jsp:include page="footer.jsp" />

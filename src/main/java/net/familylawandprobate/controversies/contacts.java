@@ -64,6 +64,16 @@ public final class contacts {
         public String state = "";
         public String postalCode = "";
         public String country = "";
+        public String streetSecondary = "";
+        public String citySecondary = "";
+        public String stateSecondary = "";
+        public String postalCodeSecondary = "";
+        public String countrySecondary = "";
+        public String streetTertiary = "";
+        public String cityTertiary = "";
+        public String stateTertiary = "";
+        public String postalCodeTertiary = "";
+        public String countryTertiary = "";
         public String notes = "";
     }
 
@@ -91,6 +101,16 @@ public final class contacts {
         public final String state;
         public final String postalCode;
         public final String country;
+        public final String streetSecondary;
+        public final String citySecondary;
+        public final String stateSecondary;
+        public final String postalCodeSecondary;
+        public final String countrySecondary;
+        public final String streetTertiary;
+        public final String cityTertiary;
+        public final String stateTertiary;
+        public final String postalCodeTertiary;
+        public final String countryTertiary;
         public final String notes;
         public final String source;
         public final String sourceContactId;
@@ -120,6 +140,16 @@ public final class contacts {
                            String state,
                            String postalCode,
                            String country,
+                           String streetSecondary,
+                           String citySecondary,
+                           String stateSecondary,
+                           String postalCodeSecondary,
+                           String countrySecondary,
+                           String streetTertiary,
+                           String cityTertiary,
+                           String stateTertiary,
+                           String postalCodeTertiary,
+                           String countryTertiary,
                            String notes,
                            String source,
                            String sourceContactId,
@@ -148,6 +178,16 @@ public final class contacts {
             this.state = safe(state);
             this.postalCode = safe(postalCode);
             this.country = safe(country);
+            this.streetSecondary = safe(streetSecondary);
+            this.citySecondary = safe(citySecondary);
+            this.stateSecondary = safe(stateSecondary);
+            this.postalCodeSecondary = safe(postalCodeSecondary);
+            this.countrySecondary = safe(countrySecondary);
+            this.streetTertiary = safe(streetTertiary);
+            this.cityTertiary = safe(cityTertiary);
+            this.stateTertiary = safe(stateTertiary);
+            this.postalCodeTertiary = safe(postalCodeTertiary);
+            this.countryTertiary = safe(countryTertiary);
             this.notes = safe(notes);
             this.source = safe(source).trim().toLowerCase();
             this.sourceContactId = safe(sourceContactId).trim();
@@ -276,6 +316,16 @@ public final class contacts {
                                 safe(input == null ? "" : input.state),
                                 safe(input == null ? "" : input.postalCode),
                                 safe(input == null ? "" : input.country),
+                                safe(input == null ? "" : input.streetSecondary),
+                                safe(input == null ? "" : input.citySecondary),
+                                safe(input == null ? "" : input.stateSecondary),
+                                safe(input == null ? "" : input.postalCodeSecondary),
+                                safe(input == null ? "" : input.countrySecondary),
+                                safe(input == null ? "" : input.streetTertiary),
+                                safe(input == null ? "" : input.cityTertiary),
+                                safe(input == null ? "" : input.stateTertiary),
+                                safe(input == null ? "" : input.postalCodeTertiary),
+                                safe(input == null ? "" : input.countryTertiary),
                                 safe(input == null ? "" : input.notes),
                                 "clio",
                                 sourceId,
@@ -323,6 +373,16 @@ public final class contacts {
                                 safe(input == null ? "" : input.state),
                                 safe(input == null ? "" : input.postalCode),
                                 safe(input == null ? "" : input.country),
+                                safe(input == null ? "" : input.streetSecondary),
+                                safe(input == null ? "" : input.citySecondary),
+                                safe(input == null ? "" : input.stateSecondary),
+                                safe(input == null ? "" : input.postalCodeSecondary),
+                                safe(input == null ? "" : input.countrySecondary),
+                                safe(input == null ? "" : input.streetTertiary),
+                                safe(input == null ? "" : input.cityTertiary),
+                                safe(input == null ? "" : input.stateTertiary),
+                                safe(input == null ? "" : input.postalCodeTertiary),
+                                safe(input == null ? "" : input.countryTertiary),
                                 safe(input == null ? "" : input.notes),
                                 "clio",
                                 sourceId,
@@ -387,6 +447,16 @@ public final class contacts {
                                 safe(input == null ? "" : input.state),
                                 safe(input == null ? "" : input.postalCode),
                                 safe(input == null ? "" : input.country),
+                                safe(input == null ? "" : input.streetSecondary),
+                                safe(input == null ? "" : input.citySecondary),
+                                safe(input == null ? "" : input.stateSecondary),
+                                safe(input == null ? "" : input.postalCodeSecondary),
+                                safe(input == null ? "" : input.countrySecondary),
+                                safe(input == null ? "" : input.streetTertiary),
+                                safe(input == null ? "" : input.cityTertiary),
+                                safe(input == null ? "" : input.stateTertiary),
+                                safe(input == null ? "" : input.postalCodeTertiary),
+                                safe(input == null ? "" : input.countryTertiary),
                                 safe(input == null ? "" : input.notes),
                                 c.source,
                                 c.sourceContactId,
@@ -458,6 +528,16 @@ public final class contacts {
                             safe(input == null ? "" : input.state),
                             safe(input == null ? "" : input.postalCode),
                             safe(input == null ? "" : input.country),
+                            safe(input == null ? "" : input.streetSecondary),
+                            safe(input == null ? "" : input.citySecondary),
+                            safe(input == null ? "" : input.stateSecondary),
+                            safe(input == null ? "" : input.postalCodeSecondary),
+                            safe(input == null ? "" : input.countrySecondary),
+                            safe(input == null ? "" : input.streetTertiary),
+                            safe(input == null ? "" : input.cityTertiary),
+                            safe(input == null ? "" : input.stateTertiary),
+                            safe(input == null ? "" : input.postalCodeTertiary),
+                            safe(input == null ? "" : input.countryTertiary),
                             safe(input == null ? "" : input.notes),
                             safe(source),
                             safe(sourceContactId),
@@ -519,6 +599,16 @@ public final class contacts {
                         c.state,
                         c.postalCode,
                         c.country,
+                        c.streetSecondary,
+                        c.citySecondary,
+                        c.stateSecondary,
+                        c.postalCodeSecondary,
+                        c.countrySecondary,
+                        c.streetTertiary,
+                        c.cityTertiary,
+                        c.stateTertiary,
+                        c.postalCodeTertiary,
+                        c.countryTertiary,
                         c.notes,
                         c.source,
                         c.sourceContactId,
@@ -573,6 +663,16 @@ public final class contacts {
                 safe(rec.state).trim(),
                 safe(rec.postalCode).trim(),
                 safe(rec.country).trim(),
+                safe(rec.streetSecondary).trim(),
+                safe(rec.citySecondary).trim(),
+                safe(rec.stateSecondary).trim(),
+                safe(rec.postalCodeSecondary).trim(),
+                safe(rec.countrySecondary).trim(),
+                safe(rec.streetTertiary).trim(),
+                safe(rec.cityTertiary).trim(),
+                safe(rec.stateTertiary).trim(),
+                safe(rec.postalCodeTertiary).trim(),
+                safe(rec.countryTertiary).trim(),
                 safe(rec.notes),
                 safe(rec.source).trim().toLowerCase(),
                 safe(rec.sourceContactId).trim(),
@@ -632,6 +732,16 @@ public final class contacts {
                             text(e, "state"),
                             text(e, "postal_code"),
                             text(e, "country"),
+                            text(e, "street_secondary"),
+                            text(e, "city_secondary"),
+                            text(e, "state_secondary"),
+                            text(e, "postal_code_secondary"),
+                            text(e, "country_secondary"),
+                            text(e, "street_tertiary"),
+                            text(e, "city_tertiary"),
+                            text(e, "state_tertiary"),
+                            text(e, "postal_code_tertiary"),
+                            text(e, "country_tertiary"),
                             text(e, "notes"),
                             text(e, "source"),
                             text(e, "source_contact_id"),
@@ -679,6 +789,16 @@ public final class contacts {
             if (!safe(c.state).isBlank()) sb.append("    <state>").append(xmlText(c.state)).append("</state>\n");
             if (!safe(c.postalCode).isBlank()) sb.append("    <postal_code>").append(xmlText(c.postalCode)).append("</postal_code>\n");
             if (!safe(c.country).isBlank()) sb.append("    <country>").append(xmlText(c.country)).append("</country>\n");
+            if (!safe(c.streetSecondary).isBlank()) sb.append("    <street_secondary>").append(xmlText(c.streetSecondary)).append("</street_secondary>\n");
+            if (!safe(c.citySecondary).isBlank()) sb.append("    <city_secondary>").append(xmlText(c.citySecondary)).append("</city_secondary>\n");
+            if (!safe(c.stateSecondary).isBlank()) sb.append("    <state_secondary>").append(xmlText(c.stateSecondary)).append("</state_secondary>\n");
+            if (!safe(c.postalCodeSecondary).isBlank()) sb.append("    <postal_code_secondary>").append(xmlText(c.postalCodeSecondary)).append("</postal_code_secondary>\n");
+            if (!safe(c.countrySecondary).isBlank()) sb.append("    <country_secondary>").append(xmlText(c.countrySecondary)).append("</country_secondary>\n");
+            if (!safe(c.streetTertiary).isBlank()) sb.append("    <street_tertiary>").append(xmlText(c.streetTertiary)).append("</street_tertiary>\n");
+            if (!safe(c.cityTertiary).isBlank()) sb.append("    <city_tertiary>").append(xmlText(c.cityTertiary)).append("</city_tertiary>\n");
+            if (!safe(c.stateTertiary).isBlank()) sb.append("    <state_tertiary>").append(xmlText(c.stateTertiary)).append("</state_tertiary>\n");
+            if (!safe(c.postalCodeTertiary).isBlank()) sb.append("    <postal_code_tertiary>").append(xmlText(c.postalCodeTertiary)).append("</postal_code_tertiary>\n");
+            if (!safe(c.countryTertiary).isBlank()) sb.append("    <country_tertiary>").append(xmlText(c.countryTertiary)).append("</country_tertiary>\n");
             if (!safe(c.notes).isBlank()) sb.append("    <notes>").append(xmlText(c.notes)).append("</notes>\n");
             if (!safe(c.source).isBlank()) sb.append("    <source>").append(xmlText(c.source)).append("</source>\n");
             if (!safe(c.sourceContactId).isBlank()) sb.append("    <source_contact_id>").append(xmlText(c.sourceContactId)).append("</source_contact_id>\n");

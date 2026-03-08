@@ -9,10 +9,13 @@
 <%@ page import="java.time.format.DateTimeFormatter" %>
 <%@ page import="java.util.ArrayList" %>
 <%@ page import="java.util.Comparator" %>
+<%@ page import="java.util.LinkedHashMap" %>
 <%@ page import="java.util.List" %>
 <%@ page import="java.util.Locale" %>
+<%@ page import="java.util.Map" %>
 <%@ page import="java.util.Properties" %>
 
+<%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.texas_law_library" %>
 <%@ page import="net.familylawandprobate.controversies.texas_law_sync" %>
 
@@ -22,7 +25,10 @@
 %>
 
 <%!
+  private static final String S_TENANT_UUID = "tenant.uuid";
+  private static final String S_USER_UUID = "user.uuid";
   private static final String CSRF_SESSION_KEY = "CSRF_TOKEN";
+  private static final String TEXAS_LAW_LAST_ERROR_LOG_KEY = "texas_law.last_logged_error";
 
   private static String safe(String s) { return s == null ? "" : s; }
 
@@ -150,12 +156,46 @@
       return fallback;
     }
   }
+
+  private static LinkedHashMap<String, String> logDetails(String... kvPairs) {
+    LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
+    if (kvPairs == null) return out;
+    for (int i = 0; i + 1 < kvPairs.length; i += 2) {
+      String key = safe(kvPairs[i]).trim();
+      if (key.isBlank()) continue;
+      out.put(key, safe(kvPairs[i + 1]));
+    }
+    return out;
+  }
+
+  private static void audit(activity_log logs,
+                            String level,
+                            String action,
+                            String tenantUuid,
+                            String userUuid,
+                            Map<String, String> details) {
+    if (logs == null) return;
+    String tenant = safe(tenantUuid).trim();
+    if (tenant.isBlank()) return;
+    String actor = safe(userUuid).trim();
+    Map<String, String> data = (details == null) ? new LinkedHashMap<String, String>() : details;
+    try {
+      String lv = safe(level).trim().toLowerCase(Locale.ROOT);
+      if ("error".equals(lv)) logs.logError(action, tenant, actor, "", "", data);
+      else if ("warning".equals(lv)) logs.logWarning(action, tenant, actor, "", "", data);
+      else logs.logVerbose(action, tenant, actor, "", "", data);
+    } catch (Exception ignored) {}
+  }
 %>
 
 <%
   String ctx = request.getContextPath();
   if (ctx == null) ctx = "";
   request.setAttribute("activeNav", "/texas_law.jsp");
+
+  String tenantUuid = safe((String) session.getAttribute(S_TENANT_UUID)).trim();
+  String userUuid = safe((String) session.getAttribute(S_USER_UUID)).trim();
+  activity_log logs = activity_log.defaultStore();
 
   String csrfToken = csrfForRender(request);
   texas_law_sync sync = texas_law_sync.defaultService();
@@ -165,9 +205,19 @@
   if ("POST".equalsIgnoreCase(request.getMethod())) {
     String action = safe(request.getParameter("action")).trim();
     if ("run_now".equalsIgnoreCase(action)) {
+      String requestedLibrary = safe(request.getParameter("library")).trim().toLowerCase(Locale.ROOT);
+      if (!"codes".equals(requestedLibrary)) requestedLibrary = "rules";
+      String requestedPath = normalizeRelativePath(request.getParameter("path"));
       boolean started = sync.triggerManualRun();
-      if (started) message = "Texas law refresh started in the background.";
-      else error = "A refresh is already running.";
+      if (started) {
+        message = "Texas law refresh started in the background.";
+        audit(logs, "verbose", "texas_law.sync.manual_requested", tenantUuid, userUuid,
+              logDetails("library", requestedLibrary, "path", requestedPath));
+      } else {
+        error = "A refresh is already running.";
+        audit(logs, "warning", "texas_law.sync.manual_rejected", tenantUuid, userUuid,
+              logDetails("library", requestedLibrary, "path", requestedPath, "reason", "run_in_flight"));
+      }
     }
   }
 
@@ -210,6 +260,8 @@
       }
       return;
     } else {
+      audit(logs, "warning", "texas_law.download.missing", tenantUuid, userUuid,
+            logDetails("library", library, "path", relPath, "download", downloadRel));
       response.setStatus(404);
       response.setContentType("text/plain; charset=UTF-8");
       response.getWriter().write("File not found.");
@@ -228,15 +280,21 @@
     viewedTarget = resolveUnderRoot(root, viewRel);
     if (viewedTarget == null || !Files.isRegularFile(viewedTarget)) {
       error = "Viewer file not found.";
+      audit(logs, "warning", "texas_law.viewer.missing_file", tenantUuid, userUuid,
+            logDetails("library", library, "path", relPath, "view", viewRel));
       viewRel = "";
     } else if (!texas_law_library.isRenderable(viewedTarget)) {
       error = "Viewer currently supports PDF, DOCX, DOC, RTF, TXT, and ODT.";
+      audit(logs, "warning", "texas_law.viewer.unsupported_type", tenantUuid, userUuid,
+            logDetails("library", library, "path", relPath, "view", viewRel));
       viewRel = "";
     } else {
       try {
         viewedPage = texas_law_library.renderPage(viewedTarget, viewPageParam);
       } catch (Exception ex) {
         error = "Unable to render preview image: " + safe(ex.getMessage());
+        audit(logs, "error", "texas_law.viewer.render_failed", tenantUuid, userUuid,
+              logDetails("library", library, "path", relPath, "view", viewRel, "reason", safe(ex.getMessage())));
       }
     }
   }
@@ -251,6 +309,8 @@
     }
   } catch (Exception ex) {
     error = "Unable to read directory: " + safe(ex.getMessage());
+    audit(logs, "error", "texas_law.directory.read_failed", tenantUuid, userUuid,
+          logDetails("library", library, "path", relPath, "reason", safe(ex.getMessage())));
   }
   directories.sort(Comparator.comparing(a -> fileName(a).toLowerCase(Locale.ROOT)));
   files.sort(Comparator.comparing(a -> fileName(a).toLowerCase(Locale.ROOT)));
@@ -269,6 +329,24 @@
   String nextAt = safe(status.getProperty("next_scheduled_at"));
   String scheduleZone = safe(status.getProperty("schedule_zone"));
   String scheduleTime = safe(status.getProperty("schedule_time_local"));
+  if (!lastError.isBlank()) {
+    String lastStartedAtRaw = safe(status.getProperty("last_started_at"));
+    String lastCompletedAtRaw = safe(status.getProperty("last_completed_at"));
+    String fingerprint = safe(lastStatus) + "|" + lastStartedAtRaw + "|" + lastError;
+    String alreadyLogged = safe((String) session.getAttribute(TEXAS_LAW_LAST_ERROR_LOG_KEY));
+    if (!fingerprint.equals(alreadyLogged)) {
+      audit(logs, "error", "texas_law.sync.last_error_visible", tenantUuid, userUuid,
+            logDetails("status", lastStatus,
+                       "error", lastError,
+                       "last_started_at", lastStartedAtRaw,
+                       "last_completed_at", lastCompletedAtRaw,
+                       "rules_exit_code", safe(status.getProperty("rules_exit_code")),
+                       "codes_exit_code", safe(status.getProperty("codes_exit_code"))));
+      try { session.setAttribute(TEXAS_LAW_LAST_ERROR_LOG_KEY, fingerprint); } catch (Exception ignored) {}
+    }
+  } else {
+    try { session.removeAttribute(TEXAS_LAW_LAST_ERROR_LOG_KEY); } catch (Exception ignored) {}
+  }
 %>
 
 <jsp:include page="header.jsp" />

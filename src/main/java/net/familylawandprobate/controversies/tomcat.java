@@ -18,15 +18,24 @@ import jakarta.servlet.MultipartConfigElement;
 import java.io.File;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
 public class tomcat {
     private static final int PORT_SCAN_LIMIT = 100;
+    private static final SecureRandom RNG = new SecureRandom();
+    private static final String KEYSTORE_PASSWORD_ENV = "CONTROVERSIES_SSL_KEYSTORE_PASSWORD";
+    private static final int GENERATED_KEYSTORE_PASSWORD_LEN = 32;
+    private static final String KEYSTORE_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%*-_";
 
     private Tomcat tomcat;
 
@@ -36,9 +45,10 @@ public class tomcat {
     // Store SSL files in: data/sec/ssl (relative to working dir)
     private final Path sslDir = Paths.get("data", "sec", "ssl");
     private final Path keystorePath = sslDir.resolve("keystore.p12").toAbsolutePath();
+    private final Path keystorePasswordPath = sslDir.resolve("keystore.password").toAbsolutePath();
 
     // Dev keystore settings (auto-generated if missing)
-    private final String keystorePassword = "changeit";
+    private String keystorePassword = "";
     private final String keyAlias = "tomcat";
 
     // Keep JVM alive until stop() is called
@@ -63,6 +73,7 @@ public class tomcat {
             throw new IllegalStateException("Webapp directory not found: " + webappDir);
         }
 
+        this.keystorePassword = resolveKeystorePassword();
         ensureDevKeystoreExists(keystorePath, keystorePassword, keyAlias);
 
         tomcat = new Tomcat();
@@ -312,6 +323,57 @@ public class tomcat {
         c.setProperty("maxHttpHeaderSize", "65536");
         c.setProperty("relaxedPathChars", "\"<>[\\]^`{|}");
         c.setProperty("relaxedQueryChars", "\"<>[\\]^`{|}");
+    }
+
+    private String resolveKeystorePassword() throws Exception {
+        String configured = safe(System.getProperty(KEYSTORE_PASSWORD_ENV)).trim();
+        if (configured.isBlank()) configured = safe(System.getenv(KEYSTORE_PASSWORD_ENV)).trim();
+        if (!configured.isBlank()) return configured;
+
+        Files.createDirectories(sslDir);
+
+        if (Files.exists(keystorePasswordPath)) {
+            String stored = safe(Files.readString(keystorePasswordPath, StandardCharsets.UTF_8)).trim();
+            if (stored.isBlank()) {
+                throw new IllegalStateException("Keystore password file is empty: " + keystorePasswordPath);
+            }
+            return stored;
+        }
+
+        if (Files.exists(keystorePath)) {
+            System.err.println("WARNING: Existing keystore found without password file; using legacy default keystore password.");
+            System.err.println("WARNING: Set " + KEYSTORE_PASSWORD_ENV + " or create " + keystorePasswordPath + " to rotate.");
+            return "changeit";
+        }
+
+        String generated = generateSecurePassword();
+        Files.writeString(keystorePasswordPath, generated, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        try {
+            Files.setPosixFilePermissions(
+                    keystorePasswordPath,
+                    Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+            );
+        } catch (Exception ignored) {
+            // Non-POSIX filesystems may not support explicit file permissions.
+        }
+        System.err.println("WARNING: Generated TLS keystore password and saved it to " + keystorePasswordPath + ".");
+        System.err.println("WARNING: Set " + KEYSTORE_PASSWORD_ENV + " to manage this password explicitly.");
+        return generated;
+    }
+
+    private static String generateSecurePassword() {
+        int len = Math.max(24, GENERATED_KEYSTORE_PASSWORD_LEN);
+        StringBuilder sb = new StringBuilder(len);
+        for (int i = 0; i < len; i++) {
+            int idx = RNG.nextInt(KEYSTORE_PASSWORD_ALPHABET.length());
+            sb.append(KEYSTORE_PASSWORD_ALPHABET.charAt(idx));
+        }
+        return sb.toString();
+    }
+
+    private static String safe(String s) {
+        return s == null ? "" : s;
     }
 
     // Dev-only: create a self-signed keystore using JDK keytool if missing

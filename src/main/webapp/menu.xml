@@ -20,6 +20,7 @@
 
   <item label="Settings">
     <item label="Users &amp; Security" href="/users_roles.jsp" />
+    <item label="Permission Layers" href="/permissions_management.jsp" />
     <item label="User Settings" href="/user_settings.jsp" />
     <item label="Change E-Mail Address" href="/change_email.jsp" />
     <item label="Change Password" href="/change_password.jsp" />
@@ -47,6 +48,7 @@
     <item label="Tasks Guide (Expert)" href="/help_tasks_expert.jsp" />
     <item label="Threads Guide (Novice)" href="/help_threads_novice.jsp" />
     <item label="Threads Guide (Expert)" href="/help_threads_expert.jsp" />
+    <item label="Permissions Guide" href="/help_permissions.jsp" />
     <item label="Token Guide" href="/token_guide.jsp" />
     <item label="Markup Notation" href="/markup_notation.jsp" />
   </item>

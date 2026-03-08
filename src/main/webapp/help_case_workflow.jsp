@@ -15,7 +15,8 @@
   <ol style="margin:0; padding-left:20px; line-height:1.6;">
     <li>
       <strong>Access and permissions:</strong> confirm your team can access required screens in
-      <a href="<%= request.getContextPath() %>/users_roles.jsp">Users &amp; Security</a>.
+      <a href="<%= request.getContextPath() %>/users_roles.jsp">Users &amp; Security</a> and
+      <a href="<%= request.getContextPath() %>/permissions_management.jsp">Permission Layers</a>.
     </li>
     <li>
       <strong>Create the matter:</strong> open <a href="<%= request.getContextPath() %>/cases.jsp">Cases</a>

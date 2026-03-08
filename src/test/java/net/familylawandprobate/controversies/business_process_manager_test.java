@@ -2,6 +2,7 @@ package net.familylawandprobate.controversies;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -12,10 +13,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.AfterEach;
@@ -193,6 +196,8 @@ public class business_process_manager_test {
 
         assertEquals("approved", safe(done.status));
         assertEquals("completed", safe(done.resumeStatus));
+        business_process_manager.RunResult original = bpm.getRunResult(tenant, run.runUuid);
+        assertEquals("completed", safe(original == null ? "" : original.status));
 
         LinkedHashMap<String, String> fields = new LinkedHashMap<String, String>(case_fields.defaultStore().read(tenant, matter.uuid));
         assertEquals("approved", fields.get("review_decision"));
@@ -608,6 +613,165 @@ public class business_process_manager_test {
         assertEquals("pending_review", safe(afterRedo == null ? "" : afterRedo.values.get("approval_status")));
     }
 
+    @Test
+    void detects_stale_running_run_in_health_inspector() throws Exception {
+        String tenant = "tenant-bpm-health-running-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, minimalProcess("Health Running", "manual"));
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                Map.of(),
+                "tester",
+                "test"
+        );
+        assertEquals("completed", safe(run.status));
+
+        Path runPath = Paths.get("data", "tenants", tenant, "bpm", "runs", run.runUuid + ".xml").toAbsolutePath();
+        String staleStartedAt = Instant.now().minusSeconds(7200).toString();
+        replaceInFile(runPath, "status=\"completed\"", "status=\"running\"");
+        replaceInFile(runPath, "started_at=\"" + safe(run.startedAt) + "\"", "started_at=\"" + staleStartedAt + "\"");
+
+        List<business_process_manager.RunHealthIssue> issues = bpm.inspectRunHealth(tenant, 30, 60, 50);
+        business_process_manager.RunHealthIssue found = null;
+        for (business_process_manager.RunHealthIssue issue : issues) {
+            if (issue == null) continue;
+            if (safe(run.runUuid).equals(safe(issue.runUuid))) {
+                found = issue;
+                break;
+            }
+        }
+
+        assertNotNull(found);
+        assertEquals("stale_running_run", safe(found.issueType));
+        assertEquals("high", safe(found.severity));
+    }
+
+    @Test
+    void detects_stale_human_review_and_allows_operator_force_fail() throws Exception {
+        String tenant = "tenant-bpm-health-review-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Stale Review";
+
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "manual";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep review = new business_process_manager.ProcessStep();
+        review.stepId = "review";
+        review.order = 10;
+        review.action = "human_review";
+        review.settings.put("title", "Approve");
+        process.steps.add(review);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, process);
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                Map.of(),
+                "tester",
+                "test"
+        );
+        assertEquals("waiting_human_review", safe(run.status));
+
+        List<business_process_manager.HumanReviewTask> pending = bpm.listReviews(tenant, true, 20);
+        assertEquals(1, pending.size());
+
+        String staleTime = Instant.now().minusSeconds(4 * 3600).toString();
+        Path runPath = Paths.get("data", "tenants", tenant, "bpm", "runs", run.runUuid + ".xml").toAbsolutePath();
+        Path reviewsPath = Paths.get("data", "tenants", tenant, "bpm", "human_reviews.xml").toAbsolutePath();
+        replaceInFile(runPath, "started_at=\"" + safe(run.startedAt) + "\"", "started_at=\"" + staleTime + "\"");
+        replaceInFile(
+                reviewsPath,
+                "<created_at>" + safe(pending.get(0).createdAt) + "</created_at>",
+                "<created_at>" + staleTime + "</created_at>"
+        );
+
+        List<business_process_manager.RunHealthIssue> issues = bpm.inspectRunHealth(tenant, 30, 60, 50);
+        business_process_manager.RunHealthIssue found = null;
+        for (business_process_manager.RunHealthIssue issue : issues) {
+            if (issue == null) continue;
+            if (safe(run.runUuid).equals(safe(issue.runUuid))) {
+                found = issue;
+                break;
+            }
+        }
+
+        assertNotNull(found);
+        assertEquals("stale_human_review", safe(found.issueType));
+        assertTrue(found.canResolveReview);
+
+        business_process_manager.RunResult failed = bpm.markRunFailed(
+                tenant,
+                run.runUuid,
+                "operator",
+                "Run was stale/hung."
+        );
+        assertEquals("failed", safe(failed.status));
+
+        List<business_process_manager.HumanReviewTask> pendingAfter = bpm.listReviews(tenant, true, 20);
+        assertEquals(0, pendingAfter.size());
+
+        List<business_process_manager.HumanReviewTask> allReviews = bpm.listReviews(tenant, false, 20);
+        assertEquals("error", safe(allReviews.get(0).status));
+    }
+
+    @Test
+    void retry_run_marks_source_run_failed_and_creates_new_run() throws Exception {
+        String tenant = "tenant-bpm-health-retry-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Retry Waiting Run";
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "manual";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep review = new business_process_manager.ProcessStep();
+        review.stepId = "review";
+        review.order = 10;
+        review.action = "human_review";
+        review.settings.put("title", "Retry Review");
+        process.steps.add(review);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, process);
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                Map.of(),
+                "tester",
+                "test"
+        );
+        assertEquals("waiting_human_review", safe(run.status));
+
+        business_process_manager.RunResult retried = bpm.retryRun(
+                tenant,
+                run.runUuid,
+                "operator",
+                "Retry from inspector."
+        );
+
+        assertNotNull(retried);
+        assertNotEquals(safe(run.runUuid), safe(retried.runUuid));
+        assertEquals("waiting_human_review", safe(retried.status));
+
+        business_process_manager.RunResult source = bpm.getRunResult(tenant, run.runUuid);
+        assertEquals("failed", safe(source == null ? "" : source.status));
+        assertTrue(safe(source == null ? "" : source.message).contains(safe(retried.runUuid)));
+
+        List<business_process_manager.HumanReviewTask> pending = bpm.listReviews(tenant, true, 50);
+        assertEquals(1, pending.size());
+    }
+
     private static business_process_manager.ProcessDefinition minimalProcess(String name, String triggerType) {
         business_process_manager.ProcessDefinition p = new business_process_manager.ProcessDefinition();
         p.name = name;
@@ -635,6 +799,12 @@ public class business_process_manager_test {
             } catch (Exception ignored) {
             }
         });
+    }
+
+    private static void replaceInFile(Path path, String target, String replacement) throws Exception {
+        String current = Files.readString(path, StandardCharsets.UTF_8);
+        assertTrue(current.contains(target));
+        Files.writeString(path, current.replace(target, replacement), StandardCharsets.UTF_8);
     }
 
     private static String safe(String s) {

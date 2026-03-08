@@ -16,7 +16,6 @@
 <%@ include file="security.jspf" %>
 <%
   if (!require_login()) return;
-  if (!require_permission("tenant_admin")) return;
 %>
 
 <%!

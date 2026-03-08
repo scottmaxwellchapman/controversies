@@ -35,6 +35,7 @@ import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider;
 import org.apache.sshd.sftp.server.SftpSubsystemFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.opentest4j.TestAbortedException;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -43,6 +44,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
+import java.net.SocketException;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
@@ -950,6 +952,12 @@ public class storage_protocol_plugins_integration_test {
     private static int freePort() throws Exception {
         try (ServerSocket socket = new ServerSocket(0)) {
             return socket.getLocalPort();
+        } catch (SocketException ex) {
+            String msg = safe(ex.getMessage()).toLowerCase();
+            if (msg.contains("operation not permitted") || msg.contains("permission denied")) {
+                throw new TestAbortedException("Local socket binding is blocked in this environment.", ex);
+            }
+            throw ex;
         }
     }
 

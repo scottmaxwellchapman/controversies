@@ -3,6 +3,7 @@ package net.familylawandprobate.controversies;
 import group.chapmanlaw.texascodesstatutes.TexasCodesStatutesSync;
 import group.chapmanlaw.texasrulesandstandards.TexasRulesAndStandardsSync;
 
+import java.nio.file.DirectoryStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
@@ -15,6 +16,9 @@ import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -38,6 +42,7 @@ public final class texas_law_sync {
     private static final Path CODES_LOG_FILE = Paths.get("data", "texas_law", "logs", "texascodesstatutes.log").toAbsolutePath().normalize();
     private static final Path SHARED_STATE_DIR = Paths.get("data", "shared", "texas_law").toAbsolutePath().normalize();
     private static final Path STATUS_FILE = SHARED_STATE_DIR.resolve("texas_law_sync_status.properties");
+    private static final Path TENANTS_ROOT = Paths.get("data", "tenants").toAbsolutePath().normalize();
 
     private static final class Holder {
         private static final texas_law_sync INSTANCE = new texas_law_sync();
@@ -65,6 +70,15 @@ public final class texas_law_sync {
 
     public static Path statusFile() {
         return STATUS_FILE;
+    }
+
+    static String[] codesSyncArgs(Path dataDir) {
+        Path normalized = dataDir == null ? CODES_DATA_DIR : dataDir.toAbsolutePath().normalize();
+        return new String[] {
+                "--target=local",
+                "--data-dir=" + normalized,
+                "--allow-partial"
+        };
     }
 
     private final Timer timer = new Timer("texas-law-sync-timer", true);
@@ -147,10 +161,7 @@ public final class texas_law_sync {
             updateStatusForStart(trigger, startedAt);
 
             rulesExit = TexasRulesAndStandardsSync.runSync();
-            String[] codeArgs = new String[] {
-                    "--target=local",
-                    "--data-dir=" + CODES_DATA_DIR.toString()
-            };
+            String[] codeArgs = codesSyncArgs(CODES_DATA_DIR);
             codesExit = TexasCodesStatutesSync.run(codeArgs);
             if (rulesExit != 0 || codesExit != 0) {
                 error = "rules_exit=" + rulesExit + ", codes_exit=" + codesExit;
@@ -160,7 +171,9 @@ public final class texas_law_sync {
             LOG.log(Level.SEVERE, "Texas law sync cycle failed (" + trigger + "): " + error, ex);
         } finally {
             Instant completedAt = Instant.now();
+            long durationMs = Math.max(0L, Duration.between(startedAt, completedAt).toMillis());
             updateStatusForCompletion(trigger, startedAt, completedAt, rulesExit, codesExit, error);
+            logSyncCycleToActivityLogs(trigger, rulesExit, codesExit, error, durationMs);
             runInFlight.set(false);
         }
     }
@@ -218,6 +231,53 @@ public final class texas_law_sync {
         } else {
             LOG.warning("Texas law sync cycle completed with errors (" + trigger + "): " + safe(error));
         }
+    }
+
+    private void logSyncCycleToActivityLogs(String trigger,
+                                            int rulesExit,
+                                            int codesExit,
+                                            String error,
+                                            long durationMs) {
+        String failure = safe(error);
+        boolean ok = failure.isBlank() && rulesExit == 0 && codesExit == 0;
+        List<String> tenants = discoverTenantUuids();
+        if (tenants.isEmpty()) return;
+
+        activity_log logs = activity_log.defaultStore();
+        for (String tenantUuid : tenants) {
+            if (safe(tenantUuid).isBlank()) continue;
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("trigger", safe(trigger));
+            details.put("duration_ms", String.valueOf(Math.max(0L, durationMs)));
+            details.put("rules_exit_code", rulesExit < 0 ? "" : String.valueOf(rulesExit));
+            details.put("codes_exit_code", codesExit < 0 ? "" : String.valueOf(codesExit));
+            if (!failure.isBlank()) details.put("error", failure);
+            try {
+                if (ok) {
+                    logs.logVerbose("texas_law.sync.completed", tenantUuid, "system", "", "", details);
+                } else {
+                    logs.logError("texas_law.sync.failed", tenantUuid, "system", "", "", details);
+                }
+            } catch (Exception ex) {
+                LOG.log(Level.FINE, "Unable to write Texas law sync activity log for tenant=" + tenantUuid, ex);
+            }
+        }
+    }
+
+    private static List<String> discoverTenantUuids() {
+        ArrayList<String> out = new ArrayList<String>();
+        if (!Files.isDirectory(TENANTS_ROOT)) return out;
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(TENANTS_ROOT)) {
+            for (Path p : ds) {
+                if (p == null || !Files.isDirectory(p)) continue;
+                if (p.getFileName() == null) continue;
+                String tenantUuid = safe(p.getFileName().toString()).trim();
+                if (!tenantUuid.isBlank()) out.add(tenantUuid);
+            }
+        } catch (Exception ex) {
+            LOG.log(Level.FINE, "Unable to list tenant directories for texas law activity logging: " + safe(ex.getMessage()), ex);
+        }
+        return out;
     }
 
     private static Properties readStatus() {

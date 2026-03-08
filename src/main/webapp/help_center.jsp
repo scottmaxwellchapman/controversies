@@ -75,6 +75,12 @@
       <p class="muted">Advanced API/BPM and reporting practices for omnichannel thread operations.</p>
       <a class="btn" href="<%= request.getContextPath() %>/help_threads_expert.jsp">Open Guide</a>
     </article>
+
+    <article class="card" style="padding:14px; margin:0;">
+      <h3 style="margin-top:0;">Permissions Guide</h3>
+      <p class="muted">Tenant, role, group, and user-level permission layering, profile usage, and custom object permission keys.</p>
+      <a class="btn" href="<%= request.getContextPath() %>/help_permissions.jsp">Open Guide</a>
+    </article>
   </div>
 </section>
 

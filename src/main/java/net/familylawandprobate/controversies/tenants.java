@@ -52,7 +52,9 @@ import javax.crypto.spec.PBEKeySpec;
  *
  * Bootstrap:
  * - On initialization (ensure()), guarantees a tenant labeled "Default Tenant" exists and is enabled.
- * - Default Tenant password is "password" (bootstrap).
+ * - Bootstrap password source:
+ *   1) System property/env CONTROVERSIES_BOOTSTRAP_PASSWORD
+ *   2) Generated one-time random password (logged once at WARN level)
  */
 public final class tenants {
 
@@ -69,7 +71,10 @@ public final class tenants {
 
     // Bootstrap default tenant
     private static final String DEFAULT_TENANT_LABEL = "Default Tenant";
-    private static final String DEFAULT_TENANT_PASSWORD = "password";
+    private static final String BOOTSTRAP_PASSWORD_ENV = "CONTROVERSIES_BOOTSTRAP_PASSWORD";
+    private static final int GENERATED_BOOTSTRAP_PASSWORD_LEN = 24;
+    private static final String BOOTSTRAP_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%*-_";
+    private static volatile String GENERATED_BOOTSTRAP_PASSWORD = null;
 
     // Label rules:
     // - letters, numbers, spaces
@@ -298,7 +303,13 @@ public final class tenants {
         if (foundEl == null) {
             // Create it
             String uuid = UUID.randomUUID().toString();
-            String hash = hashPassword(DEFAULT_TENANT_PASSWORD.toCharArray());
+            char[] bootstrapPassword = resolveBootstrapPassword("default_tenant.create");
+            String hash;
+            try {
+                hash = hashPassword(bootstrapPassword);
+            } finally {
+                wipe(bootstrapPassword);
+            }
 
             Element tenant = d.createElement(TENANT);
             appendChildText(d, tenant, E_UUID, uuid);
@@ -328,7 +339,13 @@ public final class tenants {
             // Ensure hash exists (only if missing/blank)
             String h = nz(text(foundEl, E_HASH)).trim();
             if (h.isBlank()) {
-                String hash = hashPassword(DEFAULT_TENANT_PASSWORD.toCharArray());
+                char[] bootstrapPassword = resolveBootstrapPassword("default_tenant.restore_hash");
+                String hash;
+                try {
+                    hash = hashPassword(bootstrapPassword);
+                } finally {
+                    wipe(bootstrapPassword);
+                }
                 setOrCreateChildText(d, foundEl, E_HASH, hash);
                 changed = true;
                 LOG.info("Bootstrap: set Default Tenant password hash (label=\"" + DEFAULT_TENANT_LABEL + "\")");
@@ -419,6 +436,38 @@ public final class tenants {
         PBEKeySpec spec = new PBEKeySpec(password, salt, iters, dkLenBytes * 8);
         SecretKeyFactory f = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
         return f.generateSecret(spec).getEncoded();
+    }
+
+    private char[] resolveBootstrapPassword(String purpose) {
+        String configured = nz(System.getProperty(BOOTSTRAP_PASSWORD_ENV)).trim();
+        if (configured.isBlank()) configured = nz(System.getenv(BOOTSTRAP_PASSWORD_ENV)).trim();
+        if (!configured.isBlank()) return configured.toCharArray();
+
+        synchronized (lock) {
+            if (GENERATED_BOOTSTRAP_PASSWORD == null || GENERATED_BOOTSTRAP_PASSWORD.isBlank()) {
+                GENERATED_BOOTSTRAP_PASSWORD = generateBootstrapPassword();
+                LOG.warning("Security bootstrap generated one-time password for " + purpose
+                        + ". Set " + BOOTSTRAP_PASSWORD_ENV + " to control this value. Password="
+                        + GENERATED_BOOTSTRAP_PASSWORD);
+            }
+            return GENERATED_BOOTSTRAP_PASSWORD.toCharArray();
+        }
+    }
+
+    private static String generateBootstrapPassword() {
+        String alphabet = BOOTSTRAP_PASSWORD_ALPHABET;
+        int len = Math.max(16, GENERATED_BOOTSTRAP_PASSWORD_LEN);
+        StringBuilder sb = new StringBuilder(len);
+        for (int i = 0; i < len; i++) {
+            int idx = RNG.nextInt(alphabet.length());
+            sb.append(alphabet.charAt(idx));
+        }
+        return sb.toString();
+    }
+
+    private static void wipe(char[] chars) {
+        if (chars == null) return;
+        Arrays.fill(chars, '\0');
     }
 
     private static byte[] sha256(byte[] in) throws Exception {

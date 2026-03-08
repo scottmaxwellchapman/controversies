@@ -3,7 +3,6 @@
 <%@ include file="security.jspf" %>
 <%
   if (!require_login()) return;
-  if (!require_permission("tenant_admin")) return;
 
   String ctx = request.getContextPath();
   if (ctx == null) ctx = "";

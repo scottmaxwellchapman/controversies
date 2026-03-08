@@ -14,6 +14,7 @@
 <%@ page import="net.familylawandprobate.controversies.custom_object_attributes" %>
 <%@ page import="net.familylawandprobate.controversies.custom_object_records" %>
 <%@ page import="net.familylawandprobate.controversies.custom_objects" %>
+<%@ page import="net.familylawandprobate.controversies.permission_layers" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 
 <%@ include file="security.jspf" %>
@@ -112,6 +113,18 @@
     }
     return v;
   }
+
+  private static boolean hasCustomObjectActionPermission(jakarta.servlet.http.HttpSession session,
+                                                         String objectKey,
+                                                         String action) {
+    List<String> keys = permission_layers.customObjectPermissionKeys(objectKey, action);
+    for (int i = 0; i < keys.size(); i++) {
+      String key = safe(keys.get(i)).trim();
+      if (key.isBlank()) continue;
+      if (users_roles.hasPermissionTrue(session, key)) return true;
+    }
+    return false;
+  }
 %>
 
 <%
@@ -152,16 +165,27 @@
   }
 
   boolean allowRead = false;
-  boolean allowWrite = false;
+  boolean allowCreate = false;
+  boolean allowEdit = false;
+  boolean allowArchive = false;
+  boolean allowExport = false;
   if (objectRec != null) {
     if (tenantAdmin) {
       allowRead = true;
-      allowWrite = true;
+      allowCreate = true;
+      allowEdit = true;
+      allowArchive = true;
+      allowExport = true;
     } else if (objectRec.enabled && objectRec.published) {
-      allowRead = true;
-      allowWrite = true;
+      String objectKey = safe(objectRec.key).trim();
+      allowRead = hasCustomObjectActionPermission(session, objectKey, "access");
+      allowCreate = allowRead && hasCustomObjectActionPermission(session, objectKey, "create");
+      allowEdit = allowRead && hasCustomObjectActionPermission(session, objectKey, "edit");
+      allowArchive = allowRead && hasCustomObjectActionPermission(session, objectKey, "archive");
+      allowExport = allowRead && hasCustomObjectActionPermission(session, objectKey, "export");
     }
   }
+  boolean allowWrite = allowCreate || allowEdit || allowArchive;
 
   String csrfToken = csrfForRender(request);
   String message = null;
@@ -191,7 +215,13 @@
     String action = safe(request.getParameter("action")).trim();
     objectUuid = safe(request.getParameter("object_uuid")).trim();
 
-    if (!allowWrite) {
+    if ("create_record".equalsIgnoreCase(action) && !allowCreate) {
+      error = "You do not have permission to create records for this object.";
+    } else if ("save_record".equalsIgnoreCase(action) && !allowEdit) {
+      error = "You do not have permission to edit records for this object.";
+    } else if (("archive_record".equalsIgnoreCase(action) || "restore_record".equalsIgnoreCase(action)) && !allowArchive) {
+      error = "You do not have permission to archive or restore records for this object.";
+    } else if (!allowWrite) {
       error = "You do not have access to modify this object.";
     } else {
       try {
@@ -417,7 +447,7 @@
     }
   }
 
-  if (allowRead && "csv".equalsIgnoreCase(request.getParameter("export"))) {
+  if (allowRead && allowExport && "csv".equalsIgnoreCase(request.getParameter("export"))) {
     response.setContentType("text/csv; charset=UTF-8");
     String fname = "custom-object-" + (objectRec == null ? "records" : safe(objectRec.key)) + "-" + Instant.now().toEpochMilli() + ".csv";
     response.setHeader("Content-Disposition", "attachment; filename=\"" + fname.replaceAll("[^A-Za-z0-9._-]", "_") + "\"");
@@ -549,7 +579,9 @@
       </div>
       <div class="actions" style="display:flex; gap:10px; margin-top:10px;">
         <button class="btn" type="submit">Apply</button>
-        <a class="btn btn-ghost" href="<%= ctx %>/custom_object_records.jsp?object_uuid=<%= enc(objectUuid) %>&q=<%= enc(q) %>&show=<%= enc(show) %>&export=csv">Export CSV</a>
+        <% if (allowExport) { %>
+          <a class="btn btn-ghost" href="<%= ctx %>/custom_object_records.jsp?object_uuid=<%= enc(objectUuid) %>&q=<%= enc(q) %>&show=<%= enc(show) %>&export=csv">Export CSV</a>
+        <% } %>
       </div>
     </form>
 
@@ -575,7 +607,7 @@
   <% } %>
 </section>
 
-<% if (allowWrite) { %>
+<% if (allowCreate) { %>
 <section class="card" style="margin-top:12px;">
   <h2 style="margin-top:0;">Create <%= esc(safe(objectRec == null ? "Record" : objectRec.label)) %></h2>
   <form method="post" class="form" action="<%= ctx %>/custom_object_records.jsp">
@@ -686,26 +718,31 @@
             <% } %>
           </td>
           <td>
-            <button type="button" class="btn btn-ghost" onclick="toggleEditRow('<%= esc(editRowId) %>')">Edit</button>
-            <% if (!r.trashed) { %>
-              <form method="post" action="<%= ctx %>/custom_object_records.jsp" style="display:inline;">
-                <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-                <input type="hidden" name="action" value="archive_record" />
-                <input type="hidden" name="object_uuid" value="<%= esc(objectUuid) %>" />
-                <input type="hidden" name="uuid" value="<%= esc(rid) %>" />
-                <button class="btn btn-ghost" type="submit">Archive</button>
-              </form>
-            <% } else { %>
-              <form method="post" action="<%= ctx %>/custom_object_records.jsp" style="display:inline;">
-                <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-                <input type="hidden" name="action" value="restore_record" />
-                <input type="hidden" name="object_uuid" value="<%= esc(objectUuid) %>" />
-                <input type="hidden" name="uuid" value="<%= esc(rid) %>" />
-                <button class="btn btn-ghost" type="submit">Restore</button>
-              </form>
+            <% if (allowEdit) { %>
+              <button type="button" class="btn btn-ghost" onclick="toggleEditRow('<%= esc(editRowId) %>')">Edit</button>
+            <% } %>
+            <% if (allowArchive) { %>
+              <% if (!r.trashed) { %>
+                <form method="post" action="<%= ctx %>/custom_object_records.jsp" style="display:inline;">
+                  <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                  <input type="hidden" name="action" value="archive_record" />
+                  <input type="hidden" name="object_uuid" value="<%= esc(objectUuid) %>" />
+                  <input type="hidden" name="uuid" value="<%= esc(rid) %>" />
+                  <button class="btn btn-ghost" type="submit">Archive</button>
+                </form>
+              <% } else { %>
+                <form method="post" action="<%= ctx %>/custom_object_records.jsp" style="display:inline;">
+                  <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                  <input type="hidden" name="action" value="restore_record" />
+                  <input type="hidden" name="object_uuid" value="<%= esc(objectUuid) %>" />
+                  <input type="hidden" name="uuid" value="<%= esc(rid) %>" />
+                  <button class="btn btn-ghost" type="submit">Restore</button>
+                </form>
+              <% } %>
             <% } %>
           </td>
         </tr>
+        <% if (allowEdit) { %>
         <tr id="<%= esc(editRowId) %>" style="display:none;">
           <td colspan="5">
             <form method="post" class="form" action="<%= ctx %>/custom_object_records.jsp">
@@ -774,6 +811,7 @@
             </form>
           </td>
         </tr>
+        <% } %>
       <%   }
          } %>
       </tbody>
