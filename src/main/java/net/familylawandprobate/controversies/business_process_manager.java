@@ -2,6 +2,8 @@ package net.familylawandprobate.controversies;
 
 import java.io.InputStream;
 import java.io.StringReader;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -10,14 +12,23 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.time.DayOfWeek;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -44,6 +55,7 @@ public final class business_process_manager {
 
     private static final Logger LOG = Logger.getLogger(business_process_manager.class.getName());
     private static final ConcurrentHashMap<String, ReentrantReadWriteLock> LOCKS = new ConcurrentHashMap<String, ReentrantReadWriteLock>();
+    private static final String DEFAULT_REVIEW_QUEUE_PERMISSION = "business_process_reviews.manage";
 
     private interface StepHandler {
         StepOutcome handle(ExecutionContext ctx, ProcessStep step, LinkedHashMap<String, String> context) throws Exception;
@@ -127,8 +139,18 @@ public final class business_process_manager {
         public boolean canResolveReview = false;
     }
 
+    public static final class AgingAlarmEmailResult {
+        public int detectedIssues = 0;
+        public int newlyAlarmedIssues = 0;
+        public int emailsQueued = 0;
+        public String emailUuid = "";
+        public String emailError = "";
+        public ArrayList<String> recipients = new ArrayList<String>();
+    }
+
     public static final class HumanReviewTask {
         public String reviewUuid = "";
+        public String reviewType = "human_review";
         public String processUuid = "";
         public String processName = "";
         public String requestRunUuid = "";
@@ -140,6 +162,10 @@ public final class business_process_manager {
         public String comment = "";
         public String requestedByUserUuid = "";
         public String reviewedByUserUuid = "";
+        public String assigneeUserUuid = "";
+        public String assigneeRoleUuid = "";
+        public String queuePermissionKey = "";
+        public String dueAt = "";
         public String createdAt = "";
         public String resolvedAt = "";
         public int nextStepOrder = 0;
@@ -407,11 +433,19 @@ public final class business_process_manager {
     }
 
     public List<HumanReviewTask> listReviews(String tenantUuid, boolean pendingOnly, int limit) throws Exception {
+        return listReviewsForUser(tenantUuid, "", pendingOnly, limit);
+    }
+
+    public List<HumanReviewTask> listReviewsForUser(String tenantUuid,
+                                                    String viewerUserUuid,
+                                                    boolean pendingOnly,
+                                                    int limit) throws Exception {
         String tu = safeFileToken(tenantUuid);
         if (tu.isBlank()) return List.of();
         ensureTenant(tu);
 
         int max = Math.max(1, Math.min(1000, limit));
+        String viewer = safe(viewerUserUuid).trim();
         ReentrantReadWriteLock lock = lockFor(tu);
         lock.readLock().lock();
         try {
@@ -420,6 +454,7 @@ public final class business_process_manager {
             for (HumanReviewTask t : all) {
                 if (t == null) continue;
                 if (pendingOnly && !"pending".equalsIgnoreCase(safe(t.status))) continue;
+                if (!viewer.isBlank() && !canUserAccessReview(tu, t, viewer)) continue;
                 out.add(t);
             }
             out.sort(Comparator.comparing((HumanReviewTask r) -> safe(r.createdAt)).reversed());
@@ -557,11 +592,104 @@ public final class business_process_manager {
                 List.of("actor_user_uuid", "on_error")
         ));
         out.add(actionDescriptor(
+                "document_assembly",
+                "Assemble a template with matter data and store it in assembled forms history.",
+                false,
+                List.of("matter_uuid", "template_uuid"),
+                List.of("template_label", "output_file_name", "assembly_uuid", "user_uuid", "user_email",
+                        "value.*", "values.*", "override.*", "overrides.*", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "notice_communication",
+                "Queue or send an outbound legal notice email.",
+                false,
+                List.of("to", "subject"),
+                List.of("body_text", "body_html", "cc", "bcc", "from_address", "from_name", "reply_to",
+                        "matter_uuid", "delivery_mode", "actor_user_uuid", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "send_for_signature",
+                "Send signature notice and optionally pause for a confirmation review.",
+                false,
+                List.of("to", "subject"),
+                List.of("body_text", "body_html", "cc", "bcc", "from_address", "from_name", "reply_to",
+                        "matter_uuid", "signature_link", "delivery_mode", "wait_for_confirmation",
+                        "confirmation_title", "confirmation_instructions", "required_input_keys",
+                        "assignee_user_uuid", "assignee_role_uuid", "queue_permission_key", "due_at", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "conflict_check",
+                "Run a simple conflict scan over linked parties/contacts and branch on potential matches.",
+                false,
+                List.of("matter_uuid"),
+                List.of("party_names", "on_potential", "review_title", "review_instructions", "required_input_keys",
+                        "assignee_user_uuid", "assignee_role_uuid", "queue_permission_key", "due_at", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "deadline_rule_calculation",
+                "Compute a legal deadline from a trigger date and day offset.",
+                false,
+                List.of("days_offset"),
+                List.of("trigger_date", "business_days", "store_as", "matter_uuid", "field_key", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "court_filing_service",
+                "Create a filing/service task and optionally require human confirmation.",
+                false,
+                List.of("matter_uuid", "title"),
+                List.of("description", "due_at", "estimate_minutes", "priority", "status",
+                        "assignment_mode", "assigned_user_uuid", "assignment_reason", "actor_user_uuid",
+                        "require_review", "review_title", "review_instructions", "required_input_keys",
+                        "assignee_user_uuid", "assignee_role_uuid", "queue_permission_key", "due_at", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "payment_fee_verification",
+                "Verify required vs paid filing/payment amounts and branch on insufficiency.",
+                false,
+                List.of("required_amount"),
+                List.of("paid_amount", "matter_uuid", "required_amount_field_key", "paid_amount_field_key",
+                        "currency", "on_insufficient", "review_title", "review_instructions", "required_input_keys",
+                        "assignee_user_uuid", "assignee_role_uuid", "queue_permission_key", "due_at", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "wait_for_external_event",
+                "Pause processing until a human confirms an external event outcome.",
+                false,
+                List.of("title"),
+                List.of("instructions", "required_input_keys", "assignee_user_uuid", "assignee_role_uuid",
+                        "queue_permission_key", "due_at", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "request_information",
+                "Pause for a structured information request with required response fields.",
+                false,
+                List.of("title"),
+                List.of("instructions", "request_target", "required_input_keys", "assignee_user_uuid",
+                        "assignee_role_uuid", "queue_permission_key", "due_at", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "escalation",
+                "Create an escalation task and optional notice for urgent legal follow-up.",
+                false,
+                List.of("matter_uuid", "title"),
+                List.of("description", "due_at", "estimate_minutes", "priority", "status", "assignment_mode",
+                        "assigned_user_uuid", "assignment_reason", "actor_user_uuid", "notify_to",
+                        "notify_subject", "notify_body_text", "notify_body_html", "on_error")
+        ));
+        out.add(actionDescriptor(
+                "audit_snapshot",
+                "Write a hashed context snapshot to activity logs for defensibility/audit trails.",
+                false,
+                List.of(),
+                List.of("action", "message", "include_keys", "include_prefixes", "output_var", "on_error")
+        ));
+        out.add(actionDescriptor(
                 "human_review",
                 "Pause run and request human approval/input.",
                 false,
                 List.of("title"),
-                List.of("instructions", "required_input_keys", "on_error")
+                List.of("instructions", "required_input_keys", "review_type", "assignee_user_uuid",
+                        "assignee_role_uuid", "queue_permission_key", "due_at", "on_error")
         ));
         return out;
     }
@@ -594,6 +722,7 @@ public final class business_process_manager {
             if (!"pending".equalsIgnoreCase(safe(found.status))) {
                 throw new IllegalArgumentException("Review task already completed.");
             }
+            ensureReviewerAuthorized(tu, found, reviewedByUserUuid);
 
             LinkedHashMap<String, String> in = sanitizeMap(input);
             if (approved) {
@@ -819,6 +948,106 @@ public final class business_process_manager {
         } finally {
             lock.readLock().unlock();
         }
+    }
+
+    public AgingAlarmEmailResult sendAgingRunAlarmEmails(String tenantUuid,
+                                                         int runningStaleMinutes,
+                                                         int reviewStaleMinutes,
+                                                         int limit,
+                                                         String actorUserUuid) throws Exception {
+        String tu = safeFileToken(tenantUuid);
+        if (tu.isBlank()) return new AgingAlarmEmailResult();
+        ensureTenant(tu);
+
+        AgingAlarmEmailResult out = new AgingAlarmEmailResult();
+        List<RunHealthIssue> issues = inspectRunHealth(tu, runningStaleMinutes, reviewStaleMinutes, limit);
+        out.detectedIssues = issues.size();
+        if (issues.isEmpty()) return out;
+
+        List<String> recipients = resolveTenantAdminEmails(tu);
+        if (!recipients.isEmpty()) out.recipients.addAll(recipients);
+        if (recipients.isEmpty()) return out;
+
+        String actor = safe(actorUserUuid).trim();
+        if (actor.isBlank()) actor = "system.bpm_aging_alarm";
+
+        ArrayList<RunHealthIssue> newlyAlarmed = new ArrayList<RunHealthIssue>();
+        String now = nowIso();
+
+        ReentrantReadWriteLock lock = lockFor(tu);
+        lock.writeLock().lock();
+        try {
+            for (RunHealthIssue issue : issues) {
+                if (issue == null) continue;
+                String runUuid = safe(issue.runUuid).trim();
+                if (runUuid.isBlank()) continue;
+
+                Path p = runPath(tu, runUuid);
+                if (!Files.exists(p)) continue;
+                RunSnapshot snap = readRunSnapshot(p);
+                if (snap == null || snap.result == null) continue;
+
+                String issueType = safe(issue.issueType).trim().toLowerCase(Locale.ROOT);
+                if (issueType.isBlank()) issueType = "stale_issue";
+                String alarmCode = "aging_alarm." + issueType;
+                if (hasLogCode(snap.logs, alarmCode)) continue;
+
+                String message = "Aging alarm detected: " + safe(issue.summary)
+                        + " (age_minutes=" + Math.max(0L, issue.ageMinutes) + ").";
+                snap.logs.add(new RunLogEntry(now, "warning", alarmCode, "", message));
+                writeRunSnapshot(tu, snap);
+                newlyAlarmed.add(issue);
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
+
+        out.newlyAlarmedIssues = newlyAlarmed.size();
+        if (newlyAlarmed.isEmpty()) return out;
+
+        String subject = out.newlyAlarmedIssues == 1
+                ? "BPM aging alarm: 1 stale/incomplete run"
+                : ("BPM aging alarm: " + out.newlyAlarmedIssues + " stale/incomplete runs");
+        String bodyText = buildAgingAlarmEmailBody(tu, runningStaleMinutes, reviewStaleMinutes, newlyAlarmed);
+
+        notification_emails.NotificationEmailRequest request = new notification_emails.NotificationEmailRequest(
+                "",
+                "",
+                "",
+                "",
+                subject,
+                bodyText,
+                "",
+                recipients,
+                List.of(),
+                List.of(),
+                List.of()
+        );
+
+        try {
+            String emailUuid = notification_emails.defaultStore().enqueue(tu, actor, request);
+            out.emailUuid = safe(emailUuid);
+            if (!out.emailUuid.isBlank()) out.emailsQueued = 1;
+
+            activity_log.defaultStore().logWarning(
+                    "bpm.run_health.alarm.email",
+                    tu,
+                    actor,
+                    "",
+                    "",
+                    Map.of(
+                            "issues_detected", String.valueOf(out.detectedIssues),
+                            "issues_newly_alarmed", String.valueOf(out.newlyAlarmedIssues),
+                            "email_uuid", out.emailUuid,
+                            "recipient_count", String.valueOf(recipients.size())
+                    )
+            );
+        } catch (Exception ex) {
+            out.emailError = safe(ex.getMessage());
+            LOG.log(Level.WARNING, "Unable to enqueue BPM aging alarm email for tenant=" + tu + ": " + out.emailError, ex);
+        }
+
+        return out;
     }
 
     public RunResult markRunFailed(String tenantUuid,
@@ -2268,9 +2497,751 @@ public final class business_process_manager {
             return StepOutcome.continueWithMessage("Facts report refreshed.");
         });
 
+        handlers.put("document_assembly", (exec, step, context) -> {
+            String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+            if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required for document_assembly.");
+
+            String templateUuid = resolveTemplate(step.settings.get("template_uuid"), context).trim();
+            if (templateUuid.isBlank()) throw new IllegalArgumentException("template_uuid is required for document_assembly.");
+
+            form_templates store = form_templates.defaultStore();
+            form_templates.TemplateRec template = store.get(exec.tenantUuid, templateUuid);
+            if (template == null) throw new IllegalArgumentException("Template not found for document_assembly.");
+
+            byte[] templateBytes = store.readBytes(exec.tenantUuid, templateUuid);
+            if (templateBytes == null || templateBytes.length == 0) {
+                throw new IllegalArgumentException("Template body is empty for document_assembly.");
+            }
+
+            String templateExtOrName = safe(template.fileExt).trim();
+            if (templateExtOrName.isBlank()) templateExtOrName = safe(template.fileName).trim();
+            if (templateExtOrName.isBlank()) templateExtOrName = "txt";
+
+            LinkedHashMap<String, String> mergeValues = buildMatterMergeValues(exec.tenantUuid, matterUuid);
+            for (Map.Entry<String, String> e : step.settings.entrySet()) {
+                if (e == null) continue;
+                String key = safe(e.getKey()).trim();
+                if (key.isBlank()) continue;
+                String value = resolveTemplate(e.getValue(), context);
+                if (key.startsWith("value.")) {
+                    String token = key.substring("value.".length()).trim();
+                    putToken(mergeValues, token, value);
+                } else if (key.startsWith("values.")) {
+                    String token = key.substring("values.".length()).trim();
+                    putToken(mergeValues, token, value);
+                }
+            }
+
+            LinkedHashMap<String, String> overrides = new LinkedHashMap<String, String>();
+            for (Map.Entry<String, String> e : step.settings.entrySet()) {
+                if (e == null) continue;
+                String key = safe(e.getKey()).trim();
+                if (key.isBlank()) continue;
+                String value = resolveTemplate(e.getValue(), context);
+                if (key.startsWith("override.")) {
+                    String token = key.substring("override.".length()).trim();
+                    if (!token.isBlank()) {
+                        overrides.put(token, value);
+                        applyLiteralOverride(mergeValues, token, value);
+                    }
+                } else if (key.startsWith("overrides.")) {
+                    String token = key.substring("overrides.".length()).trim();
+                    if (!token.isBlank()) {
+                        overrides.put(token, value);
+                        applyLiteralOverride(mergeValues, token, value);
+                    }
+                }
+            }
+
+            document_assembler.AssembledFile assembled = new document_assembler().assemble(templateBytes, templateExtOrName, mergeValues);
+            String templateLabel = resolveTemplate(step.settings.get("template_label"), context).trim();
+            if (templateLabel.isBlank()) templateLabel = safe(template.label).trim();
+            if (templateLabel.isBlank()) templateLabel = "Assembled Document";
+
+            String requestedFileName = resolveTemplate(step.settings.get("output_file_name"), context).trim();
+            String outputName = suggestOutputFileName(requestedFileName, templateLabel, assembled == null ? "" : assembled.extension);
+            String preferredAssemblyUuid = resolveTemplate(step.settings.get("assembly_uuid"), context).trim();
+            String userUuid = resolveTemplate(step.settings.get("user_uuid"), context).trim();
+            if (userUuid.isBlank()) userUuid = safe(exec.actorUserUuid).trim();
+            String userEmail = resolveTemplate(step.settings.get("user_email"), context).trim();
+
+            assembled_forms.AssemblyRec rec = assembled_forms.defaultStore().markCompleted(
+                    exec.tenantUuid,
+                    matterUuid,
+                    preferredAssemblyUuid,
+                    templateUuid,
+                    templateLabel,
+                    templateExtOrName,
+                    userUuid,
+                    userEmail,
+                    overrides,
+                    outputName,
+                    safe(assembled == null ? "" : assembled.extension),
+                    assembled == null ? new byte[0] : assembled.bytes
+            );
+            if (rec == null) throw new IllegalStateException("Unable to store assembled output.");
+
+            context.put("vars.last_matter_uuid", matterUuid);
+            context.put("vars.last_assembly_uuid", safe(rec.uuid));
+            context.put("vars.last_assembly_file_name", safe(rec.outputFileName));
+            context.put("vars.last_assembly_output_ext", safe(rec.outputFileExt));
+            context.put("vars.last_assembly_template_uuid", templateUuid);
+            context.put("vars.last_document_assembly_status", "completed");
+
+            return StepOutcome.continueWithMessage("Document assembled: " + safe(rec.outputFileName));
+        });
+
+        handlers.put("notice_communication", (exec, step, context) -> {
+            String toCsv = resolveTemplate(step.settings.get("to"), context).trim();
+            List<String> to = parseRecipientList(toCsv);
+            if (to.isEmpty()) throw new IllegalArgumentException("to is required for notice_communication.");
+
+            String subject = resolveTemplate(step.settings.get("subject"), context).trim();
+            if (subject.isBlank()) throw new IllegalArgumentException("subject is required for notice_communication.");
+
+            String bodyText = resolveTemplate(step.settings.get("body_text"), context);
+            String bodyHtml = resolveTemplate(step.settings.get("body_html"), context);
+            if (bodyText.isBlank() && bodyHtml.isBlank()) {
+                throw new IllegalArgumentException("Either body_text or body_html is required for notice_communication.");
+            }
+
+            String ccCsv = resolveTemplate(step.settings.get("cc"), context).trim();
+            String bccCsv = resolveTemplate(step.settings.get("bcc"), context).trim();
+            String fromAddress = resolveTemplate(step.settings.get("from_address"), context).trim();
+            String fromName = resolveTemplate(step.settings.get("from_name"), context).trim();
+            String replyTo = resolveTemplate(step.settings.get("reply_to"), context).trim();
+            String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+
+            String actorUser = resolveTemplate(step.settings.get("actor_user_uuid"), context).trim();
+            if (actorUser.isBlank()) actorUser = safe(exec.actorUserUuid).trim();
+
+            notification_emails.NotificationEmailRequest request = new notification_emails.NotificationEmailRequest(
+                    matterUuid,
+                    fromAddress,
+                    fromName,
+                    replyTo,
+                    subject,
+                    bodyText,
+                    bodyHtml,
+                    to,
+                    parseRecipientList(ccCsv),
+                    parseRecipientList(bccCsv),
+                    List.of()
+            );
+
+            String deliveryMode = resolveTemplate(step.settings.get("delivery_mode"), context).trim().toLowerCase(Locale.ROOT);
+            if ("send_now".equals(deliveryMode) || "immediate".equals(deliveryMode)) {
+                notification_emails.SendResult sent = notification_emails.defaultStore().sendSimpleMessageNow(
+                        exec.tenantUuid,
+                        actorUser,
+                        request
+                );
+                context.put("vars.last_notice_email_uuid", "");
+                context.put("vars.last_notice_delivery_mode", "send_now");
+                context.put("vars.last_notice_status_code", String.valueOf(sent == null ? 0 : sent.statusCode));
+                context.put("vars.last_notice_provider_message_id", safe(sent == null ? "" : sent.providerMessageId));
+                return StepOutcome.continueWithMessage("Notice sent immediately.");
+            }
+
+            String emailUuid = notification_emails.defaultStore().enqueue(exec.tenantUuid, actorUser, request);
+            context.put("vars.last_notice_email_uuid", safe(emailUuid));
+            context.put("vars.last_notice_delivery_mode", "queue");
+            context.put("vars.last_notice_status_code", "queued");
+            context.put("vars.last_notice_provider_message_id", "");
+            return StepOutcome.continueWithMessage("Notice queued for delivery.");
+        });
+
+        handlers.put("send_for_signature", (exec, step, context) -> {
+            String toCsv = resolveTemplate(step.settings.get("to"), context).trim();
+            List<String> to = parseRecipientList(toCsv);
+            if (to.isEmpty()) throw new IllegalArgumentException("to is required for send_for_signature.");
+
+            String subject = resolveTemplate(step.settings.get("subject"), context).trim();
+            if (subject.isBlank()) throw new IllegalArgumentException("subject is required for send_for_signature.");
+
+            String signatureLink = resolveTemplate(step.settings.get("signature_link"), context).trim();
+            String bodyText = resolveTemplate(step.settings.get("body_text"), context);
+            String bodyHtml = resolveTemplate(step.settings.get("body_html"), context);
+            if (bodyText.isBlank() && bodyHtml.isBlank()) {
+                bodyText = "Please review and sign the attached/requested document.";
+            }
+            if (!signatureLink.isBlank()) {
+                if (!bodyText.isBlank()) bodyText = bodyText + "\n\nSignature link: " + signatureLink;
+                if (!bodyHtml.isBlank()) bodyHtml = bodyHtml + "<br/><br/>Signature link: " + signatureLink;
+            }
+
+            String ccCsv = resolveTemplate(step.settings.get("cc"), context).trim();
+            String bccCsv = resolveTemplate(step.settings.get("bcc"), context).trim();
+            String fromAddress = resolveTemplate(step.settings.get("from_address"), context).trim();
+            String fromName = resolveTemplate(step.settings.get("from_name"), context).trim();
+            String replyTo = resolveTemplate(step.settings.get("reply_to"), context).trim();
+            String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+
+            String actorUser = resolveTemplate(step.settings.get("actor_user_uuid"), context).trim();
+            if (actorUser.isBlank()) actorUser = safe(exec.actorUserUuid).trim();
+
+            notification_emails.NotificationEmailRequest request = new notification_emails.NotificationEmailRequest(
+                    matterUuid,
+                    fromAddress,
+                    fromName,
+                    replyTo,
+                    subject,
+                    bodyText,
+                    bodyHtml,
+                    to,
+                    parseRecipientList(ccCsv),
+                    parseRecipientList(bccCsv),
+                    List.of()
+            );
+
+            String deliveryMode = resolveTemplate(step.settings.get("delivery_mode"), context).trim().toLowerCase(Locale.ROOT);
+            String emailUuid = "";
+            if ("send_now".equals(deliveryMode) || "immediate".equals(deliveryMode)) {
+                notification_emails.SendResult sent = notification_emails.defaultStore().sendSimpleMessageNow(
+                        exec.tenantUuid,
+                        actorUser,
+                        request
+                );
+                context.put("vars.last_signature_notice_status_code", String.valueOf(sent == null ? 0 : sent.statusCode));
+                context.put("vars.last_signature_notice_provider_message_id", safe(sent == null ? "" : sent.providerMessageId));
+                context.put("vars.last_signature_notice_delivery_mode", "send_now");
+            } else {
+                emailUuid = safe(notification_emails.defaultStore().enqueue(exec.tenantUuid, actorUser, request));
+                context.put("vars.last_signature_notice_status_code", "queued");
+                context.put("vars.last_signature_notice_provider_message_id", "");
+                context.put("vars.last_signature_notice_delivery_mode", "queue");
+            }
+            context.put("vars.last_signature_notice_email_uuid", emailUuid);
+
+            boolean waitForConfirmation = parseBool(resolveTemplate(step.settings.get("wait_for_confirmation"), context), false);
+            if (!waitForConfirmation) {
+                context.put("vars.last_signature_status", "sent");
+                return StepOutcome.continueWithMessage("Signature request sent.");
+            }
+
+            int nextOrder = nextStepOrder(exec.sortedSteps, step.order);
+            String title = resolveTemplate(step.settings.get("confirmation_title"), context).trim();
+            if (title.isBlank()) title = "Signature confirmation required";
+            String instructions = resolveTemplate(step.settings.get("confirmation_instructions"), context).trim();
+            if (instructions.isBlank()) {
+                instructions = "Confirm signature outcome in review input. Use signature_status with signed, declined, or expired.";
+            }
+            String requiredCsv = resolveTemplate(step.settings.get("required_input_keys"), context).trim();
+            if (requiredCsv.isBlank()) requiredCsv = "signature_status,signature_notes";
+
+            HumanReviewTask review = enqueueHumanReview(
+                    exec,
+                    context,
+                    nextOrder,
+                    "send_for_signature",
+                    title,
+                    instructions,
+                    requiredCsv,
+                    resolveTemplate(step.settings.get("assignee_user_uuid"), context),
+                    resolveTemplate(step.settings.get("assignee_role_uuid"), context),
+                    resolveTemplate(step.settings.get("queue_permission_key"), context),
+                    resolveTemplate(step.settings.get("due_at"), context)
+            );
+            context.put("vars.last_human_review_uuid", safe(review.reviewUuid));
+            context.put("vars.last_human_review_type", safe(review.reviewType));
+            return StepOutcome.waitingHuman(
+                    review.reviewUuid,
+                    "Signature confirmation required: " + safe(review.title)
+            );
+        });
+
+        handlers.put("conflict_check", (exec, step, context) -> {
+            String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+            if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required for conflict_check.");
+
+            LinkedHashSet<String> partyTokens = new LinkedHashSet<String>();
+            for (String part : parseCsv(resolveTemplate(step.settings.get("party_names"), context))) {
+                String token = normalizeComparable(part);
+                if (!token.isBlank()) partyTokens.add(token);
+            }
+
+            contacts contactStore = contacts.defaultStore();
+            matter_contacts linksStore = matter_contacts.defaultStore();
+
+            if (partyTokens.isEmpty()) {
+                List<matter_contacts.LinkRec> linked = linksStore.listByMatter(exec.tenantUuid, matterUuid);
+                for (matter_contacts.LinkRec link : linked) {
+                    if (link == null) continue;
+                    contacts.ContactRec c = contactStore.getByUuid(exec.tenantUuid, link.contactUuid);
+                    addConflictTokens(partyTokens, c);
+                }
+            }
+            if (partyTokens.isEmpty()) throw new IllegalArgumentException("No party_names or linked contacts available for conflict_check.");
+
+            List<matter_contacts.LinkRec> allLinks = linksStore.listAll(exec.tenantUuid);
+            LinkedHashSet<String> conflictMatterUuids = new LinkedHashSet<String>();
+            LinkedHashSet<String> conflictContactUuids = new LinkedHashSet<String>();
+            for (matter_contacts.LinkRec link : allLinks) {
+                if (link == null) continue;
+                String linkedMatter = safe(link.matterUuid).trim();
+                if (linkedMatter.isBlank() || matterUuid.equals(linkedMatter)) continue;
+                contacts.ContactRec c = contactStore.getByUuid(exec.tenantUuid, link.contactUuid);
+                if (!isPotentialConflict(partyTokens, c)) continue;
+                conflictMatterUuids.add(linkedMatter);
+                if (!safe(link.contactUuid).trim().isBlank()) conflictContactUuids.add(safe(link.contactUuid).trim());
+            }
+
+            int conflictCount = conflictMatterUuids.size();
+            String status = conflictCount > 0 ? "potential_conflict" : "clear";
+            context.put("vars.last_conflict_status", status);
+            context.put("vars.last_conflict_count", String.valueOf(conflictCount));
+            context.put("vars.last_conflict_matter_uuids", String.join(",", conflictMatterUuids));
+            context.put("vars.last_conflict_contact_uuids", String.join(",", conflictContactUuids));
+
+            if (conflictCount <= 0) {
+                return StepOutcome.continueWithMessage("Conflict check clear.");
+            }
+
+            String onPotential = resolveTemplate(step.settings.get("on_potential"), context).trim().toLowerCase(Locale.ROOT);
+            if ("fail".equals(onPotential) || "error".equals(onPotential)) {
+                throw new IllegalStateException("Potential conflict detected for matter(s): " + String.join(",", conflictMatterUuids));
+            }
+            if ("require_review".equals(onPotential) || "review".equals(onPotential)) {
+                int nextOrder = nextStepOrder(exec.sortedSteps, step.order);
+                String title = resolveTemplate(step.settings.get("review_title"), context).trim();
+                if (title.isBlank()) title = "Potential conflict review";
+                String instructions = resolveTemplate(step.settings.get("review_instructions"), context).trim();
+                if (instructions.isBlank()) {
+                    instructions = "Potential conflict detected. Confirm whether to proceed.";
+                }
+                String requiredCsv = resolveTemplate(step.settings.get("required_input_keys"), context).trim();
+                if (requiredCsv.isBlank()) requiredCsv = "decision,notes";
+
+                HumanReviewTask review = enqueueHumanReview(
+                        exec,
+                        context,
+                        nextOrder,
+                        "conflict_check",
+                        title,
+                        instructions,
+                        requiredCsv,
+                        resolveTemplate(step.settings.get("assignee_user_uuid"), context),
+                        resolveTemplate(step.settings.get("assignee_role_uuid"), context),
+                        resolveTemplate(step.settings.get("queue_permission_key"), context),
+                        resolveTemplate(step.settings.get("due_at"), context)
+                );
+                context.put("vars.last_human_review_uuid", safe(review.reviewUuid));
+                context.put("vars.last_human_review_type", safe(review.reviewType));
+                return StepOutcome.waitingHuman(
+                        review.reviewUuid,
+                        "Potential conflict requires review."
+                );
+            }
+
+            return StepOutcome.continueWithMessage("Potential conflict detected.");
+        });
+
+        handlers.put("deadline_rule_calculation", (exec, step, context) -> {
+            String triggerRaw = resolveTemplate(step.settings.get("trigger_date"), context).trim();
+            if (triggerRaw.isBlank()) triggerRaw = safe(context.get("event.trigger_date")).trim();
+            if (triggerRaw.isBlank()) triggerRaw = safe(context.get("event.due_at")).trim();
+            if (triggerRaw.isBlank()) triggerRaw = safe(context.get("event.created_at")).trim();
+            if (triggerRaw.isBlank()) triggerRaw = nowIso();
+
+            String offsetRaw = resolveTemplate(step.settings.get("days_offset"), context).trim();
+            if (offsetRaw.isBlank()) throw new IllegalArgumentException("days_offset is required for deadline_rule_calculation.");
+            int offsetDays = parseInt(offsetRaw, Integer.MIN_VALUE);
+            if (offsetDays == Integer.MIN_VALUE) throw new IllegalArgumentException("days_offset must be an integer.");
+
+            boolean businessDays = parseBool(resolveTemplate(step.settings.get("business_days"), context), false);
+            LocalDate triggerDate = parseFlexibleDate(triggerRaw);
+            if (triggerDate == null) {
+                throw new IllegalArgumentException("Unable to parse trigger_date for deadline_rule_calculation.");
+            }
+
+            LocalDate deadline = addDays(triggerDate, offsetDays, businessDays);
+            String deadlineValue = deadline == null ? "" : deadline.toString();
+            if (deadlineValue.isBlank()) throw new IllegalStateException("Unable to calculate deadline.");
+
+            String storeAs = normalizeToken(resolveTemplate(step.settings.get("store_as"), context));
+            if (storeAs.isBlank()) storeAs = "calculated_deadline";
+            context.put("vars." + storeAs, deadlineValue);
+            context.put("var." + storeAs, deadlineValue);
+            context.put("vars.last_deadline_value", deadlineValue);
+            context.put("vars.last_deadline_trigger", triggerDate.toString());
+            context.put("vars.last_deadline_business_days", businessDays ? "true" : "false");
+            context.put("vars.last_deadline_offset_days", String.valueOf(offsetDays));
+
+            String fieldKey = resolveTemplate(step.settings.get("field_key"), context).trim();
+            if (!fieldKey.isBlank()) {
+                String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+                if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required when field_key is set.");
+                case_fields store = case_fields.defaultStore();
+                LinkedHashMap<String, String> fields = new LinkedHashMap<String, String>(store.read(exec.tenantUuid, matterUuid));
+                fields.put(fieldKey, deadlineValue);
+                store.write(exec.tenantUuid, matterUuid, fields);
+                context.put("vars.last_matter_uuid", matterUuid);
+                context.put("vars.last_deadline_field_key", fieldKey);
+            }
+
+            return StepOutcome.continueWithMessage("Deadline calculated: " + deadlineValue);
+        });
+
+        handlers.put("court_filing_service", (exec, step, context) -> {
+            String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+            if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required for court_filing_service.");
+
+            String title = resolveTemplate(step.settings.get("title"), context).trim();
+            if (title.isBlank()) throw new IllegalArgumentException("title is required for court_filing_service.");
+
+            String dueAt = resolveTemplate(step.settings.get("due_at"), context).trim();
+            if (dueAt.isBlank()) dueAt = Instant.now().plusSeconds(86400L).toString();
+
+            int estimateMinutes = parseInt(resolveTemplate(step.settings.get("estimate_minutes"), context).trim(), 60);
+            if (estimateMinutes <= 0) estimateMinutes = 60;
+
+            String actorUser = resolveTemplate(step.settings.get("actor_user_uuid"), context).trim();
+            if (actorUser.isBlank()) actorUser = safe(exec.actorUserUuid).trim();
+
+            tasks.TaskRec in = new tasks.TaskRec();
+            in.matterUuid = matterUuid;
+            in.title = title;
+            in.description = resolveTemplate(step.settings.get("description"), context);
+            in.status = resolveTemplate(step.settings.get("status"), context).trim();
+            if (in.status.isBlank()) in.status = "open";
+            in.priority = resolveTemplate(step.settings.get("priority"), context).trim();
+            if (in.priority.isBlank()) in.priority = "high";
+            in.assignmentMode = resolveTemplate(step.settings.get("assignment_mode"), context).trim();
+            if (in.assignmentMode.isBlank()) in.assignmentMode = "manual";
+            in.assignedUserUuid = resolveTemplate(step.settings.get("assigned_user_uuid"), context).trim();
+            in.dueAt = dueAt;
+            in.reminderAt = resolveTemplate(step.settings.get("reminder_at"), context).trim();
+            in.estimateMinutes = estimateMinutes;
+
+            String assignmentReason = resolveTemplate(step.settings.get("assignment_reason"), context);
+            tasks.TaskRec created = tasks.defaultStore().createTask(exec.tenantUuid, in, actorUser, assignmentReason);
+            if (created == null) throw new IllegalStateException("Unable to create filing/service task.");
+
+            context.put("vars.last_matter_uuid", matterUuid);
+            context.put("vars.last_court_filing_task_uuid", safe(created.uuid));
+            context.put("vars.last_court_filing_status", "queued");
+
+            boolean requireReview = parseBool(resolveTemplate(step.settings.get("require_review"), context), false);
+            if (!requireReview) {
+                return StepOutcome.continueWithMessage("Court filing/service task created.");
+            }
+
+            int nextOrder = nextStepOrder(exec.sortedSteps, step.order);
+            String reviewTitle = resolveTemplate(step.settings.get("review_title"), context).trim();
+            if (reviewTitle.isBlank()) reviewTitle = "Court filing/service review";
+            String reviewInstructions = resolveTemplate(step.settings.get("review_instructions"), context).trim();
+            if (reviewInstructions.isBlank()) reviewInstructions = "Approve before filing/service execution.";
+            String requiredCsv = resolveTemplate(step.settings.get("required_input_keys"), context).trim();
+            if (requiredCsv.isBlank()) requiredCsv = "decision,notes";
+
+            HumanReviewTask review = enqueueHumanReview(
+                    exec,
+                    context,
+                    nextOrder,
+                    "court_filing_service",
+                    reviewTitle,
+                    reviewInstructions,
+                    requiredCsv,
+                    resolveTemplate(step.settings.get("assignee_user_uuid"), context),
+                    resolveTemplate(step.settings.get("assignee_role_uuid"), context),
+                    resolveTemplate(step.settings.get("queue_permission_key"), context),
+                    resolveTemplate(step.settings.get("due_at"), context)
+            );
+            context.put("vars.last_human_review_uuid", safe(review.reviewUuid));
+            context.put("vars.last_human_review_type", safe(review.reviewType));
+            return StepOutcome.waitingHuman(review.reviewUuid, "Court filing/service requires review.");
+        });
+
+        handlers.put("payment_fee_verification", (exec, step, context) -> {
+            String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+
+            String requiredRaw = resolveTemplate(step.settings.get("required_amount"), context).trim();
+            String paidRaw = resolveTemplate(step.settings.get("paid_amount"), context).trim();
+
+            if (!matterUuid.isBlank()) {
+                LinkedHashMap<String, String> fields = new LinkedHashMap<String, String>(case_fields.defaultStore().read(exec.tenantUuid, matterUuid));
+                String requiredFieldKey = resolveTemplate(step.settings.get("required_amount_field_key"), context).trim();
+                if (requiredFieldKey.isBlank()) requiredFieldKey = "filing_fee_required";
+                String paidFieldKey = resolveTemplate(step.settings.get("paid_amount_field_key"), context).trim();
+                if (paidFieldKey.isBlank()) paidFieldKey = "filing_fee_paid";
+                if (requiredRaw.isBlank()) requiredRaw = safe(fields.get(requiredFieldKey)).trim();
+                if (paidRaw.isBlank()) paidRaw = safe(fields.get(paidFieldKey)).trim();
+            }
+
+            BigDecimal required = parseMoney(requiredRaw);
+            if (required == null) throw new IllegalArgumentException("required_amount is required for payment_fee_verification.");
+            BigDecimal paid = parseMoney(paidRaw);
+            if (paid == null) paid = BigDecimal.ZERO;
+
+            BigDecimal delta = paid.subtract(required).setScale(2, RoundingMode.HALF_UP);
+            boolean ready = delta.compareTo(BigDecimal.ZERO) >= 0;
+            String status = ready ? "ready" : "insufficient";
+            String currency = resolveTemplate(step.settings.get("currency"), context).trim();
+            if (currency.isBlank()) currency = "USD";
+
+            context.put("vars.last_payment_required", moneyToString(required));
+            context.put("vars.last_payment_paid", moneyToString(paid));
+            context.put("vars.last_payment_delta", moneyToString(delta));
+            context.put("vars.last_payment_currency", currency);
+            context.put("vars.last_payment_status", status);
+            if (!matterUuid.isBlank()) context.put("vars.last_matter_uuid", matterUuid);
+
+            if (ready) {
+                return StepOutcome.continueWithMessage("Payment/fee verification ready.");
+            }
+
+            String onInsufficient = resolveTemplate(step.settings.get("on_insufficient"), context).trim().toLowerCase(Locale.ROOT);
+            if ("fail".equals(onInsufficient) || "error".equals(onInsufficient)) {
+                throw new IllegalStateException("Payment/fee verification insufficient.");
+            }
+            if ("require_review".equals(onInsufficient) || "review".equals(onInsufficient)) {
+                int nextOrder = nextStepOrder(exec.sortedSteps, step.order);
+                String reviewTitle = resolveTemplate(step.settings.get("review_title"), context).trim();
+                if (reviewTitle.isBlank()) reviewTitle = "Payment/Fee verification review";
+                String reviewInstructions = resolveTemplate(step.settings.get("review_instructions"), context).trim();
+                if (reviewInstructions.isBlank()) reviewInstructions = "Insufficient payment detected. Confirm next action.";
+                String requiredCsv = resolveTemplate(step.settings.get("required_input_keys"), context).trim();
+                if (requiredCsv.isBlank()) requiredCsv = "decision,notes";
+
+                HumanReviewTask review = enqueueHumanReview(
+                        exec,
+                        context,
+                        nextOrder,
+                        "payment_fee_verification",
+                        reviewTitle,
+                        reviewInstructions,
+                        requiredCsv,
+                        resolveTemplate(step.settings.get("assignee_user_uuid"), context),
+                        resolveTemplate(step.settings.get("assignee_role_uuid"), context),
+                        resolveTemplate(step.settings.get("queue_permission_key"), context),
+                        resolveTemplate(step.settings.get("due_at"), context)
+                );
+                context.put("vars.last_human_review_uuid", safe(review.reviewUuid));
+                context.put("vars.last_human_review_type", safe(review.reviewType));
+                return StepOutcome.waitingHuman(review.reviewUuid, "Payment/fee verification requires review.");
+            }
+
+            return StepOutcome.continueWithMessage("Payment/fee verification insufficient.");
+        });
+
+        handlers.put("wait_for_external_event", (exec, step, context) -> {
+            int nextOrder = nextStepOrder(exec.sortedSteps, step.order);
+            String title = resolveTemplate(step.settings.get("title"), context).trim();
+            if (title.isBlank()) title = "Wait for external event";
+            String instructions = resolveTemplate(step.settings.get("instructions"), context).trim();
+            if (instructions.isBlank()) instructions = "Record external event status to resume process.";
+            String requiredCsv = resolveTemplate(step.settings.get("required_input_keys"), context).trim();
+            if (requiredCsv.isBlank()) requiredCsv = "event_status,event_notes";
+
+            HumanReviewTask review = enqueueHumanReview(
+                    exec,
+                    context,
+                    nextOrder,
+                    "wait_for_external_event",
+                    title,
+                    instructions,
+                    requiredCsv,
+                    resolveTemplate(step.settings.get("assignee_user_uuid"), context),
+                    resolveTemplate(step.settings.get("assignee_role_uuid"), context),
+                    resolveTemplate(step.settings.get("queue_permission_key"), context),
+                    resolveTemplate(step.settings.get("due_at"), context)
+            );
+            context.put("vars.last_human_review_uuid", safe(review.reviewUuid));
+            context.put("vars.last_human_review_type", safe(review.reviewType));
+            return StepOutcome.waitingHuman(review.reviewUuid, "Waiting for external event: " + safe(review.title));
+        });
+
+        handlers.put("request_information", (exec, step, context) -> {
+            int nextOrder = nextStepOrder(exec.sortedSteps, step.order);
+            String title = resolveTemplate(step.settings.get("title"), context).trim();
+            if (title.isBlank()) title = "Information request";
+            String instructions = resolveTemplate(step.settings.get("instructions"), context).trim();
+            String requestTarget = resolveTemplate(step.settings.get("request_target"), context).trim();
+            if (!requestTarget.isBlank()) {
+                instructions = instructions.isBlank()
+                        ? ("Request target: " + requestTarget)
+                        : (instructions + "\nTarget: " + requestTarget);
+            }
+            if (instructions.isBlank()) instructions = "Provide the requested information to continue.";
+            String requiredCsv = resolveTemplate(step.settings.get("required_input_keys"), context).trim();
+            if (requiredCsv.isBlank()) requiredCsv = "response";
+
+            HumanReviewTask review = enqueueHumanReview(
+                    exec,
+                    context,
+                    nextOrder,
+                    "request_information",
+                    title,
+                    instructions,
+                    requiredCsv,
+                    resolveTemplate(step.settings.get("assignee_user_uuid"), context),
+                    resolveTemplate(step.settings.get("assignee_role_uuid"), context),
+                    resolveTemplate(step.settings.get("queue_permission_key"), context),
+                    resolveTemplate(step.settings.get("due_at"), context)
+            );
+            context.put("vars.last_human_review_uuid", safe(review.reviewUuid));
+            context.put("vars.last_human_review_type", safe(review.reviewType));
+            return StepOutcome.waitingHuman(review.reviewUuid, "Information request queued: " + safe(review.title));
+        });
+
+        handlers.put("escalation", (exec, step, context) -> {
+            String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+            if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required for escalation.");
+
+            String title = resolveTemplate(step.settings.get("title"), context).trim();
+            if (title.isBlank()) throw new IllegalArgumentException("title is required for escalation.");
+
+            String dueAt = resolveTemplate(step.settings.get("due_at"), context).trim();
+            if (dueAt.isBlank()) dueAt = Instant.now().plusSeconds(4L * 3600L).toString();
+            int estimateMinutes = parseInt(resolveTemplate(step.settings.get("estimate_minutes"), context).trim(), 30);
+            if (estimateMinutes <= 0) estimateMinutes = 30;
+
+            String actorUser = resolveTemplate(step.settings.get("actor_user_uuid"), context).trim();
+            if (actorUser.isBlank()) actorUser = safe(exec.actorUserUuid).trim();
+
+            tasks.TaskRec in = new tasks.TaskRec();
+            in.matterUuid = matterUuid;
+            in.title = title;
+            in.description = resolveTemplate(step.settings.get("description"), context);
+            in.status = resolveTemplate(step.settings.get("status"), context).trim();
+            if (in.status.isBlank()) in.status = "open";
+            in.priority = resolveTemplate(step.settings.get("priority"), context).trim();
+            if (in.priority.isBlank()) in.priority = "urgent";
+            in.assignmentMode = resolveTemplate(step.settings.get("assignment_mode"), context).trim();
+            if (in.assignmentMode.isBlank()) in.assignmentMode = "manual";
+            in.assignedUserUuid = resolveTemplate(step.settings.get("assigned_user_uuid"), context).trim();
+            in.dueAt = dueAt;
+            in.reminderAt = resolveTemplate(step.settings.get("reminder_at"), context).trim();
+            in.estimateMinutes = estimateMinutes;
+
+            String assignmentReason = resolveTemplate(step.settings.get("assignment_reason"), context);
+            tasks.TaskRec created = tasks.defaultStore().createTask(exec.tenantUuid, in, actorUser, assignmentReason);
+            if (created == null) throw new IllegalStateException("Unable to create escalation task.");
+
+            context.put("vars.last_matter_uuid", matterUuid);
+            context.put("vars.last_escalation_task_uuid", safe(created.uuid));
+            context.put("vars.last_escalation_status", "created");
+
+            String notifyToCsv = resolveTemplate(step.settings.get("notify_to"), context).trim();
+            List<String> notifyTo = parseRecipientList(notifyToCsv);
+            if (!notifyTo.isEmpty()) {
+                String notifySubject = resolveTemplate(step.settings.get("notify_subject"), context).trim();
+                if (notifySubject.isBlank()) notifySubject = "Escalation: " + title;
+                String notifyBodyText = resolveTemplate(step.settings.get("notify_body_text"), context);
+                String notifyBodyHtml = resolveTemplate(step.settings.get("notify_body_html"), context);
+                if (notifyBodyText.isBlank() && notifyBodyHtml.isBlank()) {
+                    notifyBodyText = "Escalation task created: " + safe(created.title) + " (task_uuid=" + safe(created.uuid) + ")";
+                }
+
+                notification_emails.NotificationEmailRequest req = new notification_emails.NotificationEmailRequest(
+                        matterUuid,
+                        "",
+                        "",
+                        "",
+                        notifySubject,
+                        notifyBodyText,
+                        notifyBodyHtml,
+                        notifyTo,
+                        List.of(),
+                        List.of(),
+                        List.of()
+                );
+                String emailUuid = notification_emails.defaultStore().enqueue(exec.tenantUuid, actorUser, req);
+                context.put("vars.last_escalation_notice_email_uuid", safe(emailUuid));
+            } else {
+                context.put("vars.last_escalation_notice_email_uuid", "");
+            }
+
+            return StepOutcome.continueWithMessage("Escalation task created.");
+        });
+
+        handlers.put("audit_snapshot", (exec, step, context) -> {
+            String action = resolveTemplate(step.settings.get("action"), context).trim();
+            if (action.isBlank()) action = "bpm.audit.snapshot";
+            String message = resolveTemplate(step.settings.get("message"), context).trim();
+
+            LinkedHashSet<String> keys = new LinkedHashSet<String>();
+            for (String key : parseCsv(resolveTemplate(step.settings.get("include_keys"), context))) {
+                String k = safe(key).trim();
+                if (!k.isBlank()) keys.add(k);
+            }
+
+            ArrayList<String> prefixes = parseCsv(resolveTemplate(step.settings.get("include_prefixes"), context));
+            if (prefixes.isEmpty()) prefixes = parseCsv("event.,review.,vars.");
+            for (Map.Entry<String, String> e : sanitizeMap(context).entrySet()) {
+                if (e == null) continue;
+                String key = safe(e.getKey()).trim();
+                if (key.isBlank()) continue;
+                for (String prefix : prefixes) {
+                    String p = safe(prefix).trim();
+                    if (p.isBlank()) continue;
+                    if (key.startsWith(p)) {
+                        keys.add(key);
+                        break;
+                    }
+                }
+            }
+
+            ArrayList<String> sortedKeys = new ArrayList<String>(keys);
+            sortedKeys.sort(String::compareTo);
+            StringBuilder payload = new StringBuilder(1024);
+            for (String key : sortedKeys) {
+                payload.append(key).append("=").append(safe(context.get(key))).append("\n");
+            }
+            String snapshotHash = sha256Hex(payload.toString());
+
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("snapshot_hash", snapshotHash);
+            details.put("key_count", String.valueOf(sortedKeys.size()));
+            details.put("message", message);
+            details.put("process_uuid", safe(exec.process == null ? "" : exec.process.processUuid));
+            details.put("run_uuid", safe(exec.runUuid));
+            details.put("step_id", safe(step.stepId));
+            if (!sortedKeys.isEmpty()) {
+                details.put("keys", String.join(",", sortedKeys.subList(0, Math.min(sortedKeys.size(), 40))));
+            }
+            activity_log.defaultStore().logVerbose(
+                    action,
+                    exec.tenantUuid,
+                    exec.actorUserUuid,
+                    safe(context.get("event.matter_uuid")),
+                    safe(context.get("event.doc_uuid")),
+                    details
+            );
+
+            String outputVar = normalizeToken(resolveTemplate(step.settings.get("output_var"), context));
+            if (outputVar.isBlank()) outputVar = "last_audit_snapshot_hash";
+            context.put("vars." + outputVar, snapshotHash);
+            context.put("var." + outputVar, snapshotHash);
+            context.put("vars.last_audit_snapshot_hash", snapshotHash);
+            return StepOutcome.continueWithMessage("Audit snapshot recorded.");
+        });
+
         handlers.put("human_review", (exec, step, context) -> {
             int nextOrder = nextStepOrder(exec.sortedSteps, step.order);
-            HumanReviewTask review = enqueueHumanReview(exec, step, context, nextOrder);
+            HumanReviewTask review = enqueueHumanReview(
+                    exec,
+                    context,
+                    nextOrder,
+                    resolveTemplate(step.settings.get("review_type"), context),
+                    resolveTemplate(step.settings.get("title"), context),
+                    resolveTemplate(step.settings.get("instructions"), context),
+                    resolveTemplate(step.settings.get("required_input_keys"), context),
+                    resolveTemplate(step.settings.get("assignee_user_uuid"), context),
+                    resolveTemplate(step.settings.get("assignee_role_uuid"), context),
+                    resolveTemplate(step.settings.get("queue_permission_key"), context),
+                    resolveTemplate(step.settings.get("due_at"), context)
+            );
+            context.put("vars.last_human_review_uuid", safe(review.reviewUuid));
+            context.put("vars.last_human_review_type", safe(review.reviewType));
             return StepOutcome.waitingHuman(
                     review.reviewUuid,
                     "Human review required: " + safe(review.title)
@@ -2279,25 +3250,36 @@ public final class business_process_manager {
     }
 
     private HumanReviewTask enqueueHumanReview(ExecutionContext exec,
-                                               ProcessStep step,
                                                LinkedHashMap<String, String> context,
-                                               int nextStepOrder) throws Exception {
-        String title = resolveTemplate(step.settings.get("title"), context).trim();
-        if (title.isBlank()) title = "Review process step";
-
-        String instructions = resolveTemplate(step.settings.get("instructions"), context).trim();
-        String requiredCsv = resolveTemplate(step.settings.get("required_input_keys"), context).trim();
+                                               int nextStepOrder,
+                                               String reviewType,
+                                               String title,
+                                               String instructions,
+                                               String requiredCsv,
+                                               String assigneeUserUuid,
+                                               String assigneeRoleUuid,
+                                               String queuePermissionKey,
+                                               String dueAt) throws Exception {
 
         HumanReviewTask task = new HumanReviewTask();
         task.reviewUuid = UUID.randomUUID().toString();
+        task.reviewType = normalizeReviewType(reviewType);
         task.processUuid = safe(exec.process.processUuid);
         task.processName = safe(exec.process.name);
         task.eventType = safe(exec.eventType);
         task.requestRunUuid = safe(exec.runUuid);
         task.status = "pending";
-        task.title = title;
-        task.instructions = instructions;
+        task.title = safe(title).trim();
+        if (task.title.isBlank()) task.title = "Review process step";
+        task.instructions = safe(instructions).trim();
         task.requestedByUserUuid = safe(exec.actorUserUuid);
+        task.assigneeUserUuid = safe(assigneeUserUuid).trim();
+        task.assigneeRoleUuid = safe(assigneeRoleUuid).trim();
+        task.queuePermissionKey = normalizePermissionKey(queuePermissionKey);
+        if (task.assigneeUserUuid.isBlank() && task.assigneeRoleUuid.isBlank() && task.queuePermissionKey.isBlank()) {
+            task.queuePermissionKey = DEFAULT_REVIEW_QUEUE_PERMISSION;
+        }
+        task.dueAt = safe(dueAt).trim();
         task.createdAt = nowIso();
         task.nextStepOrder = nextStepOrder;
         task.context = new LinkedHashMap<String, String>(sanitizeMap(context));
@@ -2321,9 +3303,12 @@ public final class business_process_manager {
                 safe(context.get("event.doc_uuid")),
                 Map.of(
                         "review_uuid", task.reviewUuid,
+                        "review_type", task.reviewType,
                         "process_uuid", task.processUuid,
                         "run_uuid", task.requestRunUuid,
-                        "title", task.title
+                        "title", task.title,
+                        "assignee_user_uuid", task.assigneeUserUuid,
+                        "assignee_role_uuid", task.assigneeRoleUuid
                 )
         );
 
@@ -2722,6 +3707,7 @@ public final class business_process_manager {
 
             HumanReviewTask t = new HumanReviewTask();
             t.reviewUuid = text(e, "review_uuid");
+            t.reviewType = normalizeReviewType(text(e, "review_type"));
             t.processUuid = text(e, "process_uuid");
             t.processName = text(e, "process_name");
             t.requestRunUuid = text(e, "request_run_uuid");
@@ -2734,6 +3720,13 @@ public final class business_process_manager {
             t.comment = text(e, "comment");
             t.requestedByUserUuid = text(e, "requested_by_user_uuid");
             t.reviewedByUserUuid = text(e, "reviewed_by_user_uuid");
+            t.assigneeUserUuid = text(e, "assignee_user_uuid");
+            t.assigneeRoleUuid = text(e, "assignee_role_uuid");
+            t.queuePermissionKey = normalizePermissionKey(text(e, "queue_permission_key"));
+            if (t.assigneeUserUuid.isBlank() && t.assigneeRoleUuid.isBlank() && t.queuePermissionKey.isBlank()) {
+                t.queuePermissionKey = DEFAULT_REVIEW_QUEUE_PERMISSION;
+            }
+            t.dueAt = text(e, "due_at");
             t.createdAt = text(e, "created_at");
             t.resolvedAt = text(e, "resolved_at");
             t.nextStepOrder = parseInt(text(e, "next_step_order"), 0);
@@ -2789,6 +3782,7 @@ public final class business_process_manager {
 
             sb.append("  <review>\n");
             writeTag(sb, "review_uuid", t.reviewUuid);
+            writeTag(sb, "review_type", normalizeReviewType(t.reviewType));
             writeTag(sb, "process_uuid", t.processUuid);
             writeTag(sb, "process_name", t.processName);
             writeTag(sb, "request_run_uuid", t.requestRunUuid);
@@ -2800,6 +3794,10 @@ public final class business_process_manager {
             writeTag(sb, "comment", t.comment);
             writeTag(sb, "requested_by_user_uuid", t.requestedByUserUuid);
             writeTag(sb, "reviewed_by_user_uuid", t.reviewedByUserUuid);
+            writeTag(sb, "assignee_user_uuid", t.assigneeUserUuid);
+            writeTag(sb, "assignee_role_uuid", t.assigneeRoleUuid);
+            writeTag(sb, "queue_permission_key", normalizePermissionKey(t.queuePermissionKey));
+            writeTag(sb, "due_at", t.dueAt);
             writeTag(sb, "created_at", t.createdAt);
             writeTag(sb, "resolved_at", t.resolvedAt);
             writeTag(sb, "next_step_order", String.valueOf(Math.max(0, t.nextStepOrder)));
@@ -2838,6 +3836,7 @@ public final class business_process_manager {
         HumanReviewTask out = new HumanReviewTask();
         if (in == null) return out;
         out.reviewUuid = in.reviewUuid;
+        out.reviewType = in.reviewType;
         out.processUuid = in.processUuid;
         out.processName = in.processName;
         out.requestRunUuid = in.requestRunUuid;
@@ -2849,6 +3848,10 @@ public final class business_process_manager {
         out.comment = in.comment;
         out.requestedByUserUuid = in.requestedByUserUuid;
         out.reviewedByUserUuid = in.reviewedByUserUuid;
+        out.assigneeUserUuid = in.assigneeUserUuid;
+        out.assigneeRoleUuid = in.assigneeRoleUuid;
+        out.queuePermissionKey = in.queuePermissionKey;
+        out.dueAt = in.dueAt;
         out.createdAt = in.createdAt;
         out.resolvedAt = in.resolvedAt;
         out.nextStepOrder = in.nextStepOrder;
@@ -2858,6 +3861,358 @@ public final class business_process_manager {
         out.input = sanitizeMap(in.input);
         out.requiredInputKeys = parseCsv(in.requiredInputKeys);
         return out;
+    }
+
+    private static boolean canUserAccessReview(String tenantUuid, HumanReviewTask review, String viewerUserUuid) {
+        String tu = safeFileToken(tenantUuid);
+        String viewer = safe(viewerUserUuid).trim();
+        if (tu.isBlank() || viewer.isBlank() || review == null) return false;
+
+        String assigneeUser = safe(review.assigneeUserUuid).trim();
+        if (!assigneeUser.isBlank()) {
+            return assigneeUser.equals(viewer);
+        }
+
+        String assigneeRole = safe(review.assigneeRoleUuid).trim();
+        if (!assigneeRole.isBlank()) {
+            return userHasRole(tu, viewer, assigneeRole);
+        }
+
+        String permissionKey = normalizePermissionKey(review.queuePermissionKey);
+        if (permissionKey.isBlank()) return true;
+        if (DEFAULT_REVIEW_QUEUE_PERMISSION.equals(permissionKey)) return true;
+        return hasUserPermission(tu, viewer, permissionKey);
+    }
+
+    private static void ensureReviewerAuthorized(String tenantUuid,
+                                                 HumanReviewTask review,
+                                                 String reviewedByUserUuid) {
+        String reviewer = safe(reviewedByUserUuid).trim();
+        if (reviewer.isBlank()) {
+            throw new IllegalArgumentException("reviewed_by_user_uuid is required.");
+        }
+        if (canUserAccessReview(tenantUuid, review, reviewer)) return;
+
+        String assigneeUser = safe(review == null ? "" : review.assigneeUserUuid).trim();
+        if (!assigneeUser.isBlank()) {
+            throw new IllegalArgumentException("Review is assigned to a different user.");
+        }
+        String assigneeRole = safe(review == null ? "" : review.assigneeRoleUuid).trim();
+        if (!assigneeRole.isBlank()) {
+            throw new IllegalArgumentException("Review is assigned to a different role.");
+        }
+        throw new IllegalArgumentException("Reviewer does not have permission to complete this review.");
+    }
+
+    private static boolean hasUserPermission(String tenantUuid, String userUuid, String permissionKey) {
+        String tu = safeFileToken(tenantUuid);
+        String uu = safe(userUuid).trim();
+        String key = normalizePermissionKey(permissionKey);
+        if (tu.isBlank() || uu.isBlank()) return false;
+        if (key.isBlank()) key = DEFAULT_REVIEW_QUEUE_PERMISSION;
+
+        try {
+            users_roles users = users_roles.defaultStore();
+            users_roles.UserRec user = users.getUserByUuid(tu, uu);
+            if (user == null || !user.enabled) return false;
+            users_roles.RoleRec role = users.getRoleByUuid(tu, safe(user.roleUuid));
+
+            LinkedHashMap<String, String> rolePermissions = new LinkedHashMap<String, String>();
+            if (role != null && role.permissions != null) rolePermissions.putAll(role.permissions);
+
+            LinkedHashMap<String, String> effective = permission_layers.defaultStore()
+                    .resolveEffectivePermissions(tu, uu, rolePermissions);
+            if ("true".equalsIgnoreCase(safe(effective.get("tenant_admin")).trim())) return true;
+            return "true".equalsIgnoreCase(safe(effective.get(key)).trim());
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private static boolean userHasRole(String tenantUuid, String userUuid, String roleUuid) {
+        String tu = safeFileToken(tenantUuid);
+        String uu = safe(userUuid).trim();
+        String role = safe(roleUuid).trim();
+        if (tu.isBlank() || uu.isBlank() || role.isBlank()) return false;
+        try {
+            users_roles.UserRec user = users_roles.defaultStore().getUserByUuid(tu, uu);
+            if (user == null || !user.enabled) return false;
+            return role.equals(safe(user.roleUuid).trim());
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private static String normalizeReviewType(String raw) {
+        String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+        if (v.isBlank()) v = "human_review";
+        v = v.replaceAll("[^a-z0-9._-]", "_").replaceAll("_+", "_");
+        while (v.startsWith("_")) v = v.substring(1);
+        while (v.endsWith("_")) v = v.substring(0, v.length() - 1);
+        if (v.isBlank()) v = "human_review";
+        if (v.length() > 80) v = v.substring(0, 80);
+        return v;
+    }
+
+    private static String normalizePermissionKey(String raw) {
+        String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+        if (v.isBlank()) return "";
+        v = v.replaceAll("[^a-z0-9._-]", "_").replaceAll("_+", "_");
+        while (v.startsWith("_")) v = v.substring(1);
+        while (v.endsWith("_")) v = v.substring(0, v.length() - 1);
+        if (v.length() > 180) v = v.substring(0, 180);
+        return v;
+    }
+
+    private static List<String> parseRecipientList(String raw) {
+        String v = safe(raw).replace(';', ',');
+        return parseCsv(v);
+    }
+
+    private static LocalDate parseFlexibleDate(String raw) {
+        String s = safe(raw).trim();
+        if (s.isBlank()) return null;
+
+        try {
+            return Instant.parse(s).atZone(ZoneOffset.UTC).toLocalDate();
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return OffsetDateTime.parse(s).toLocalDate();
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return LocalDateTime.parse(s).toLocalDate();
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return LocalDate.parse(s);
+        } catch (DateTimeParseException ignored) {
+        }
+
+        int t = s.indexOf('T');
+        if (t > 0) {
+            try {
+                return LocalDate.parse(s.substring(0, t));
+            } catch (DateTimeParseException ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static LocalDate addDays(LocalDate start, int offsetDays, boolean businessDays) {
+        if (start == null) return null;
+        if (!businessDays || offsetDays == 0) return start.plusDays(offsetDays);
+
+        int step = offsetDays > 0 ? 1 : -1;
+        int remaining = Math.abs(offsetDays);
+        LocalDate cursor = start;
+        while (remaining > 0) {
+            cursor = cursor.plusDays(step);
+            DayOfWeek dow = cursor.getDayOfWeek();
+            if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) continue;
+            remaining--;
+        }
+        return cursor;
+    }
+
+    private static BigDecimal parseMoney(String raw) {
+        String s = safe(raw).trim();
+        if (s.isBlank()) return null;
+        s = s.replace("$", "").replace(",", "").trim();
+        if (s.isBlank()) return null;
+        try {
+            return new BigDecimal(s).setScale(2, RoundingMode.HALF_UP);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private static String moneyToString(BigDecimal value) {
+        BigDecimal v = value == null ? BigDecimal.ZERO : value;
+        return v.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private static String sha256Hex(String text) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(safe(text).getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(String.format(Locale.ROOT, "%02x", Integer.valueOf(b & 0xff)));
+            }
+            return sb.toString();
+        } catch (Exception ex) {
+            return "";
+        }
+    }
+
+    private static String normalizeComparable(String raw) {
+        String s = safe(raw).trim().toLowerCase(Locale.ROOT);
+        if (s.isBlank()) return "";
+        s = s.replaceAll("[^a-z0-9]+", " ").trim().replaceAll("\\s+", " ");
+        if (s.length() > 220) s = s.substring(0, 220);
+        return s;
+    }
+
+    private static void addConflictTokens(Set<String> out, contacts.ContactRec c) {
+        if (out == null || c == null) return;
+        LinkedHashSet<String> candidates = new LinkedHashSet<String>();
+        candidates.add(normalizeComparable(c.displayName));
+        candidates.add(normalizeComparable((safe(c.givenName) + " " + safe(c.surname)).trim()));
+        candidates.add(normalizeComparable(c.companyName));
+        candidates.add(normalizeComparable(c.emailPrimary));
+        candidates.add(normalizeComparable(c.emailSecondary));
+        candidates.add(normalizeComparable(c.emailTertiary));
+        for (String candidate : candidates) {
+            if (candidate.isBlank()) continue;
+            if (candidate.length() < 3) continue;
+            out.add(candidate);
+        }
+    }
+
+    private static boolean isPotentialConflict(Set<String> partyTokens, contacts.ContactRec c) {
+        if (partyTokens == null || partyTokens.isEmpty() || c == null) return false;
+        LinkedHashSet<String> candidates = new LinkedHashSet<String>();
+        addConflictTokens(candidates, c);
+        if (candidates.isEmpty()) return false;
+
+        for (String token : partyTokens) {
+            String normalizedToken = normalizeComparable(token);
+            if (normalizedToken.isBlank() || normalizedToken.length() < 3) continue;
+            for (String candidate : candidates) {
+                if (candidate.isBlank()) continue;
+                if (candidate.equals(normalizedToken)) return true;
+                if (normalizedToken.length() >= 6 && candidate.contains(normalizedToken)) return true;
+                if (candidate.length() >= 6 && normalizedToken.contains(candidate)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static LinkedHashMap<String, String> buildMatterMergeValues(String tenantUuid, String matterUuid) throws Exception {
+        LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
+
+        String tenantLabel = "";
+        tenants.Tenant t = tenants.defaultStore().getByUuid(tenantUuid);
+        if (t != null) tenantLabel = safe(t.label);
+
+        matters.MatterRec m = matters.defaultStore().getByUuid(tenantUuid, matterUuid);
+
+        LinkedHashMap<String, String> tenantKv = new LinkedHashMap<String, String>(tenant_fields.defaultStore().read(tenantUuid));
+        LinkedHashMap<String, String> caseKv = new LinkedHashMap<String, String>(case_fields.defaultStore().read(tenantUuid, matterUuid));
+        LinkedHashMap<String, String> listKv = new LinkedHashMap<String, String>(case_list_items.defaultStore().read(tenantUuid, matterUuid));
+        LinkedHashMap<String, String> settingsKv = new LinkedHashMap<String, String>(tenant_settings.defaultStore().read(tenantUuid));
+
+        putToken(out, "tenant.uuid", tenantUuid);
+        putToken(out, "tenant.label", tenantLabel);
+
+        if (m != null) {
+            String cause = safe(caseKv.get("cause_docket_number"));
+            if (cause.isBlank()) cause = safe(m.causeDocketNumber);
+            String county = safe(caseKv.get("county"));
+            if (county.isBlank()) county = safe(m.county);
+
+            putToken(out, "case.uuid", safe(m.uuid));
+            putToken(out, "case.label", safe(m.label));
+            putToken(out, "case.cause_docket_number", cause);
+            putToken(out, "case.county", county);
+        }
+
+        tenant_fields tenantStore = tenant_fields.defaultStore();
+        for (Map.Entry<String, String> e : tenantKv.entrySet()) {
+            if (e == null) continue;
+            String nk = tenantStore.normalizeKey(e.getKey());
+            if (nk.isBlank()) continue;
+            String v = safe(e.getValue());
+            putToken(out, "tenant." + nk, v);
+            if (!out.containsKey("kv." + nk)) putToken(out, "kv." + nk, v);
+            if (!out.containsKey(nk)) putToken(out, nk, v);
+        }
+
+        case_fields caseStore = case_fields.defaultStore();
+        for (Map.Entry<String, String> e : caseKv.entrySet()) {
+            if (e == null) continue;
+            String nk = caseStore.normalizeKey(e.getKey());
+            if (nk.isBlank()) continue;
+            String v = safe(e.getValue());
+            putToken(out, "case." + nk, v);
+            putToken(out, "kv." + nk, v);
+            putToken(out, nk, v);
+        }
+
+        case_list_items listStore = case_list_items.defaultStore();
+        for (Map.Entry<String, String> e : listKv.entrySet()) {
+            if (e == null) continue;
+            String nk = listStore.normalizeKey(e.getKey());
+            if (nk.isBlank()) continue;
+            String v = safe(e.getValue());
+            putToken(out, "case." + nk, v);
+            putToken(out, "kv." + nk, v);
+            putToken(out, nk, v);
+        }
+
+        boolean advanced = "true".equalsIgnoreCase(safe(settingsKv.get("feature_advanced_assembly")));
+        putToken(out, "tenant.advanced_assembly_enabled", advanced ? "true" : "false");
+        putToken(out, "advanced_assembly_enabled", advanced ? "true" : "false");
+        putToken(out, "kv.advanced_assembly_enabled", advanced ? "true" : "false");
+
+        boolean async = "true".equalsIgnoreCase(safe(settingsKv.get("feature_async_sync")));
+        putToken(out, "tenant.async_sync_enabled", async ? "true" : "false");
+        putToken(out, "async_sync_enabled", async ? "true" : "false");
+        putToken(out, "kv.async_sync_enabled", async ? "true" : "false");
+
+        return out;
+    }
+
+    private static void putToken(Map<String, String> values, String key, String value) {
+        if (values == null) return;
+        String k = safe(key).trim();
+        if (k.isBlank()) return;
+        values.put(k, safe(value));
+    }
+
+    private static void applyLiteralOverride(Map<String, String> mergeValues, String tokenLiteral, String value) {
+        if (mergeValues == null) return;
+        String key = safe(tokenLiteral).trim();
+        if (key.isBlank()) return;
+
+        String v = safe(value);
+        mergeValues.put(key, v);
+
+        int dot = key.indexOf('.');
+        if (dot <= 0 || dot + 1 >= key.length()) return;
+
+        String prefix = safe(key.substring(0, dot)).toLowerCase(Locale.ROOT);
+        String tail = safe(key.substring(dot + 1)).trim();
+        if (tail.isBlank()) return;
+
+        if ("case".equals(prefix) || "kv".equals(prefix)) {
+            mergeValues.put("case." + tail, v);
+            mergeValues.put("kv." + tail, v);
+            mergeValues.put(tail, v);
+        } else if ("tenant".equals(prefix)) {
+            mergeValues.put("tenant." + tail, v);
+            mergeValues.put("kv." + tail, v);
+            mergeValues.put(tail, v);
+        }
+    }
+
+    private static String suggestOutputFileName(String requested, String templateLabel, String ext) {
+        String v = safe(requested).trim();
+        if (v.isBlank()) {
+            String base = safe(templateLabel).trim();
+            if (base.isBlank()) base = "assembled";
+            base = base.replaceAll("[^A-Za-z0-9.]", "_");
+            v = base;
+        }
+        v = v.replaceAll("[^A-Za-z0-9.]", "_");
+        if (v.isBlank()) v = "assembled";
+        if (!v.contains(".")) {
+            String e = safe(ext).trim().toLowerCase(Locale.ROOT);
+            if (!e.isBlank()) v = v + "." + e;
+        }
+        return v;
     }
 
     private static RunHealthIssue baseRunIssue(RunResult run) {
@@ -2879,6 +4234,93 @@ public final class business_process_manager {
         if ("medium".equals(s)) return 2;
         if ("low".equals(s)) return 1;
         return 0;
+    }
+
+    private static boolean hasLogCode(List<RunLogEntry> logs, String code) {
+        String target = safe(code).trim();
+        if (target.isBlank()) return false;
+        List<RunLogEntry> xs = logs == null ? List.of() : logs;
+        for (RunLogEntry row : xs) {
+            if (row == null) continue;
+            if (target.equalsIgnoreCase(safe(row.code).trim())) return true;
+        }
+        return false;
+    }
+
+    private static String buildAgingAlarmEmailBody(String tenantUuid,
+                                                   int runningStaleMinutes,
+                                                   int reviewStaleMinutes,
+                                                   List<RunHealthIssue> issues) {
+        StringBuilder sb = new StringBuilder(4096);
+        sb.append("Business process aging alarm detected.\n\n");
+        sb.append("Tenant: ").append(safe(tenantUuid)).append("\n");
+        sb.append("Detected at: ").append(nowIso()).append("\n");
+        sb.append("Running stale threshold (minutes): ").append(Math.max(1, runningStaleMinutes)).append("\n");
+        sb.append("Human-review stale threshold (minutes): ").append(Math.max(1, reviewStaleMinutes)).append("\n");
+        sb.append("Issue count: ").append(issues == null ? 0 : issues.size()).append("\n\n");
+        sb.append("Issues:\n");
+        if (issues != null) {
+            for (RunHealthIssue issue : issues) {
+                if (issue == null) continue;
+                sb.append("- type=").append(safe(issue.issueType));
+                sb.append(", severity=").append(safe(issue.severity));
+                sb.append(", age_minutes=").append(Math.max(0L, issue.ageMinutes));
+                sb.append(", run_uuid=").append(safe(issue.runUuid));
+                sb.append(", process=").append(safe(issue.processName));
+                sb.append(", status=").append(safe(issue.status)).append("\n");
+                String summary = safe(issue.summary).trim();
+                if (!summary.isBlank()) sb.append("  summary: ").append(summary).append("\n");
+                String rec = safe(issue.recommendation).trim();
+                if (!rec.isBlank()) sb.append("  recommendation: ").append(rec).append("\n");
+            }
+        }
+        sb.append("\nOpen Business Processes > Run Health Inspector to triage.\n");
+        return sb.toString();
+    }
+
+    private static List<String> resolveTenantAdminEmails(String tenantUuid) {
+        String tu = safeFileToken(tenantUuid);
+        if (tu.isBlank()) return List.of();
+        try {
+            users_roles ur = users_roles.defaultStore();
+            permission_layers layers = permission_layers.defaultStore();
+
+            LinkedHashMap<String, LinkedHashMap<String, String>> rolePermsByUuid = new LinkedHashMap<String, LinkedHashMap<String, String>>();
+            for (users_roles.RoleRec role : ur.listRoles(tu)) {
+                if (role == null) continue;
+                String roleUuid = safe(role.uuid).trim();
+                if (roleUuid.isBlank()) continue;
+                rolePermsByUuid.put(roleUuid, new LinkedHashMap<String, String>(role.permissions));
+            }
+
+            LinkedHashSet<String> recipients = new LinkedHashSet<String>();
+            for (users_roles.UserRec user : ur.listUsers(tu)) {
+                if (user == null || !user.enabled) continue;
+                String userUuid = safe(user.uuid).trim();
+                if (userUuid.isBlank()) continue;
+                String email = safe(user.emailAddress).trim().toLowerCase(Locale.ROOT);
+                if (!looksLikeEmail(email)) continue;
+
+                LinkedHashMap<String, String> rolePerms = rolePermsByUuid.getOrDefault(
+                        safe(user.roleUuid).trim(),
+                        new LinkedHashMap<String, String>()
+                );
+                LinkedHashMap<String, String> effective = layers.resolveEffectivePermissions(tu, userUuid, rolePerms);
+                if (!"true".equalsIgnoreCase(safe(effective.get("tenant_admin")).trim())) continue;
+                recipients.add(email);
+            }
+            return new ArrayList<String>(recipients);
+        } catch (Exception ex) {
+            LOG.log(Level.FINE, "Unable to resolve tenant admin emails for tenant=" + tu + ": " + safe(ex.getMessage()), ex);
+            return List.of();
+        }
+    }
+
+    private static boolean looksLikeEmail(String raw) {
+        String v = safe(raw).trim();
+        int at = v.indexOf('@');
+        if (at <= 0 || at == v.length() - 1) return false;
+        return v.indexOf('.', at + 1) > at + 1;
     }
 
     private static void markReviewErrorLocked(String tenantUuid,

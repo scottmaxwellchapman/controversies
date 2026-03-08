@@ -258,7 +258,7 @@ public class omnichannel_tickets_test {
                     tenantUuid,
                     ticketUuid,
                     outbound.uuid,
-                    "public_evidence.txt",
+                    "public evidence-(v1).txt",
                     "text/plain",
                     publicBytes,
                     false,
@@ -269,7 +269,7 @@ public class omnichannel_tickets_test {
                     tenantUuid,
                     ticketUuid,
                     internal.uuid,
-                    "internal_strategy.txt",
+                    "internal strategy-(draft).txt",
                     "text/plain",
                     internalBytes,
                     false,
@@ -278,6 +278,10 @@ public class omnichannel_tickets_test {
 
             assertNotNull(publicAttachment);
             assertNotNull(internalAttachment);
+            assertTrue(publicAttachment.fileName.matches("[A-Za-z0-9._]+"));
+            assertTrue(internalAttachment.fileName.matches("[A-Za-z0-9._]+"));
+            assertFalse(publicAttachment.fileName.contains("-"));
+            assertFalse(internalAttachment.fileName.contains("-"));
 
             omnichannel_tickets.TicketRec refreshed = store.getTicket(tenantUuid, ticketUuid);
             assertNotNull(refreshed);
@@ -308,8 +312,8 @@ public class omnichannel_tickets_test {
                 boolean internalEmbedded = false;
                 for (String key : embeddedNames.keySet()) {
                     String k = safe(key);
-                    if (k.contains("public_evidence.txt")) publicEmbedded = true;
-                    if (k.contains("internal_strategy.txt")) internalEmbedded = true;
+                    if (k.contains("public_evidence_v1_.txt")) publicEmbedded = true;
+                    if (k.contains("internal_strategy_draft_.txt")) internalEmbedded = true;
                 }
                 assertTrue(publicEmbedded);
                 assertFalse(internalEmbedded);

@@ -911,7 +911,7 @@ public final class assembled_forms {
         in = in.replace("\\", "/");
         int slash = in.lastIndexOf('/');
         if (slash >= 0) in = in.substring(slash + 1);
-        in = in.replaceAll("[^A-Za-z0-9._ -]", "_").trim();
+        in = in.replaceAll("[^A-Za-z0-9.]", "_").trim();
         if (in.isBlank()) in = "assembled-form";
         if (in.length() > 180) in = in.substring(0, 180);
 
@@ -926,7 +926,9 @@ public final class assembled_forms {
     private static String normalizeBackendType(String backendType) {
         String v = safe(backendType).trim().toLowerCase(Locale.ROOT);
         if (v.isBlank()) return "local";
-        if ("local".equals(v) || "ftp".equals(v) || "ftps".equals(v) || "sftp".equals(v) || "s3_compatible".equals(v)) return v;
+        if ("onedrive".equals(v) || "onedrive_for_business".equals(v) || "onedrive-for-business".equals(v)) return "onedrive_business";
+        if ("local".equals(v) || "ftp".equals(v) || "ftps".equals(v) || "sftp".equals(v)
+                || "webdav".equals(v) || "s3_compatible".equals(v) || "onedrive_business".equals(v)) return v;
         return "local";
     }
 

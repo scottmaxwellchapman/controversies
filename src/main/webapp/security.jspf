@@ -50,7 +50,8 @@
           || __path.endsWith("/document_preview.jsp") || __path.endsWith("document_preview.jsp")
           || __path.endsWith("/parts.jsp") || __path.endsWith("parts.jsp")
           || __path.endsWith("/versions.jsp") || __path.endsWith("versions.jsp")
-          || __path.endsWith("/pdf_redact.jsp") || __path.endsWith("pdf_redact.jsp")) {
+          || __path.endsWith("/pdf_redact.jsp") || __path.endsWith("pdf_redact.jsp")
+          || __path.endsWith("/search.jsp") || __path.endsWith("search.jsp")) {
     __requiredPerm = "documents.access";
   } else if (__path.endsWith("/facts.jsp") || __path.endsWith("facts.jsp")) {
     __requiredPerm = "facts.access";

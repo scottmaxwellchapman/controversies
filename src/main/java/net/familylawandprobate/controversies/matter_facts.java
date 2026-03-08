@@ -1004,8 +1004,8 @@ public final class matter_facts {
 
         Path versionDir = parts.partFolder(tenantUuid, matterUuid, docUuid, partUuid).resolve("version_files");
         Files.createDirectories(versionDir);
-        String fileName = "facts_case_plan_" + nowIso().replace(':', '-') + ".pdf";
-        Path reportPath = versionDir.resolve(UUID.randomUUID().toString() + "__" + fileName).toAbsolutePath().normalize();
+        String fileName = ("facts_case_plan_" + nowIso() + ".pdf").replaceAll("[^A-Za-z0-9.]", "_");
+        Path reportPath = versionDir.resolve(UUID.randomUUID().toString().replace("-", "_") + "__" + fileName).toAbsolutePath().normalize();
         pdf_redaction_service.requirePathWithinTenant(reportPath, tenantUuid, "Facts report path");
 
         List<ClaimRec> claims = activeClaims(data.claims);

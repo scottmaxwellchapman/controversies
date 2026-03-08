@@ -16,6 +16,15 @@ import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDResources;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
+import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
+import org.apache.pdfbox.pdmodel.interactive.form.PDTextField;
 import org.junit.jupiter.api.Test;
 
 public class form_templates_test {
@@ -128,6 +137,38 @@ public class form_templates_test {
         }
     }
 
+    @Test
+    void create_and_replace_support_pdf_templates() throws Exception {
+        String tenantUuid = "tmpl-pdf-" + UUID.randomUUID();
+        Path tenantDir = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();
+        deleteQuietly(tenantDir);
+
+        try {
+            form_templates store = form_templates.defaultStore();
+            store.ensure(tenantUuid);
+
+            byte[] pdf = minimalPdfForm();
+            form_templates.TemplateRec pdfRec = store.create(tenantUuid, "PDF Form", "", "intake-form.pdf", pdf);
+            assertEquals("pdf", pdfRec.fileExt);
+            assertTrue(pdfRec.sizeBytes > 0);
+
+            boolean replacedWithPdf = store.replaceFile(tenantUuid, pdfRec.uuid, "intake-form-v2.pdf", pdf);
+            assertTrue(replacedWithPdf);
+            assertEquals("pdf", store.get(tenantUuid, pdfRec.uuid).fileExt);
+
+            boolean replacedWithTxt = store.replaceFile(
+                    tenantUuid,
+                    pdfRec.uuid,
+                    "fallback.txt",
+                    "Fallback {{case.label}}".getBytes(StandardCharsets.UTF_8)
+            );
+            assertTrue(replacedWithTxt);
+            assertEquals("txt", store.get(tenantUuid, pdfRec.uuid).fileExt);
+        } finally {
+            deleteQuietly(tenantDir);
+        }
+    }
+
     private static byte[] minimalOdt(String text) throws Exception {
         String contentXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
                 + "<office:document-content "
@@ -169,6 +210,36 @@ public class form_templates_test {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;")
                 .replace("'", "&apos;");
+    }
+
+    private static byte[] minimalPdfForm() throws Exception {
+        try (PDDocument doc = new PDDocument();
+             ByteArrayOutputStream out = new ByteArrayOutputStream(4096)) {
+            PDPage page = new PDPage(PDRectangle.LETTER);
+            doc.addPage(page);
+
+            PDAcroForm form = new PDAcroForm(doc);
+            doc.getDocumentCatalog().setAcroForm(form);
+
+            PDResources resources = new PDResources();
+            resources.put(COSName.getPDFName("Helv"), PDType1Font.HELVETICA);
+            form.setDefaultResources(resources);
+            form.setDefaultAppearance("/Helv 10 Tf 0 g");
+            form.setNeedAppearances(true);
+
+            PDTextField field = new PDTextField(form);
+            field.setPartialName("case_label");
+            field.setDefaultAppearance("/Helv 10 Tf 0 g");
+            form.getFields().add(field);
+
+            PDAnnotationWidget widget = field.getWidgets().get(0);
+            widget.setRectangle(new PDRectangle(72f, 700f, 220f, 20f));
+            widget.setPage(page);
+            page.getAnnotations().add(widget);
+
+            doc.save(out);
+            return out.toByteArray();
+        }
     }
 
     private static void deleteQuietly(Path p) {

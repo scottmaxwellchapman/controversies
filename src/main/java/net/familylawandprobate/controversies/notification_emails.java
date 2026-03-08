@@ -1046,7 +1046,7 @@ public final class notification_emails {
 
             if (contentType.isBlank()) contentType = guessContentType(fileName);
 
-            String safeName = safeFileToken(fileName);
+            String safeName = sanitizeAttachmentFileName(fileName);
             if (safeName.isBlank()) safeName = "attachment-" + (i + 1) + ".bin";
             Path stored = attachmentRoot.resolve((i + 1) + "_" + safeName).normalize();
             Files.write(stored, bytes == null ? new byte[0] : bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -1505,6 +1505,12 @@ public final class notification_emails {
         String t = safe(s).trim();
         if (t.isBlank()) return "";
         return t.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private static String sanitizeAttachmentFileName(String s) {
+        String t = safe(s).trim();
+        if (t.isBlank()) return "";
+        return t.replaceAll("[^A-Za-z0-9.]", "_");
     }
 
     private static String jsonEscape(String s) {

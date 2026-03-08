@@ -12,6 +12,7 @@
 <%@ page import="java.util.Map" %>
 
 <%@ page import="net.familylawandprobate.controversies.business_process_manager" %>
+<%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 
 <%@ include file="security.jspf" %>
 <%
@@ -223,10 +224,18 @@
 
   String csrfToken = csrfForRender(request);
   business_process_manager bpm = business_process_manager.defaultService();
+  tenant_settings tenantSettings = tenant_settings.defaultStore();
   try { bpm.ensureTenant(tenantUuid); } catch (Exception ignored) {}
 
-  int runningThresholdMinutes = Math.max(1, intLike(request.getParameter("running_threshold_mins"), 60));
-  int reviewThresholdMinutes = Math.max(1, intLike(request.getParameter("review_threshold_mins"), 1440));
+  LinkedHashMap<String, String> tenantCfg = tenantSettings.read(tenantUuid);
+  int configuredRunningThreshold = Math.max(1, intLike(tenantCfg.get("bpm_aging_alarm_running_stale_minutes"), 60));
+  int configuredReviewThreshold = Math.max(1, intLike(tenantCfg.get("bpm_aging_alarm_review_stale_minutes"), 1440));
+  boolean agingAlarmEnabled = boolLike(tenantCfg.get("bpm_aging_alarm_enabled"));
+  int agingAlarmIntervalMinutes = Math.max(1, intLike(tenantCfg.get("bpm_aging_alarm_interval_minutes"), 15));
+  int agingAlarmMaxIssues = Math.max(1, intLike(tenantCfg.get("bpm_aging_alarm_max_issues_per_scan"), 200));
+
+  int runningThresholdMinutes = Math.max(1, intLike(request.getParameter("running_threshold_mins"), configuredRunningThreshold));
+  int reviewThresholdMinutes = Math.max(1, intLike(request.getParameter("review_threshold_mins"), configuredReviewThreshold));
   String thresholdQuery = "&running_threshold_mins=" + runningThresholdMinutes
       + "&review_threshold_mins=" + reviewThresholdMinutes;
 
@@ -234,6 +243,31 @@
     String action = safe(request.getParameter("action")).trim();
 
     try {
+      if ("save_aging_alarm_settings".equalsIgnoreCase(action)) {
+        boolean enabled = boolLike(request.getParameter("aging_alarm_enabled"));
+        int intervalMinutes = Math.max(1, intLike(request.getParameter("aging_alarm_interval_minutes"), agingAlarmIntervalMinutes));
+        intervalMinutes = Math.min(intervalMinutes, 1440);
+        int runningMinutes = Math.max(1, intLike(request.getParameter("aging_alarm_running_stale_minutes"), runningThresholdMinutes));
+        runningMinutes = Math.min(runningMinutes, 43200);
+        int reviewMinutes = Math.max(1, intLike(request.getParameter("aging_alarm_review_stale_minutes"), reviewThresholdMinutes));
+        reviewMinutes = Math.min(reviewMinutes, 43200);
+        int maxIssues = Math.max(1, intLike(request.getParameter("aging_alarm_max_issues_per_scan"), agingAlarmMaxIssues));
+        maxIssues = Math.min(maxIssues, 2000);
+
+        LinkedHashMap<String, String> nextCfg = tenantSettings.read(tenantUuid);
+        nextCfg.put("bpm_aging_alarm_enabled", enabled ? "true" : "false");
+        nextCfg.put("bpm_aging_alarm_interval_minutes", String.valueOf(intervalMinutes));
+        nextCfg.put("bpm_aging_alarm_running_stale_minutes", String.valueOf(runningMinutes));
+        nextCfg.put("bpm_aging_alarm_review_stale_minutes", String.valueOf(reviewMinutes));
+        nextCfg.put("bpm_aging_alarm_max_issues_per_scan", String.valueOf(maxIssues));
+        tenantSettings.write(tenantUuid, nextCfg);
+
+        response.sendRedirect(ctx + "/business_processes.jsp?alarm_saved=1"
+            + "&running_threshold_mins=" + runningMinutes
+            + "&review_threshold_mins=" + reviewMinutes);
+        return;
+      }
+
       if ("save_process".equalsIgnoreCase(action)) {
         String processJson = safe(request.getParameter("process_json")).trim();
         if (processJson.isBlank()) throw new IllegalArgumentException("Process JSON is required.");
@@ -325,6 +359,7 @@
   if ("1".equals(request.getParameter("saved"))) message = "Business process saved.";
   else if ("1".equals(request.getParameter("deleted"))) message = "Business process deleted.";
   else if ("1".equals(request.getParameter("triggered"))) message = "Business process triggered.";
+  else if ("1".equals(request.getParameter("alarm_saved"))) message = "Aging alarm settings saved.";
   else if ("1".equals(request.getParameter("undone"))) message = "Run undo operation completed.";
   else if ("1".equals(request.getParameter("redone"))) message = "Run redo operation completed.";
   else if ("failed".equalsIgnoreCase(safe(request.getParameter("repair")))) message = "Run was marked failed.";
@@ -547,12 +582,31 @@
                   <option value="set_case_list_item" <%= "set_case_list_item".equalsIgnoreCase(s.action) ? "selected" : "" %>>Set Case List Item</option>
                   <option value="set_document_field" <%= "set_document_field".equalsIgnoreCase(s.action) ? "selected" : "" %>>Set Document Field</option>
                   <option value="set_tenant_field" <%= "set_tenant_field".equalsIgnoreCase(s.action) ? "selected" : "" %>>Set Tenant Field</option>
+                  <option value="set_task_field" <%= "set_task_field".equalsIgnoreCase(s.action) ? "selected" : "" %>>Set Task Field</option>
+                  <option value="set_custom_object_record_field" <%= "set_custom_object_record_field".equalsIgnoreCase(s.action) ? "selected" : "" %>>Set Custom Object Field</option>
+                  <option value="update_custom_object_record" <%= "update_custom_object_record".equalsIgnoreCase(s.action) ? "selected" : "" %>>Update Custom Object Record</option>
                   <option value="log_note" <%= "log_note".equalsIgnoreCase(s.action) ? "selected" : "" %>>Log Note</option>
-                  <option value="human_review" <%= "human_review".equalsIgnoreCase(s.action) ? "selected" : "" %>>Human Review</option>
                   <option value="set_variable" <%= "set_variable".equalsIgnoreCase(s.action) ? "selected" : "" %>>Set Variable</option>
                   <option value="trigger_event" <%= "trigger_event".equalsIgnoreCase(s.action) ? "selected" : "" %>>Trigger Event</option>
+                  <option value="send_webhook" <%= "send_webhook".equalsIgnoreCase(s.action) ? "selected" : "" %>>Send Webhook</option>
                   <option value="update_thread" <%= "update_thread".equalsIgnoreCase(s.action) ? "selected" : "" %>>Update Thread</option>
                   <option value="add_thread_note" <%= "add_thread_note".equalsIgnoreCase(s.action) ? "selected" : "" %>>Add Thread Note</option>
+                  <option value="update_task" <%= "update_task".equalsIgnoreCase(s.action) ? "selected" : "" %>>Update Task</option>
+                  <option value="add_task_note" <%= "add_task_note".equalsIgnoreCase(s.action) ? "selected" : "" %>>Add Task Note</option>
+                  <option value="update_fact" <%= "update_fact".equalsIgnoreCase(s.action) ? "selected" : "" %>>Update Fact</option>
+                  <option value="refresh_facts_report" <%= "refresh_facts_report".equalsIgnoreCase(s.action) ? "selected" : "" %>>Refresh Facts Report</option>
+                  <option value="document_assembly" <%= "document_assembly".equalsIgnoreCase(s.action) ? "selected" : "" %>>Document Assembly</option>
+                  <option value="notice_communication" <%= "notice_communication".equalsIgnoreCase(s.action) ? "selected" : "" %>>Notice Communication</option>
+                  <option value="send_for_signature" <%= "send_for_signature".equalsIgnoreCase(s.action) ? "selected" : "" %>>Send For Signature</option>
+                  <option value="conflict_check" <%= "conflict_check".equalsIgnoreCase(s.action) ? "selected" : "" %>>Conflict Check</option>
+                  <option value="deadline_rule_calculation" <%= "deadline_rule_calculation".equalsIgnoreCase(s.action) ? "selected" : "" %>>Deadline Rule Calculation</option>
+                  <option value="court_filing_service" <%= "court_filing_service".equalsIgnoreCase(s.action) ? "selected" : "" %>>Court Filing / Service</option>
+                  <option value="payment_fee_verification" <%= "payment_fee_verification".equalsIgnoreCase(s.action) ? "selected" : "" %>>Payment/Fee Verification</option>
+                  <option value="wait_for_external_event" <%= "wait_for_external_event".equalsIgnoreCase(s.action) ? "selected" : "" %>>Wait For External Event</option>
+                  <option value="request_information" <%= "request_information".equalsIgnoreCase(s.action) ? "selected" : "" %>>Request Information</option>
+                  <option value="escalation" <%= "escalation".equalsIgnoreCase(s.action) ? "selected" : "" %>>Escalation</option>
+                  <option value="audit_snapshot" <%= "audit_snapshot".equalsIgnoreCase(s.action) ? "selected" : "" %>>Audit Snapshot</option>
+                  <option value="human_review" <%= "human_review".equalsIgnoreCase(s.action) ? "selected" : "" %>>Human Review</option>
                 </select>
               </td>
               <td><input type="text" class="st-label" value="<%= esc(safe(s.label)) %>" /></td>
@@ -576,12 +630,31 @@
                   <option value="set_case_list_item">Set Case List Item</option>
                   <option value="set_document_field">Set Document Field</option>
                   <option value="set_tenant_field">Set Tenant Field</option>
+                  <option value="set_task_field">Set Task Field</option>
+                  <option value="set_custom_object_record_field">Set Custom Object Field</option>
+                  <option value="update_custom_object_record">Update Custom Object Record</option>
                   <option value="log_note">Log Note</option>
-                  <option value="human_review">Human Review</option>
                   <option value="set_variable">Set Variable</option>
                   <option value="trigger_event">Trigger Event</option>
+                  <option value="send_webhook">Send Webhook</option>
                   <option value="update_thread">Update Thread</option>
                   <option value="add_thread_note">Add Thread Note</option>
+                  <option value="update_task">Update Task</option>
+                  <option value="add_task_note">Add Task Note</option>
+                  <option value="update_fact">Update Fact</option>
+                  <option value="refresh_facts_report">Refresh Facts Report</option>
+                  <option value="document_assembly">Document Assembly</option>
+                  <option value="notice_communication">Notice Communication</option>
+                  <option value="send_for_signature">Send For Signature</option>
+                  <option value="conflict_check">Conflict Check</option>
+                  <option value="deadline_rule_calculation">Deadline Rule Calculation</option>
+                  <option value="court_filing_service">Court Filing / Service</option>
+                  <option value="payment_fee_verification">Payment/Fee Verification</option>
+                  <option value="wait_for_external_event">Wait For External Event</option>
+                  <option value="request_information">Request Information</option>
+                  <option value="escalation">Escalation</option>
+                  <option value="audit_snapshot">Audit Snapshot</option>
+                  <option value="human_review">Human Review</option>
                 </select>
               </td>
               <td><input type="text" class="st-label" value="Set Priority" /></td>
@@ -616,9 +689,22 @@
               <tr><td><code>set_case_list_item</code></td><td><code>matter_uuid</code>, <code>list_key</code>, <code>list_value</code></td><td>Undo/redo supported.</td></tr>
               <tr><td><code>set_document_field</code></td><td><code>matter_uuid</code>, <code>doc_uuid</code>, <code>field_key</code>, <code>field_value</code></td><td>Undo/redo supported.</td></tr>
               <tr><td><code>set_tenant_field</code></td><td><code>field_key</code>, <code>field_value</code></td><td>Undo/redo supported.</td></tr>
+              <tr><td><code>set_task_field</code></td><td><code>task_uuid</code>, <code>field_key</code>, <code>field_value</code></td><td>Undo/redo supported.</td></tr>
+              <tr><td><code>set_custom_object_record_field</code></td><td><code>object_uuid</code>, <code>record_uuid</code>, <code>field_key</code>, <code>field_value</code></td><td>Undo/redo supported.</td></tr>
               <tr><td><code>update_thread</code></td><td><code>thread_uuid</code></td><td>Patch thread status/priority/assignees and SLA fields.</td></tr>
               <tr><td><code>add_thread_note</code></td><td><code>thread_uuid</code>, <code>body</code></td><td>Adds internal note (not external-facing).</td></tr>
-              <tr><td><code>human_review</code></td><td><code>title</code></td><td>Pauses run and waits for review queue completion.</td></tr>
+              <tr><td><code>document_assembly</code></td><td><code>matter_uuid</code>, <code>template_uuid</code></td><td>Builds + stores assembled output from template values.</td></tr>
+              <tr><td><code>notice_communication</code></td><td><code>to</code>, <code>subject</code></td><td>Queues/sends outbound legal notices using tenant email provider.</td></tr>
+              <tr><td><code>send_for_signature</code></td><td><code>to</code>, <code>subject</code></td><td>Signature notice with optional wait-for-confirmation review loop.</td></tr>
+              <tr><td><code>conflict_check</code></td><td><code>matter_uuid</code></td><td>Writes clear/potential status variables and can require review.</td></tr>
+              <tr><td><code>deadline_rule_calculation</code></td><td><code>days_offset</code></td><td>Computes deadline date (business-day aware optional).</td></tr>
+              <tr><td><code>court_filing_service</code></td><td><code>matter_uuid</code>, <code>title</code></td><td>Creates filing/service task and optional approval gate.</td></tr>
+              <tr><td><code>payment_fee_verification</code></td><td><code>required_amount</code></td><td>Evaluates paid vs required fee and can branch to review.</td></tr>
+              <tr><td><code>wait_for_external_event</code></td><td><code>title</code></td><td>Pauses run until external status is entered in review input.</td></tr>
+              <tr><td><code>request_information</code></td><td><code>title</code></td><td>Structured info request queue with required response keys.</td></tr>
+              <tr><td><code>escalation</code></td><td><code>matter_uuid</code>, <code>title</code></td><td>Creates urgent task and optional escalation notice.</td></tr>
+              <tr><td><code>audit_snapshot</code></td><td>(none)</td><td>Logs hashed context snapshot for defensibility.</td></tr>
+              <tr><td><code>human_review</code></td><td><code>title</code></td><td>Pauses run; supports assignee user/role or permission queue.</td></tr>
             </tbody>
           </table>
         </div>
@@ -679,6 +765,40 @@
   <h2 style="margin:0 0 8px 0;">Run Health Inspector (Stuck/Hung Detection)</h2>
   <div class="meta" style="margin-bottom:8px;">
     Inspect stale running runs and stale waiting-human-review runs. Use repair actions to fail, retry, or reject stale reviews.
+  </div>
+
+  <form method="post" action="<%= ctx %>/business_processes.jsp" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end; margin-bottom:10px;">
+    <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+    <input type="hidden" name="action" value="save_aging_alarm_settings" />
+    <label>
+      <div class="meta">Email Aging Alarms To Tenant Admins</div>
+      <select name="aging_alarm_enabled">
+        <option value="true" <%= agingAlarmEnabled ? "selected" : "" %>>Enabled</option>
+        <option value="false" <%= agingAlarmEnabled ? "" : "selected" %>>Disabled</option>
+      </select>
+    </label>
+    <label>
+      <div class="meta">Alarm Scan Interval (minutes)</div>
+      <input type="number" name="aging_alarm_interval_minutes" value="<%= agingAlarmIntervalMinutes %>" min="1" max="1440" step="1" />
+    </label>
+    <label>
+      <div class="meta">Running Stale Alarm (minutes)</div>
+      <input type="number" name="aging_alarm_running_stale_minutes" value="<%= runningThresholdMinutes %>" min="1" max="43200" step="1" />
+    </label>
+    <label>
+      <div class="meta">Review Stale Alarm (minutes)</div>
+      <input type="number" name="aging_alarm_review_stale_minutes" value="<%= reviewThresholdMinutes %>" min="1" max="43200" step="1" />
+    </label>
+    <label>
+      <div class="meta">Max Issues Per Scan</div>
+      <input type="number" name="aging_alarm_max_issues_per_scan" value="<%= agingAlarmMaxIssues %>" min="1" max="2000" step="1" />
+    </label>
+    <div>
+      <button type="submit" class="btn btn-ghost">Save Aging Alarm Settings</button>
+    </div>
+  </form>
+  <div class="meta" style="margin-bottom:10px;">
+    When enabled, background checks queue email notifications for newly stale/incomplete runs to users with <code>tenant_admin=true</code>. Requires tenant email provider configuration.
   </div>
 
   <form method="get" action="<%= ctx %>/business_processes.jsp" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; align-items:end;">
@@ -864,12 +984,31 @@
         '<option value="set_case_list_item">Set Case List Item</option>' +
         '<option value="set_document_field">Set Document Field</option>' +
         '<option value="set_tenant_field">Set Tenant Field</option>' +
+        '<option value="set_task_field">Set Task Field</option>' +
+        '<option value="set_custom_object_record_field">Set Custom Object Field</option>' +
+        '<option value="update_custom_object_record">Update Custom Object Record</option>' +
         '<option value="log_note">Log Note</option>' +
-        '<option value="human_review">Human Review</option>' +
         '<option value="set_variable">Set Variable</option>' +
         '<option value="trigger_event">Trigger Event</option>' +
+        '<option value="send_webhook">Send Webhook</option>' +
         '<option value="update_thread">Update Thread</option>' +
         '<option value="add_thread_note">Add Thread Note</option>' +
+        '<option value="update_task">Update Task</option>' +
+        '<option value="add_task_note">Add Task Note</option>' +
+        '<option value="update_fact">Update Fact</option>' +
+        '<option value="refresh_facts_report">Refresh Facts Report</option>' +
+        '<option value="document_assembly">Document Assembly</option>' +
+        '<option value="notice_communication">Notice Communication</option>' +
+        '<option value="send_for_signature">Send For Signature</option>' +
+        '<option value="conflict_check">Conflict Check</option>' +
+        '<option value="deadline_rule_calculation">Deadline Rule Calculation</option>' +
+        '<option value="court_filing_service">Court Filing / Service</option>' +
+        '<option value="payment_fee_verification">Payment/Fee Verification</option>' +
+        '<option value="wait_for_external_event">Wait For External Event</option>' +
+        '<option value="request_information">Request Information</option>' +
+        '<option value="escalation">Escalation</option>' +
+        '<option value="audit_snapshot">Audit Snapshot</option>' +
+        '<option value="human_review">Human Review</option>' +
       '</select></td>' +
       '<td><input type="text" class="st-label" value="" /></td>' +
       '<td><select class="st-enabled"><option value="true" selected>Yes</option><option value="false">No</option></select></td>' +

@@ -4,6 +4,7 @@
   <item label="Cases" href="/cases.jsp" />
   <item label="Contacts" href="/contacts.jsp" />
   <item label="Documents" href="/documents.jsp" />
+  <item label="Search" href="/search.jsp" />
   <item label="Facts Case Plan" href="/facts.jsp" />
   <item label="Tasks" href="/tasks.jsp" />
   <item label="Omnichannel Threads" href="/omnichannel.jsp" />
@@ -38,17 +39,18 @@
   </item>
 
   <item label="Help">
-    <item label="Help Center" href="/help_center.jsp" />
-    <item label="Getting Started (Legal Team)" href="/help_getting_started.jsp" />
-    <item label="Case Workflow Guide" href="/help_case_workflow.jsp" />
-    <item label="Form Assembly Guide" href="/help_form_assembly.jsp" />
-    <item label="Facts Guide (Novice)" href="/help_facts_novice.jsp" />
-    <item label="Facts Guide (Expert)" href="/help_facts_expert.jsp" />
-    <item label="Tasks Guide (Novice)" href="/help_tasks_novice.jsp" />
-    <item label="Tasks Guide (Expert)" href="/help_tasks_expert.jsp" />
-    <item label="Threads Guide (Novice)" href="/help_threads_novice.jsp" />
-    <item label="Threads Guide (Expert)" href="/help_threads_expert.jsp" />
-    <item label="Permissions Guide" href="/help_permissions.jsp" />
+    <item label="Help Center" href="/help_browser.jsp?topic=help_center" />
+    <item label="Getting Started (Legal Team)" href="/help_browser.jsp?topic=getting_started" />
+    <item label="Case Workflow Guide" href="/help_browser.jsp?topic=case_workflow" />
+    <item label="Form Assembly Guide" href="/help_browser.jsp?topic=form_assembly" />
+    <item label="Facts Guide (Novice)" href="/help_browser.jsp?topic=facts_novice" />
+    <item label="Facts Guide (Expert)" href="/help_browser.jsp?topic=facts_expert" />
+    <item label="Tasks Guide (Novice)" href="/help_browser.jsp?topic=tasks_novice" />
+    <item label="Tasks Guide (Expert)" href="/help_browser.jsp?topic=tasks_expert" />
+    <item label="Business Processes Guide (Expert)" href="/help_browser.jsp?topic=business_processes_expert" />
+    <item label="Threads Guide (Novice)" href="/help_browser.jsp?topic=threads_novice" />
+    <item label="Threads Guide (Expert)" href="/help_browser.jsp?topic=threads_expert" />
+    <item label="Permissions Guide" href="/help_browser.jsp?topic=permissions_guide" />
     <item label="Token Guide" href="/token_guide.jsp" />
     <item label="Markup Notation" href="/markup_notation.jsp" />
   </item>

@@ -19,6 +19,7 @@
 
 <%@ page import="net.familylawandprobate.controversies.tenants" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
+<%@ page import="net.familylawandprobate.controversies.installation_state" %>
 <%@ page import="net.familylawandprobate.controversies.ip_lists" %>
 <%@ page import="net.familylawandprobate.controversies.case_attributes" %>
 <%@ page import="net.familylawandprobate.controversies.document_attributes" %>
@@ -438,6 +439,17 @@
 
     try { tenantStore.ensure(); } catch (Exception ignored) {}
     try { lists.ensure(); } catch (Exception ignored) {}
+
+    boolean installComplete = false;
+    try {
+        installComplete = installation_state.defaultStore().isCompleted();
+    } catch (Exception ignored) {
+        installComplete = false;
+    }
+    if (!installComplete) {
+        response.sendRedirect(ctx + "/install.jsp");
+        return;
+    }
 
     // Build dropdown list: enabled tenants only
     List<tenants.Tenant> enabledTenants = new ArrayList<>();
@@ -880,6 +892,9 @@
 
     boolean loggedOut = "1".equals(request.getParameter("loggedOut"));
     if (loggedOut && message == null && error == null) message = "You have been logged out.";
+    if ("1".equals(request.getParameter("installed")) && message == null && error == null) {
+        message = "Installation completed. Sign in with your new tenant administrator email and password.";
+    }
 
     String csrfToken = csrfForRender(request);
 %>

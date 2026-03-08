@@ -25,6 +25,9 @@ public class app {
         // Start background queue workers early in process lifecycle.
         notification_emails.defaultStore();
         clio_matter_sync_scheduler.defaultService().startIfNeeded();
+        office365_contact_sync_scheduler.defaultService().startIfNeeded();
+        external_storage_data_sync_scheduler.defaultService().startIfNeeded();
+        bpm_aging_alarm_scheduler.defaultService().startIfNeeded();
         texas_law_sync texasLawSync = texas_law_sync.defaultService();
         texasLawSync.triggerStartupRunIfIdle();
 

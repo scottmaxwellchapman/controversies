@@ -423,7 +423,7 @@ public final class tenant_wikis {
             String now = document_workflow_support.nowIso();
             String safeName = safeFileName(fileName);
             String uuid = UUID.randomUUID().toString();
-            String storageFile = uuid + "__" + safeName;
+            String storageFile = uuid.replace("-", "_") + "__" + safeName;
             Path outPath = attachmentsDir(tu, pu).resolve(storageFile).normalize();
             if (!outPath.startsWith(attachmentsDir(tu, pu).normalize())) throw new IllegalArgumentException("Invalid attachment path.");
 
@@ -548,7 +548,7 @@ public final class tenant_wikis {
 
         String now = document_workflow_support.nowIso();
         String uuid = UUID.randomUUID().toString();
-        String storageFile = uuid + ".html";
+        String storageFile = uuid.replace("-", "_") + ".html";
         Path outPath = revisionsDir(tenantUuid, pageUuid).resolve(storageFile).normalize();
         if (!outPath.startsWith(revisionsDir(tenantUuid, pageUuid).normalize())) {
             throw new IllegalArgumentException("Invalid revision path.");
@@ -998,7 +998,7 @@ public final class tenant_wikis {
     private static String safeFileName(String raw) {
         String cleaned = safe(raw).trim();
         if (cleaned.isBlank()) cleaned = "attachment.bin";
-        cleaned = cleaned.replaceAll("[^A-Za-z0-9._-]", "_");
+        cleaned = cleaned.replaceAll("[^A-Za-z0-9.]", "_");
         if (cleaned.length() > 140) cleaned = cleaned.substring(cleaned.length() - 140);
         if (cleaned.isBlank()) cleaned = "attachment.bin";
         return cleaned;

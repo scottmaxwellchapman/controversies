@@ -87,6 +87,13 @@
     return m != null && "clio".equalsIgnoreCase(safe(m.source).trim());
   }
 
+  private static String normalizeFocusTab(String raw) {
+    String t = safe(raw).trim().toLowerCase(Locale.ROOT);
+    if ("profile".equals(t)) return "profile";
+    if ("status".equals(t)) return "status";
+    return "actions";
+  }
+
   private static String normalizeAttrValueByType(String dataType, String raw) {
     String type = safe(dataType).trim().toLowerCase(Locale.ROOT);
     String v = safe(raw);
@@ -143,6 +150,7 @@
   String q = safe(request.getParameter("q")).trim();
   String show = safe(request.getParameter("show")).trim().toLowerCase(Locale.ROOT);
   if (show.isBlank()) show = "active";
+  String activeTab = normalizeFocusTab(request.getParameter("tab"));
 
   String caseUuid = safe(request.getParameter("case_uuid")).trim();
   if (caseUuid.isBlank()) caseUuid = safe(request.getParameter("matter_uuid")).trim();
@@ -260,7 +268,7 @@
         );
 
         fieldsStore.write(tenantUuid, caseUuid, merged);
-        response.sendRedirect(ctx + "/case_focus.jsp?case_uuid=" + enc(caseUuid) + "&saved=1&q=" + enc(q) + "&show=" + enc(show));
+        response.sendRedirect(ctx + "/case_focus.jsp?case_uuid=" + enc(caseUuid) + "&saved=1&q=" + enc(q) + "&show=" + enc(show) + "&tab=" + enc(activeTab));
         return;
       } catch (Exception ex) {
         logWarn(application, "Unable to save case: " + shortErr(ex), ex);
@@ -274,7 +282,7 @@
         if (current == null) throw new IllegalStateException("Case not found.");
         if (isClioManagedMatter(current)) throw new IllegalStateException("This case is synced from Clio and is read-only here.");
         matterStore.trash(tenantUuid, caseUuid);
-        response.sendRedirect(ctx + "/case_focus.jsp?case_uuid=" + enc(caseUuid) + "&archived=1&q=" + enc(q) + "&show=" + enc(show));
+        response.sendRedirect(ctx + "/case_focus.jsp?case_uuid=" + enc(caseUuid) + "&archived=1&q=" + enc(q) + "&show=" + enc(show) + "&tab=" + enc(activeTab));
         return;
       } catch (Exception ex) {
         logWarn(application, "Unable to archive case: " + shortErr(ex), ex);
@@ -288,7 +296,7 @@
         if (current == null) throw new IllegalStateException("Case not found.");
         if (isClioManagedMatter(current)) throw new IllegalStateException("This case is synced from Clio and is read-only here.");
         matterStore.restore(tenantUuid, caseUuid);
-        response.sendRedirect(ctx + "/case_focus.jsp?case_uuid=" + enc(caseUuid) + "&restored=1&q=" + enc(q) + "&show=" + enc(show));
+        response.sendRedirect(ctx + "/case_focus.jsp?case_uuid=" + enc(caseUuid) + "&restored=1&q=" + enc(q) + "&show=" + enc(show) + "&tab=" + enc(activeTab));
         return;
       } catch (Exception ex) {
         logWarn(application, "Unable to restore case: " + shortErr(ex), ex);
@@ -344,6 +352,18 @@
   boolean clioManaged = isClioManagedMatter(selectedCase);
 %>
 
+<style>
+  .focus-tabs { margin-top: 12px; }
+  .focus-tab-list { display:flex; gap:8px; flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:8px; }
+  .focus-tab-btn { border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:999px; padding:6px 12px; cursor:pointer; font-weight:600; }
+  .focus-tab-btn[aria-selected="true"] { background:var(--surface-2); border-color:var(--accent, var(--border)); }
+  .focus-tab-panel { display:none; margin-top:12px; }
+  .focus-tab-panel.is-active { display:block; }
+  .focus-actions-grid { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:12px; }
+  @media (max-width: 900px) { .focus-actions-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 620px) { .focus-actions-grid { grid-template-columns: 1fr; } }
+</style>
+
 <section class="card">
   <div class="section-head">
     <div>
@@ -377,6 +397,7 @@
   <form class="form" method="get" action="<%= ctx %>/case_focus.jsp">
     <input type="hidden" name="q" value="<%= esc(q) %>" />
     <input type="hidden" name="show" value="<%= esc(show) %>" />
+    <input type="hidden" name="tab" value="<%= esc(activeTab) %>" />
     <div class="grid" style="display:grid; grid-template-columns: 3fr auto; gap:12px;">
       <label>
         <span>Case</span>
@@ -406,190 +427,241 @@
 </section>
 
 <% if (selectedCase != null) { %>
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Case Actions</h2>
-  <div class="grid" style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:12px;">
-    <article class="card" style="padding:12px; margin:0;">
-      <h3 style="margin-top:0;">Case Fields</h3>
-      <p class="muted">Edit case replacement values.</p>
-      <a class="btn btn-ghost" href="<%= ctx %>/case_fields.jsp?matter_uuid=<%= enc(selectedCase.uuid) %>">Open Case Fields</a>
-    </article>
-    <article class="card" style="padding:12px; margin:0;">
-      <h3 style="margin-top:0;">Form Assembly</h3>
-      <p class="muted">Generate filing-ready forms for this case.</p>
-      <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedCase.uuid) %>">Open Form Assembly</a>
-    </article>
-    <article class="card" style="padding:12px; margin:0;">
-      <h3 style="margin-top:0;">Documents</h3>
-      <p class="muted">Manage uploaded and generated documents.</p>
-      <a class="btn btn-ghost" href="<%= ctx %>/documents.jsp?case_uuid=<%= enc(selectedCase.uuid) %>">Open Documents</a>
-    </article>
-    <article class="card" style="padding:12px; margin:0;">
-      <h3 style="margin-top:0;">Facts</h3>
-      <p class="muted">Capture evidence-linked factual records.</p>
-      <a class="btn btn-ghost" href="<%= ctx %>/facts.jsp?case_uuid=<%= enc(selectedCase.uuid) %>">Open Facts</a>
-    </article>
-    <article class="card" style="padding:12px; margin:0;">
-      <h3 style="margin-top:0;">Tasks</h3>
-      <p class="muted">Track deadlines, assignees, and work items.</p>
-      <a class="btn btn-ghost" href="<%= ctx %>/tasks.jsp?matter_uuid=<%= enc(selectedCase.uuid) %>">Open Tasks</a>
-    </article>
-    <article class="card" style="padding:12px; margin:0;">
-      <h3 style="margin-top:0;">Activity</h3>
-      <p class="muted">Review recent events for this case.</p>
-      <a class="btn btn-ghost" href="<%= ctx %>/activity.jsp?case_uuid=<%= enc(selectedCase.uuid) %>">Open Activity</a>
-    </article>
+<section class="card focus-tabs" id="focus_tabs_card" style="margin-top:12px;" data-initial-tab="<%= esc(activeTab) %>">
+  <div class="focus-tab-list" role="tablist" aria-label="Case focus tabs">
+    <button type="button" class="focus-tab-btn" role="tab" data-focus-tab="actions" aria-controls="focus_tab_actions">Actions</button>
+    <button type="button" class="focus-tab-btn" role="tab" data-focus-tab="profile" aria-controls="focus_tab_profile">Profile</button>
+    <button type="button" class="focus-tab-btn" role="tab" data-focus-tab="status" aria-controls="focus_tab_status">Status</button>
   </div>
-  <div class="actions" style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
-    <a class="btn btn-ghost" href="<%= ctx %>/assembled_forms.jsp?matter_uuid=<%= enc(selectedCase.uuid) %>">Assembled Forms</a>
-  </div>
-</section>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Case Profile</h2>
-  <% if (clioManaged) { %>
-    <div class="alert alert-warn">
-      This case is synced from Clio and is read-only in Controversies.
+  <div id="focus_tab_actions" class="focus-tab-panel" role="tabpanel">
+    <h2 style="margin-top:0;">Case Actions</h2>
+    <div class="focus-actions-grid">
+      <article class="card" style="padding:12px; margin:0;">
+        <h3 style="margin-top:0;">Case Fields</h3>
+        <p class="muted">Edit case replacement values.</p>
+        <a class="btn btn-ghost" href="<%= ctx %>/case_fields.jsp?matter_uuid=<%= enc(selectedCase.uuid) %>">Open Case Fields</a>
+      </article>
+      <article class="card" style="padding:12px; margin:0;">
+        <h3 style="margin-top:0;">Form Assembly</h3>
+        <p class="muted">Generate filing-ready forms for this case.</p>
+        <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedCase.uuid) %>">Open Form Assembly</a>
+      </article>
+      <article class="card" style="padding:12px; margin:0;">
+        <h3 style="margin-top:0;">Documents</h3>
+        <p class="muted">Manage uploaded and generated documents.</p>
+        <a class="btn btn-ghost" href="<%= ctx %>/documents.jsp?case_uuid=<%= enc(selectedCase.uuid) %>">Open Documents</a>
+      </article>
+      <article class="card" style="padding:12px; margin:0;">
+        <h3 style="margin-top:0;">Facts</h3>
+        <p class="muted">Capture evidence-linked factual records.</p>
+        <a class="btn btn-ghost" href="<%= ctx %>/facts.jsp?case_uuid=<%= enc(selectedCase.uuid) %>">Open Facts</a>
+      </article>
+      <article class="card" style="padding:12px; margin:0;">
+        <h3 style="margin-top:0;">Tasks</h3>
+        <p class="muted">Track deadlines, assignees, and work items.</p>
+        <a class="btn btn-ghost" href="<%= ctx %>/tasks.jsp?matter_uuid=<%= enc(selectedCase.uuid) %>">Open Tasks</a>
+      </article>
+      <article class="card" style="padding:12px; margin:0;">
+        <h3 style="margin-top:0;">Activity</h3>
+        <p class="muted">Review recent events for this case.</p>
+        <a class="btn btn-ghost" href="<%= ctx %>/activity.jsp?case_uuid=<%= enc(selectedCase.uuid) %>">Open Activity</a>
+      </article>
     </div>
-  <% } else { %>
-    <form class="form" method="post" action="<%= ctx %>/case_focus.jsp">
-      <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-      <input type="hidden" name="action" value="save_case" />
-      <input type="hidden" name="case_uuid" value="<%= esc(selectedCase.uuid) %>" />
-      <input type="hidden" name="q" value="<%= esc(q) %>" />
-      <input type="hidden" name="show" value="<%= esc(show) %>" />
+    <div class="actions" style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+      <a class="btn btn-ghost" href="<%= ctx %>/assembled_forms.jsp?matter_uuid=<%= enc(selectedCase.uuid) %>">Assembled Forms</a>
+    </div>
+  </div>
 
-      <label>
-        <span>Case Label</span>
-        <input type="text" name="label" value="<%= esc(safe(selectedCase.label)) %>" required />
-      </label>
+  <div id="focus_tab_profile" class="focus-tab-panel" role="tabpanel">
+    <h2 style="margin-top:0;">Case Profile</h2>
+    <% if (clioManaged) { %>
+      <div class="alert alert-warn">
+        This case is synced from Clio and is read-only in Controversies.
+      </div>
+    <% } else { %>
+      <form class="form" method="post" action="<%= ctx %>/case_focus.jsp">
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="action" value="save_case" />
+        <input type="hidden" name="case_uuid" value="<%= esc(selectedCase.uuid) %>" />
+        <input type="hidden" name="q" value="<%= esc(q) %>" />
+        <input type="hidden" name="show" value="<%= esc(show) %>" />
+        <input type="hidden" name="tab" class="focus-tab-value" value="<%= esc(activeTab) %>" />
 
-      <% if (!enabledAttrDefs.isEmpty()) { %>
-        <div class="grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
-          <%
-            for (int di = 0; di < enabledAttrDefs.size(); di++) {
-              case_attributes.AttributeRec def = enabledAttrDefs.get(di);
-              if (def == null) continue;
-              String key = attrsStore.normalizeKey(def.key);
-              if (key.isBlank()) continue;
-              String val = caseAttrValue(def, selectedCase, caseKv);
-              List<String> opts = "select".equals(def.dataType) ? attrsStore.optionList(def.options) : new ArrayList<String>();
-          %>
-            <label>
-              <span><%= esc(safe(def.label)) %><%= def.required ? " *" : "" %></span>
-              <input type="hidden" name="attr_def_key" value="<%= esc(key) %>" />
-              <% if ("textarea".equals(def.dataType)) { %>
-                <textarea name="attr_def_value" rows="2"><%= esc(val) %></textarea>
-              <% } else if ("date".equals(def.dataType)) { %>
-                <input type="date" name="attr_def_value" value="<%= esc(val) %>" />
-              <% } else if ("datetime".equals(def.dataType)) { %>
-                <input type="datetime-local" name="attr_def_value" value="<%= esc(val) %>" />
-              <% } else if ("time".equals(def.dataType)) { %>
-                <input type="time" name="attr_def_value" value="<%= esc(val) %>" />
-              <% } else if ("number".equals(def.dataType)) { %>
-                <input type="number" name="attr_def_value" value="<%= esc(val) %>" />
-              <% } else if ("boolean".equals(def.dataType)) { %>
-                <select name="attr_def_value">
-                  <option value=""></option>
-                  <option value="true" <%= "true".equals(normalizeAttrValueByType("boolean", val)) ? "selected" : "" %>>Yes</option>
-                  <option value="false" <%= "false".equals(normalizeAttrValueByType("boolean", val)) ? "selected" : "" %>>No</option>
-                </select>
-              <% } else if ("email".equals(def.dataType)) { %>
-                <input type="email" name="attr_def_value" value="<%= esc(val) %>" />
-              <% } else if ("phone".equals(def.dataType)) { %>
-                <input type="tel" name="attr_def_value" value="<%= esc(val) %>" />
-              <% } else if ("url".equals(def.dataType)) { %>
-                <input type="url" name="attr_def_value" value="<%= esc(val) %>" />
-              <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
-                <select name="attr_def_value">
-                  <option value=""></option>
-                  <% for (int oi = 0; oi < opts.size(); oi++) { String ov = safe(opts.get(oi)); %>
-                    <option value="<%= esc(ov) %>" <%= ov.equals(val) ? "selected" : "" %>><%= esc(ov) %></option>
-                  <% } %>
-                </select>
-              <% } else { %>
-                <input type="text" name="attr_def_value" value="<%= esc(val) %>" />
-              <% } %>
-            </label>
-          <% } %>
+        <label>
+          <span>Case Label</span>
+          <input type="text" name="label" value="<%= esc(safe(selectedCase.label)) %>" required />
+        </label>
+
+        <% if (!enabledAttrDefs.isEmpty()) { %>
+          <div class="grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+            <%
+              for (int di = 0; di < enabledAttrDefs.size(); di++) {
+                case_attributes.AttributeRec def = enabledAttrDefs.get(di);
+                if (def == null) continue;
+                String key = attrsStore.normalizeKey(def.key);
+                if (key.isBlank()) continue;
+                String val = caseAttrValue(def, selectedCase, caseKv);
+                List<String> opts = "select".equals(def.dataType) ? attrsStore.optionList(def.options) : new ArrayList<String>();
+            %>
+              <label>
+                <span><%= esc(safe(def.label)) %><%= def.required ? " *" : "" %></span>
+                <input type="hidden" name="attr_def_key" value="<%= esc(key) %>" />
+                <% if ("textarea".equals(def.dataType)) { %>
+                  <textarea name="attr_def_value" rows="2"><%= esc(val) %></textarea>
+                <% } else if ("date".equals(def.dataType)) { %>
+                  <input type="date" name="attr_def_value" value="<%= esc(val) %>" />
+                <% } else if ("datetime".equals(def.dataType)) { %>
+                  <input type="datetime-local" name="attr_def_value" value="<%= esc(val) %>" />
+                <% } else if ("time".equals(def.dataType)) { %>
+                  <input type="time" name="attr_def_value" value="<%= esc(val) %>" />
+                <% } else if ("number".equals(def.dataType)) { %>
+                  <input type="number" name="attr_def_value" value="<%= esc(val) %>" />
+                <% } else if ("boolean".equals(def.dataType)) { %>
+                  <select name="attr_def_value">
+                    <option value=""></option>
+                    <option value="true" <%= "true".equals(normalizeAttrValueByType("boolean", val)) ? "selected" : "" %>>Yes</option>
+                    <option value="false" <%= "false".equals(normalizeAttrValueByType("boolean", val)) ? "selected" : "" %>>No</option>
+                  </select>
+                <% } else if ("email".equals(def.dataType)) { %>
+                  <input type="email" name="attr_def_value" value="<%= esc(val) %>" />
+                <% } else if ("phone".equals(def.dataType)) { %>
+                  <input type="tel" name="attr_def_value" value="<%= esc(val) %>" />
+                <% } else if ("url".equals(def.dataType)) { %>
+                  <input type="url" name="attr_def_value" value="<%= esc(val) %>" />
+                <% } else if ("select".equals(def.dataType) && !opts.isEmpty()) { %>
+                  <select name="attr_def_value">
+                    <option value=""></option>
+                    <% for (int oi = 0; oi < opts.size(); oi++) { String ov = safe(opts.get(oi)); %>
+                      <option value="<%= esc(ov) %>" <%= ov.equals(val) ? "selected" : "" %>><%= esc(ov) %></option>
+                    <% } %>
+                  </select>
+                <% } else { %>
+                  <input type="text" name="attr_def_value" value="<%= esc(val) %>" />
+                <% } %>
+              </label>
+            <% } %>
+          </div>
+        <% } %>
+
+        <h4 style="margin:14px 0 8px 0;">Additional Replacement Fields</h4>
+        <div class="meta" style="margin-bottom:8px;">
+          Custom keys outside configured case attributes. Example key: <code>client_name</code> used as <code>{{kv.client_name}}</code>.
         </div>
-      <% } %>
 
-      <h4 style="margin:14px 0 8px 0;">Additional Replacement Fields</h4>
-      <div class="meta" style="margin-bottom:8px;">
-        Custom keys outside configured case attributes. Example key: <code>client_name</code> used as <code>{{kv.client_name}}</code>.
-      </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th style="width:35%;">Key</th>
+                <th>Value</th>
+                <th style="width:90px;">&nbsp;</th>
+              </tr>
+            </thead>
+            <tbody id="focus_fields_tbl">
+            <%
+              int idx = 0;
+              for (Map.Entry<String,String> e : extraKv.entrySet()) {
+                if (e == null) continue;
+            %>
+              <tr>
+                <td><input type="text" name="field_key" value="<%= esc(safe(e.getKey())) %>" /></td>
+                <td><input type="text" name="field_value" value="<%= esc(safe(e.getValue())) %>" /></td>
+                <td><button type="button" class="btn btn-ghost" onclick="removeFieldRow(this)">Remove</button></td>
+              </tr>
+            <%
+                idx++;
+              }
+              for (; idx < rows; idx++) {
+            %>
+              <tr>
+                <td><input type="text" name="field_key" value="" /></td>
+                <td><input type="text" name="field_value" value="" /></td>
+                <td><button type="button" class="btn btn-ghost" onclick="removeFieldRow(this)">Remove</button></td>
+              </tr>
+            <% } %>
+            </tbody>
+          </table>
+        </div>
 
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th style="width:35%;">Key</th>
-              <th>Value</th>
-              <th style="width:90px;">&nbsp;</th>
-            </tr>
-          </thead>
-          <tbody id="focus_fields_tbl">
-          <%
-            int idx = 0;
-            for (Map.Entry<String,String> e : extraKv.entrySet()) {
-              if (e == null) continue;
-          %>
-            <tr>
-              <td><input type="text" name="field_key" value="<%= esc(safe(e.getKey())) %>" /></td>
-              <td><input type="text" name="field_value" value="<%= esc(safe(e.getValue())) %>" /></td>
-              <td><button type="button" class="btn btn-ghost" onclick="removeFieldRow(this)">Remove</button></td>
-            </tr>
-          <%
-              idx++;
-            }
-            for (; idx < rows; idx++) {
-          %>
-            <tr>
-              <td><input type="text" name="field_key" value="" /></td>
-              <td><input type="text" name="field_value" value="" /></td>
-              <td><button type="button" class="btn btn-ghost" onclick="removeFieldRow(this)">Remove</button></td>
-            </tr>
-          <% } %>
-          </tbody>
-        </table>
-      </div>
+        <div class="actions" style="display:flex; gap:10px; margin-top:10px;">
+          <button type="button" class="btn btn-ghost" onclick="addFieldRow('focus_fields_tbl')">Add Field Row</button>
+          <button type="submit" class="btn">Save Case</button>
+        </div>
+      </form>
+    <% } %>
+  </div>
 
-      <div class="actions" style="display:flex; gap:10px; margin-top:10px;">
-        <button type="button" class="btn btn-ghost" onclick="addFieldRow('focus_fields_tbl')">Add Field Row</button>
-        <button type="submit" class="btn">Save Case</button>
-      </div>
-    </form>
-  <% } %>
-</section>
-
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Case Status</h2>
-  <% if (clioManaged) { %>
-    <div class="muted">Status changes are controlled by Clio for this synced case.</div>
-  <% } else if (!selectedCase.trashed) { %>
-    <form method="post" action="<%= ctx %>/case_focus.jsp" style="margin:0;">
-      <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-      <input type="hidden" name="action" value="archive_case" />
-      <input type="hidden" name="case_uuid" value="<%= esc(selectedCase.uuid) %>" />
-      <input type="hidden" name="q" value="<%= esc(q) %>" />
-      <input type="hidden" name="show" value="<%= esc(show) %>" />
-      <button class="btn btn-ghost" type="submit" onclick="return confirm('Archive this case?');">Archive Case</button>
-    </form>
-  <% } else { %>
-    <form method="post" action="<%= ctx %>/case_focus.jsp" style="margin:0;">
-      <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-      <input type="hidden" name="action" value="restore_case" />
-      <input type="hidden" name="case_uuid" value="<%= esc(selectedCase.uuid) %>" />
-      <input type="hidden" name="q" value="<%= esc(q) %>" />
-      <input type="hidden" name="show" value="<%= esc(show) %>" />
-      <button class="btn" type="submit">Restore Case</button>
-    </form>
-  <% } %>
+  <div id="focus_tab_status" class="focus-tab-panel" role="tabpanel">
+    <h2 style="margin-top:0;">Case Status</h2>
+    <% if (clioManaged) { %>
+      <div class="muted">Status changes are controlled by Clio for this synced case.</div>
+    <% } else if (!selectedCase.trashed) { %>
+      <form method="post" action="<%= ctx %>/case_focus.jsp" style="margin:0;">
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="action" value="archive_case" />
+        <input type="hidden" name="case_uuid" value="<%= esc(selectedCase.uuid) %>" />
+        <input type="hidden" name="q" value="<%= esc(q) %>" />
+        <input type="hidden" name="show" value="<%= esc(show) %>" />
+        <input type="hidden" name="tab" class="focus-tab-value" value="<%= esc(activeTab) %>" />
+        <button class="btn btn-ghost" type="submit" onclick="return confirm('Archive this case?');">Archive Case</button>
+      </form>
+    <% } else { %>
+      <form method="post" action="<%= ctx %>/case_focus.jsp" style="margin:0;">
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="action" value="restore_case" />
+        <input type="hidden" name="case_uuid" value="<%= esc(selectedCase.uuid) %>" />
+        <input type="hidden" name="q" value="<%= esc(q) %>" />
+        <input type="hidden" name="show" value="<%= esc(show) %>" />
+        <input type="hidden" name="tab" class="focus-tab-value" value="<%= esc(activeTab) %>" />
+        <button class="btn" type="submit">Restore Case</button>
+      </form>
+    <% } %>
+  </div>
 </section>
 <% } %>
 
 <script>
+  function normalizeFocusTabClient(raw) {
+    var t = (raw || "").toString().trim().toLowerCase();
+    if (t === "profile") return "profile";
+    if (t === "status") return "status";
+    return "actions";
+  }
+
+  function activateFocusTab(tab, updateUrl) {
+    var card = document.getElementById("focus_tabs_card");
+    if (!card) return;
+    var t = normalizeFocusTabClient(tab);
+
+    var buttons = card.querySelectorAll(".focus-tab-btn[data-focus-tab]");
+    for (var i = 0; i < buttons.length; i++) {
+      var btn = buttons[i];
+      var isActive = (btn.getAttribute("data-focus-tab") === t);
+      btn.setAttribute("aria-selected", isActive ? "true" : "false");
+      btn.setAttribute("tabindex", isActive ? "0" : "-1");
+    }
+
+    var panels = card.querySelectorAll(".focus-tab-panel[id]");
+    for (var j = 0; j < panels.length; j++) {
+      var panel = panels[j];
+      var panelTab = panel.id.replace("focus_tab_", "");
+      if (panelTab === t) panel.classList.add("is-active");
+      else panel.classList.remove("is-active");
+    }
+
+    var hiddenTabs = document.querySelectorAll("input.focus-tab-value");
+    for (var k = 0; k < hiddenTabs.length; k++) hiddenTabs[k].value = t;
+
+    if (updateUrl && window.history && window.history.replaceState && window.URL) {
+      try {
+        var u = new URL(window.location.href);
+        u.searchParams.set("tab", t);
+        window.history.replaceState(null, "", u.toString());
+      } catch (ignore) {}
+    }
+  }
+
   function addFieldRow(tbodyId) {
     var tbody = document.getElementById(tbodyId);
     if (!tbody) return;
@@ -607,6 +679,20 @@
     if (!tr) return;
     tr.remove();
   }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var card = document.getElementById("focus_tabs_card");
+    if (!card) return;
+
+    var buttons = card.querySelectorAll(".focus-tab-btn[data-focus-tab]");
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].addEventListener("click", function () {
+        activateFocusTab(this.getAttribute("data-focus-tab"), true);
+      });
+    }
+
+    activateFocusTab(card.getAttribute("data-initial-tab"), false);
+  });
 </script>
 
 <jsp:include page="footer.jsp" />

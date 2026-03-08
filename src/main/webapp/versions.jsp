@@ -45,7 +45,7 @@ private static String csrfForRender(jakarta.servlet.http.HttpServletRequest req)
 private static String onlyDigits(String s){ return safe(s).replaceAll("[^0-9]", ""); }
 private static int intOrDefault(String s, int d){ try { return Integer.parseInt(safe(s).trim()); } catch (Exception ex) { return d; } }
 private static String safeFileName(String s){
-  String v = safe(s).trim().replaceAll("[^A-Za-z0-9._-]", "_");
+  String v = safe(s).trim().replaceAll("[^A-Za-z0-9.]", "_");
   if (v.isBlank()) return "version.bin";
   if (v.length() > 140) return v.substring(v.length() - 140);
   return v;

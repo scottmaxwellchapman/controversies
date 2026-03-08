@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -266,13 +268,25 @@ public final class contacts {
     }
 
     public ContactRec createNative(String tenantUuid, ContactInput input) throws Exception {
-        return createWithSource(tenantUuid, input, "", "", "");
+        return createWithSource(tenantUuid, input, "native", "", "");
     }
 
     public ContactRec upsertClio(String tenantUuid, ContactInput input, String clioContactId, String clioUpdatedAt) throws Exception {
+        return upsertExternal(tenantUuid, input, "clio", clioContactId, clioUpdatedAt);
+    }
+
+    public ContactRec upsertExternal(String tenantUuid,
+                                     ContactInput input,
+                                     String source,
+                                     String sourceContactId,
+                                     String sourceUpdatedAt) throws Exception {
         String tu = safe(tenantUuid).trim();
-        String sourceId = safe(clioContactId).trim();
-        if (tu.isBlank() || sourceId.isBlank()) throw new IllegalArgumentException("tenantUuid and clioContactId required");
+        String src = normalizeSourceKey(source);
+        String sourceId = safe(sourceContactId).trim();
+        if (tu.isBlank() || src.isBlank() || sourceId.isBlank()) {
+            throw new IllegalArgumentException("tenantUuid, source, and sourceContactId required");
+        }
+        if ("native".equals(src)) throw new IllegalArgumentException("source must not be native for external upsert");
 
         ReentrantReadWriteLock lock = lockFor(tu);
         lock.writeLock().lock();
@@ -284,7 +298,7 @@ public final class contacts {
             ContactRec existing = null;
             for (ContactRec c : all) {
                 if (c == null) continue;
-                if ("clio".equalsIgnoreCase(safe(c.source)) && sourceId.equals(safe(c.sourceContactId))) {
+                if (src.equals(normalizeSourceKey(c.source)) && sourceId.equals(safe(c.sourceContactId))) {
                     existing = c;
                     break;
                 }
@@ -327,15 +341,18 @@ public final class contacts {
                                 safe(input == null ? "" : input.postalCodeTertiary),
                                 safe(input == null ? "" : input.countryTertiary),
                                 safe(input == null ? "" : input.notes),
-                                "clio",
+                                src,
                                 sourceId,
-                                safe(clioUpdatedAt),
+                                safe(sourceUpdatedAt),
                                 now
                         )
                 );
                 all.add(created);
                 sortByDisplayName(all);
                 writeAllLocked(tu, all);
+                publishContactEvent(tu, "contact.created", created, Map.of("action", "created"), "contacts.store.upsert_external");
+                publishContactEvent(tu, "contact.changed", created, Map.of("action", "created"), "contacts.store.upsert_external");
+                publishContactEvent(tu, "contact.source_upserted", created, Map.of("action", "upserted"), "contacts.store.upsert_external");
                 return created;
             }
 
@@ -384,9 +401,9 @@ public final class contacts {
                                 safe(input == null ? "" : input.postalCodeTertiary),
                                 safe(input == null ? "" : input.countryTertiary),
                                 safe(input == null ? "" : input.notes),
-                                "clio",
+                                src,
                                 sourceId,
-                                safe(clioUpdatedAt),
+                                safe(sourceUpdatedAt),
                                 now
                         )
                 );
@@ -395,6 +412,9 @@ public final class contacts {
             }
             sortByDisplayName(out);
             writeAllLocked(tu, out);
+            publishContactEvent(tu, "contact.updated", updated, Map.of("action", "updated"), "contacts.store.upsert_external");
+            publishContactEvent(tu, "contact.changed", updated, Map.of("action", "updated"), "contacts.store.upsert_external");
+            publishContactEvent(tu, "contact.source_upserted", updated, Map.of("action", "upserted"), "contacts.store.upsert_external");
             return updated;
         } finally {
             lock.writeLock().unlock();
@@ -412,6 +432,7 @@ public final class contacts {
             ensure(tu);
             List<ContactRec> all = readAllLocked(tu);
             boolean changed = false;
+            ContactRec changedRec = null;
             List<ContactRec> out = new ArrayList<ContactRec>(all.size());
             for (ContactRec c : all) {
                 if (c == null) continue;
@@ -419,8 +440,8 @@ public final class contacts {
                     out.add(c);
                     continue;
                 }
-                if (isClioLocked(c)) {
-                    throw new IllegalStateException("This contact is synced from Clio and is read-only here. Edit it in Clio.");
+                if (isExternalReadOnly(c)) {
+                    throw new IllegalStateException(readOnlyMessage(c));
                 }
                 ContactRec next = normalizeRecord(
                         new ContactRec(
@@ -466,10 +487,13 @@ public final class contacts {
                 );
                 out.add(next);
                 changed = true;
+                changedRec = next;
             }
             if (!changed) return false;
             sortByDisplayName(out);
             writeAllLocked(tu, out);
+            publishContactEvent(tu, "contact.updated", changedRec, Map.of("action", "updated"), "contacts.store.update");
+            publishContactEvent(tu, "contact.changed", changedRec, Map.of("action", "updated"), "contacts.store.update");
             return true;
         } finally {
             lock.writeLock().unlock();
@@ -486,8 +510,55 @@ public final class contacts {
 
     public static boolean isClioLocked(ContactRec rec) {
         return rec != null
-                && "clio".equalsIgnoreCase(safe(rec.source).trim())
+                && "clio".equalsIgnoreCase(sourceType(rec))
                 && !safe(rec.sourceContactId).trim().isBlank();
+    }
+
+    public static boolean isExternalReadOnly(ContactRec rec) {
+        if (rec == null) return false;
+        String src = sourceType(rec);
+        if ("native".equals(src)) return false;
+        return !safe(rec.sourceContactId).trim().isBlank();
+    }
+
+    public static String sourceType(ContactRec rec) {
+        return sourceType(rec == null ? "" : rec.source);
+    }
+
+    public static String sourceType(String raw) {
+        String src = normalizeSourceKey(raw);
+        return src.isBlank() ? "native" : src;
+    }
+
+    public static String sourceDisplayName(ContactRec rec) {
+        return sourceDisplayName(sourceType(rec));
+    }
+
+    public static String sourceDisplayName(String sourceType) {
+        String src = normalizeSourceKey(sourceType);
+        if (src.isBlank() || "native".equals(src)) return "Native";
+        if ("clio".equals(src)) return "Clio";
+        if (src.startsWith("office365")) {
+            int idx = src.indexOf(':');
+            if (idx <= 0 || idx >= src.length() - 1) return "Office 365";
+            return "Office 365 (" + src.substring(idx + 1) + ")";
+        }
+        int idx = src.indexOf(':');
+        if (idx > 0 && idx < src.length() - 1) {
+            return humanizeToken(src.substring(0, idx)) + " (" + src.substring(idx + 1) + ")";
+        }
+        return humanizeToken(src);
+    }
+
+    public static String readOnlyMessage(ContactRec rec) {
+        String src = sourceType(rec);
+        if ("clio".equals(src)) {
+            return "This contact is synced from Clio and is read-only here. Edit it in Clio.";
+        }
+        if (src.startsWith("office365")) {
+            return "This contact is synced from Office 365 and is read-only here. Edit it in Office 365.";
+        }
+        return "This contact is synced from " + sourceDisplayName(src) + " and is read-only here. Edit it in the source system.";
     }
 
     private ContactRec createWithSource(String tenantUuid,
@@ -548,6 +619,8 @@ public final class contacts {
             all.add(rec);
             sortByDisplayName(all);
             writeAllLocked(tu, all);
+            publishContactEvent(tu, "contact.created", rec, Map.of("action", "created"), "contacts.store.create");
+            publishContactEvent(tu, "contact.changed", rec, Map.of("action", "created"), "contacts.store.create");
             return rec;
         } finally {
             lock.writeLock().unlock();
@@ -565,6 +638,7 @@ public final class contacts {
             ensure(tu);
             List<ContactRec> all = readAllLocked(tu);
             boolean changed = false;
+            ContactRec changedRec = null;
             List<ContactRec> out = new ArrayList<ContactRec>(all.size());
             for (ContactRec c : all) {
                 if (c == null) continue;
@@ -572,8 +646,8 @@ public final class contacts {
                     out.add(c);
                     continue;
                 }
-                if (isClioLocked(c)) {
-                    throw new IllegalStateException("This contact is synced from Clio and is read-only here. Edit it in Clio.");
+                if (isExternalReadOnly(c)) {
+                    throw new IllegalStateException(readOnlyMessage(c));
                 }
                 ContactRec next = new ContactRec(
                         c.uuid,
@@ -617,10 +691,18 @@ public final class contacts {
                 );
                 out.add(next);
                 changed = true;
+                changedRec = next;
             }
             if (!changed) return false;
             sortByDisplayName(out);
             writeAllLocked(tu, out);
+            if (trashed) {
+                publishContactEvent(tu, "contact.trashed", changedRec, Map.of("action", "trashed"), "contacts.store.trash");
+                publishContactEvent(tu, "contact.changed", changedRec, Map.of("action", "trashed"), "contacts.store.trash");
+            } else {
+                publishContactEvent(tu, "contact.restored", changedRec, Map.of("action", "restored"), "contacts.store.restore");
+                publishContactEvent(tu, "contact.changed", changedRec, Map.of("action", "restored"), "contacts.store.restore");
+            }
             return true;
         } finally {
             lock.writeLock().unlock();
@@ -674,7 +756,7 @@ public final class contacts {
                 safe(rec.postalCodeTertiary).trim(),
                 safe(rec.countryTertiary).trim(),
                 safe(rec.notes),
-                safe(rec.source).trim().toLowerCase(),
+                sourceType(rec.source),
                 safe(rec.sourceContactId).trim(),
                 safe(rec.clioUpdatedAt).trim(),
                 safe(rec.updatedAt).trim().isBlank() ? Instant.now().toString() : safe(rec.updatedAt).trim()
@@ -897,6 +979,93 @@ public final class contacts {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;")
                 .replace("'", "&apos;");
+    }
+
+    private static String normalizeSourceKey(String source) {
+        return safe(source).trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String humanizeToken(String raw) {
+        String v = safe(raw).trim().replace('_', ' ').replace('-', ' ');
+        if (v.isBlank()) return "External";
+        String[] parts = v.split("\\s+");
+        StringBuilder sb = new StringBuilder(v.length());
+        for (int i = 0; i < parts.length; i++) {
+            String p = safe(parts[i]).trim();
+            if (p.isBlank()) continue;
+            if (i > 0) sb.append(' ');
+            if (p.length() == 1) sb.append(p.toUpperCase(Locale.ROOT));
+            else sb.append(Character.toUpperCase(p.charAt(0))).append(p.substring(1));
+        }
+        String out = sb.toString().trim();
+        return out.isBlank() ? "External" : out;
+    }
+
+    private static void publishContactEvent(String tenantUuid,
+                                            String eventType,
+                                            ContactRec rec,
+                                            Map<String, String> extras,
+                                            String source) {
+        if (rec == null) return;
+        try {
+            LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+            payload.put("tenant_uuid", safe(tenantUuid));
+            payload.put("contact_uuid", safe(rec.uuid));
+            payload.put("display_name", safe(rec.displayName));
+            payload.put("given_name", safe(rec.givenName));
+            payload.put("middle_name", safe(rec.middleName));
+            payload.put("surname", safe(rec.surname));
+            payload.put("company_name", safe(rec.companyName));
+            payload.put("job_title", safe(rec.jobTitle));
+            payload.put("email_primary", safe(rec.emailPrimary));
+            payload.put("email_secondary", safe(rec.emailSecondary));
+            payload.put("email_tertiary", safe(rec.emailTertiary));
+            payload.put("business_phone", safe(rec.businessPhone));
+            payload.put("business_phone_2", safe(rec.businessPhone2));
+            payload.put("mobile_phone", safe(rec.mobilePhone));
+            payload.put("home_phone", safe(rec.homePhone));
+            payload.put("other_phone", safe(rec.otherPhone));
+            payload.put("website", safe(rec.website));
+            payload.put("street", safe(rec.street));
+            payload.put("city", safe(rec.city));
+            payload.put("state", safe(rec.state));
+            payload.put("postal_code", safe(rec.postalCode));
+            payload.put("country", safe(rec.country));
+            payload.put("street_secondary", safe(rec.streetSecondary));
+            payload.put("city_secondary", safe(rec.citySecondary));
+            payload.put("state_secondary", safe(rec.stateSecondary));
+            payload.put("postal_code_secondary", safe(rec.postalCodeSecondary));
+            payload.put("country_secondary", safe(rec.countrySecondary));
+            payload.put("street_tertiary", safe(rec.streetTertiary));
+            payload.put("city_tertiary", safe(rec.cityTertiary));
+            payload.put("state_tertiary", safe(rec.stateTertiary));
+            payload.put("postal_code_tertiary", safe(rec.postalCodeTertiary));
+            payload.put("country_tertiary", safe(rec.countryTertiary));
+            payload.put("notes", safe(rec.notes));
+            payload.put("source", sourceType(rec));
+            payload.put("source_display", sourceDisplayName(rec));
+            payload.put("source_contact_id", safe(rec.sourceContactId));
+            payload.put("source_updated_at", safe(rec.clioUpdatedAt));
+            payload.put("updated_at", safe(rec.updatedAt));
+            payload.put("enabled", rec.enabled ? "true" : "false");
+            payload.put("trashed", rec.trashed ? "true" : "false");
+            if (extras != null) {
+                for (Map.Entry<String, String> e : extras.entrySet()) {
+                    if (e == null) continue;
+                    String key = safe(e.getKey()).trim();
+                    if (key.isBlank()) continue;
+                    payload.put(key, safe(e.getValue()));
+                }
+            }
+            business_process_manager.defaultService().triggerEvent(
+                    safe(tenantUuid),
+                    safe(eventType).trim().toLowerCase(Locale.ROOT),
+                    payload,
+                    "",
+                    safe(source).trim().isBlank() ? "contacts.store" : safe(source).trim()
+            );
+        } catch (Exception ignored) {
+        }
     }
 
     private static String safe(String s) {

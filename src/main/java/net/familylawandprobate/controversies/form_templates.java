@@ -28,6 +28,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.pdfbox.pdmodel.PDDocument;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -39,7 +40,7 @@ import java.util.zip.ZipInputStream;
  *   data/tenants/{tenantUuid}/forms/templates/{templateUuid}.{ext}
  *
  * Supported template file extensions:
- *   docx, doc, rtf, odt, txt
+ *   docx, doc, rtf, odt, txt, pdf
  */
 public final class form_templates {
 
@@ -138,7 +139,7 @@ public final class form_templates {
 
         String ext = normalizeExtensionStatic(sourceFileName);
         if (!isSupportedExtension(ext)) {
-            throw new IllegalArgumentException("Unsupported template type. Use .docx, .doc, .rtf, .odt, or .txt.");
+            throw new IllegalArgumentException("Unsupported template type. Use .docx, .doc, .rtf, .odt, .txt, or .pdf.");
         }
         if (bytes == null || bytes.length == 0) {
             throw new IllegalArgumentException("Template file is required");
@@ -232,7 +233,7 @@ public final class form_templates {
 
         String ext = normalizeExtensionStatic(sourceFileName);
         if (!isSupportedExtension(ext)) {
-            throw new IllegalArgumentException("Unsupported template type. Use .docx, .doc, .rtf, .odt, or .txt.");
+            throw new IllegalArgumentException("Unsupported template type. Use .docx, .doc, .rtf, .odt, .txt, or .pdf.");
         }
         if (bytes == null || bytes.length == 0) {
             throw new IllegalArgumentException("Template file is required");
@@ -357,7 +358,8 @@ public final class form_templates {
                 || "doc".equals(ext)
                 || "rtf".equals(ext)
                 || "odt".equals(ext)
-                || "txt".equals(ext);
+                || "txt".equals(ext)
+                || "pdf".equals(ext);
     }
 
     private static ReentrantReadWriteLock lockFor(String tenantUuid) {
@@ -464,7 +466,7 @@ public final class form_templates {
         int slash = out.lastIndexOf('/');
         if (slash >= 0) out = out.substring(slash + 1);
 
-        out = out.replaceAll("[^A-Za-z0-9._ -]", "_").trim();
+        out = out.replaceAll("[^A-Za-z0-9.]", "_").trim();
         if (out.isBlank()) out = "template";
 
         String ext = normalizeExtensionStatic(out);
@@ -603,7 +605,7 @@ public final class form_templates {
 
     private static void validateTemplateBytes(String ext, byte[] bytes) {
         String normalized = normalizeExtensionStatic(ext);
-        if (!"docx".equals(normalized) && !"odt".equals(normalized)) return;
+        if (!"docx".equals(normalized) && !"odt".equals(normalized) && !"pdf".equals(normalized)) return;
         if (bytes == null || bytes.length == 0) throw new IllegalArgumentException("Template file is required");
 
         if ("docx".equals(normalized)) {
@@ -611,6 +613,15 @@ public final class form_templates {
                 // Valid DOCX package.
             } catch (Exception ex) {
                 throw new IllegalArgumentException("Invalid DOCX template package.");
+            }
+            return;
+        }
+
+        if ("pdf".equals(normalized)) {
+            try (PDDocument ignored = PDDocument.load(bytes)) {
+                // Valid PDF package.
+            } catch (Exception ex) {
+                throw new IllegalArgumentException("Invalid PDF template package.");
             }
             return;
         }

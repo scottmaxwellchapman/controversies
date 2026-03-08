@@ -1,10 +1,16 @@
 <%@ page contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" %>
 
+<%@ page import="java.nio.file.Files" %>
+<%@ page import="java.nio.file.Path" %>
+<%@ page import="java.nio.file.Paths" %>
+<%@ page import="java.nio.file.StandardCopyOption" %>
+<%@ page import="java.nio.file.StandardOpenOption" %>
 <%@ page import="java.util.LinkedHashMap" %>
 <%@ page import="java.util.ArrayList" %>
 <%@ page import="java.util.Locale" %>
 <%@ page import="java.util.List" %>
 <%@ page import="java.util.Map" %>
+<%@ page import="java.util.Properties" %>
 
 <%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.secret_redactor" %>
@@ -14,6 +20,7 @@
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 <%@ page import="net.familylawandprobate.controversies.api_credentials" %>
 <%@ page import="net.familylawandprobate.controversies.integrations.clio.ClioIntegrationService" %>
+<%@ page import="net.familylawandprobate.controversies.integrations.office365.Office365ContactsSyncService" %>
 
 <%@ include file="security.jspf" %>
 
@@ -24,6 +31,13 @@
   private static final String S_API_NEW_KEY = "tenant_settings.api.new_key";
   private static final String S_API_NEW_SECRET = "tenant_settings.api.new_secret";
   private static final String S_API_NEW_LABEL = "tenant_settings.api.new_label";
+  private static final String SSL_RUNTIME_MODE_KEY = "CONTROVERSIES_SSL_MODE";
+  private static final String SSL_RUNTIME_KEYSTORE_PATH_KEY = "CONTROVERSIES_SSL_KEYSTORE_PATH";
+  private static final String SSL_RUNTIME_KEYSTORE_ALIAS_KEY = "CONTROVERSIES_SSL_KEYSTORE_ALIAS";
+  private static final String SSL_RUNTIME_CERTBOT_DOMAIN_KEY = "CONTROVERSIES_CERTBOT_DOMAIN";
+  private static final String SSL_RUNTIME_CERTBOT_LIVE_DIR_KEY = "CONTROVERSIES_CERTBOT_LIVE_DIR";
+  private static final String SSL_RUNTIME_CERTBOT_OPENSSL_CMD_KEY = "CONTROVERSIES_CERTBOT_OPENSSL_CMD";
+  private static final String SSL_RUNTIME_CERTBOT_FORCE_REBUILD_KEY = "CONTROVERSIES_CERTBOT_FORCE_REBUILD";
 
   private static String tsSafe(String s) { return s == null ? "" : s; }
 
@@ -128,6 +142,50 @@
     } catch (Exception ignored) {}
     return "";
   }
+
+  private static String tsNormalizeSslMode(String raw) {
+    String v = tsSafe(raw).trim().toLowerCase(Locale.ROOT);
+    if ("self-signed".equals(v) || "selfsigned".equals(v)) return "self_signed";
+    if ("self_signed".equals(v) || "certbot".equals(v) || "custom".equals(v)) return v;
+    return "auto";
+  }
+
+  private static Path tsRuntimeSslConfigPath() {
+    return Paths.get("data", "sec", "ssl", "runtime_ssl.properties").toAbsolutePath().normalize();
+  }
+
+  private static Properties tsLoadRuntimeSslConfig() throws Exception {
+    Properties p = new Properties();
+    Path path = tsRuntimeSslConfigPath();
+    if (!Files.isRegularFile(path)) return p;
+    try (var in = Files.newInputStream(path, StandardOpenOption.READ)) {
+      p.load(in);
+    }
+    return p;
+  }
+
+  private static void tsSetOrRemove(Properties p, String key, String value) {
+    String cleaned = tsSafe(value).trim();
+    if (cleaned.isBlank()) p.remove(key);
+    else p.setProperty(key, cleaned);
+  }
+
+  private static void tsSaveRuntimeSslConfig(Properties p) throws Exception {
+    Path path = tsRuntimeSslConfigPath();
+    Files.createDirectories(path.getParent());
+    Path tmp = path.resolveSibling(path.getFileName().toString() + ".tmp");
+    try (var out = Files.newOutputStream(tmp,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE)) {
+      p.store(out, "Controversies runtime SSL settings");
+    }
+    try {
+      Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    } catch (Exception ignored) {
+      Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING);
+    }
+  }
 %>
 
 <%
@@ -137,6 +195,7 @@
   String tenantUuid = tsSafe((String)session.getAttribute(S_TENANT_UUID)).trim();
   String tenantLabel = tsSafe((String)session.getAttribute(S_TENANT_LABEL)).trim();
   String userUuid = tsSafe((String)session.getAttribute(users_roles.S_USER_UUID)).trim();
+  boolean canManageApiCredentials = users_roles.hasPermissionTrue(session, "api.credentials.manage");
   if (tenantUuid.isBlank()) {
     response.sendRedirect(ctx + "/tenant_login.jsp");
     return;
@@ -153,12 +212,29 @@
 
   LinkedHashMap<String,String> settings = new LinkedHashMap<String,String>();
   settings.putAll(store.read(tenantUuid));
+  Properties runtimeSslConfig = new Properties();
+  try {
+    runtimeSslConfig = tsLoadRuntimeSslConfig();
+  } catch (Exception ex) {
+    if (error == null || error.isBlank()) {
+      error = "Unable to read runtime SSL settings: " + tsSafe(ex.getMessage());
+    }
+  }
+  String sslModeSaved = tsNormalizeSslMode(runtimeSslConfig.getProperty(SSL_RUNTIME_MODE_KEY));
+  String sslKeystorePathSaved = tsSafe(runtimeSslConfig.getProperty(SSL_RUNTIME_KEYSTORE_PATH_KEY)).trim();
+  String sslKeystoreAliasSaved = tsSafe(runtimeSslConfig.getProperty(SSL_RUNTIME_KEYSTORE_ALIAS_KEY)).trim();
+  String sslCertbotDomainSaved = tsSafe(runtimeSslConfig.getProperty(SSL_RUNTIME_CERTBOT_DOMAIN_KEY)).trim();
+  String sslCertbotLiveDirSaved = tsSafe(runtimeSslConfig.getProperty(SSL_RUNTIME_CERTBOT_LIVE_DIR_KEY)).trim();
+  String sslCertbotOpenSslCmdSaved = tsSafe(runtimeSslConfig.getProperty(SSL_RUNTIME_CERTBOT_OPENSSL_CMD_KEY)).trim();
+  boolean sslCertbotForceRebuildSaved = "true".equalsIgnoreCase(tsSafe(
+          runtimeSslConfig.getProperty(SSL_RUNTIME_CERTBOT_FORCE_REBUILD_KEY)).trim());
 
   List<String> setupChecklist = new ArrayList<String>();
   String loadedStorageBackend = tsSafe(settings.get("storage_backend")).trim().toLowerCase(Locale.ROOT);
   String loadedStorageStatus = tsSafe(settings.get("storage_connection_status")).trim().toLowerCase(Locale.ROOT);
   boolean loadedClioEnabled = "true".equalsIgnoreCase(tsSafe(settings.get("clio_enabled")));
   String loadedClioStatus = tsSafe(settings.get("clio_connection_status")).trim().toLowerCase(Locale.ROOT);
+  boolean loadedOffice365Enabled = "true".equalsIgnoreCase(tsSafe(settings.get("office365_contacts_sync_enabled")));
   String loadedEmailProvider = tsSafe(settings.get("email_provider")).trim().toLowerCase(Locale.ROOT);
   String loadedEmailStatus = tsSafe(settings.get("email_connection_status")).trim().toLowerCase(Locale.ROOT);
   String loadedTwoFactorPolicy = tsSafe(settings.get("two_factor_policy")).trim().toLowerCase(Locale.ROOT);
@@ -170,6 +246,9 @@
   if (loadedClioEnabled && tsSafe(settings.get("clio_matters_last_sync_at")).isBlank()) setupChecklist.add("Run 'Sync Clio Matters + Documents Now' once after enabling Clio sync.");
   if (loadedClioEnabled && tsSafe(settings.get("clio_documents_last_sync_at")).isBlank()) setupChecklist.add("Confirm Clio documents and versions have completed at least one sync cycle.");
   if (loadedClioEnabled && tsSafe(settings.get("clio_contacts_last_sync_at")).isBlank()) setupChecklist.add("Run 'Sync Clio Contacts Now' once after enabling Clio sync.");
+  String loadedOffice365Sources = tsSafe(settings.get("office365_contacts_sync_sources_json")).trim();
+  if (loadedOffice365Enabled && (loadedOffice365Sources.isBlank() || "[]".equals(loadedOffice365Sources) || "{}".equals(loadedOffice365Sources))) setupChecklist.add("Provide Office 365 contact sync sources JSON for one or more source mailboxes/folders.");
+  if (loadedOffice365Enabled && tsSafe(settings.get("office365_contacts_last_sync_at")).isBlank()) setupChecklist.add("Run 'Sync Office 365 Contacts Now' once after enabling Office 365 contact sync.");
   if (!"disabled".equals(loadedEmailProvider) && !"ok".equals(loadedEmailStatus)) {
     setupChecklist.add("Run 'Test Email Connection' after email provider credentials are configured.");
   }
@@ -194,33 +273,82 @@
 
   if ("POST".equalsIgnoreCase(request.getMethod())) {
     String action = tsSafe(request.getParameter("action")).trim();
-    if ("generate_api_credential".equalsIgnoreCase(action)) {
+    if ("save_ssl_runtime_config".equalsIgnoreCase(action)) {
       try {
-        String apiLabel = tsSafe(request.getParameter("api_credential_label")).trim();
-        api_credentials.GeneratedCredential generated = apiCredentialStore.create(tenantUuid, apiLabel, userUuid);
-        session.setAttribute(S_API_NEW_KEY, generated.apiKey);
-        session.setAttribute(S_API_NEW_SECRET, generated.apiSecret);
-        session.setAttribute(S_API_NEW_LABEL, generated.credential == null ? "" : tsSafe(generated.credential.label));
-        logs.logVerbose("tenant_settings_api_credential_created", tenantUuid, userUuid, "", "", Map.of("label", apiLabel));
-        response.sendRedirect(ctx + "/tenant_settings.jsp?status=api_credential_created" + tabSuffix);
+        String sslModeInput = tsNormalizeSslMode(request.getParameter("ssl_mode"));
+        String sslKeystorePathInput = tsSafe(request.getParameter("ssl_keystore_path")).trim();
+        String sslKeystoreAliasInput = tsSafe(request.getParameter("ssl_keystore_alias")).trim();
+        String sslCertbotDomainInput = tsSafe(request.getParameter("ssl_certbot_domain")).trim();
+        String sslCertbotLiveDirInput = tsSafe(request.getParameter("ssl_certbot_live_dir")).trim();
+        String sslCertbotOpenSslCmdInput = tsSafe(request.getParameter("ssl_certbot_openssl_cmd")).trim();
+        boolean sslCertbotForceRebuildInput = tsChecked(request.getParameter("ssl_certbot_force_rebuild"));
+
+        Properties updatedRuntimeSsl = tsLoadRuntimeSslConfig();
+        tsSetOrRemove(updatedRuntimeSsl, SSL_RUNTIME_MODE_KEY, "auto".equals(sslModeInput) ? "" : sslModeInput);
+        tsSetOrRemove(updatedRuntimeSsl, SSL_RUNTIME_KEYSTORE_PATH_KEY, sslKeystorePathInput);
+        tsSetOrRemove(updatedRuntimeSsl, SSL_RUNTIME_KEYSTORE_ALIAS_KEY, sslKeystoreAliasInput);
+        tsSetOrRemove(updatedRuntimeSsl, SSL_RUNTIME_CERTBOT_DOMAIN_KEY, sslCertbotDomainInput);
+        tsSetOrRemove(updatedRuntimeSsl, SSL_RUNTIME_CERTBOT_LIVE_DIR_KEY, sslCertbotLiveDirInput);
+        tsSetOrRemove(updatedRuntimeSsl, SSL_RUNTIME_CERTBOT_OPENSSL_CMD_KEY, sslCertbotOpenSslCmdInput);
+        tsSetOrRemove(updatedRuntimeSsl, SSL_RUNTIME_CERTBOT_FORCE_REBUILD_KEY,
+                sslCertbotForceRebuildInput ? "true" : "");
+        tsSaveRuntimeSslConfig(updatedRuntimeSsl);
+
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("ssl_mode", sslModeInput);
+        details.put("has_custom_keystore_path", sslKeystorePathInput.isBlank() ? "false" : "true");
+        details.put("has_custom_keystore_alias", sslKeystoreAliasInput.isBlank() ? "false" : "true");
+        details.put("has_certbot_domain", sslCertbotDomainInput.isBlank() ? "false" : "true");
+        details.put("has_certbot_live_dir", sslCertbotLiveDirInput.isBlank() ? "false" : "true");
+        details.put("has_certbot_openssl_cmd", sslCertbotOpenSslCmdInput.isBlank() ? "false" : "true");
+        details.put("certbot_force_rebuild", sslCertbotForceRebuildInput ? "true" : "false");
+        logs.logVerbose("tenant_settings_ssl_runtime_saved", tenantUuid, userUuid, "", "", details);
+
+        response.sendRedirect(ctx + "/tenant_settings.jsp?status=ssl_runtime_saved&tab=operations");
         return;
       } catch (Exception ex) {
-        error = "Unable to create API credential: " + tsSafe(ex.getMessage());
+        error = "Unable to save SSL runtime settings: " + tsSafe(ex.getMessage());
+        logs.logVerbose("tenant_settings_ssl_runtime_save_failed", tenantUuid, userUuid, "", "", Map.of(
+          "reason", tsSafe(ex.getClass().getSimpleName())
+        ));
+      }
+    }
+
+    if ("generate_api_credential".equalsIgnoreCase(action)) {
+      if (!canManageApiCredentials) {
+        error = "Permission denied: api.credentials.manage is required.";
+      } else {
+        try {
+          String apiLabel = tsSafe(request.getParameter("api_credential_label")).trim();
+          api_credentials.GeneratedCredential generated = apiCredentialStore.create(tenantUuid, apiLabel, userUuid);
+          session.setAttribute(S_API_NEW_KEY, generated.apiKey);
+          session.setAttribute(S_API_NEW_SECRET, generated.apiSecret);
+          session.setAttribute(S_API_NEW_LABEL, generated.credential == null ? "" : tsSafe(generated.credential.label));
+          logs.logVerbose("tenant_settings_api_credential_created", tenantUuid, userUuid, "", "", Map.of("label", apiLabel));
+          response.sendRedirect(ctx + "/tenant_settings.jsp?status=api_credential_created" + tabSuffix);
+          return;
+        } catch (Exception ex) {
+          error = "Unable to create API credential: " + tsSafe(ex.getMessage());
+        }
       }
     }
 
     if ("revoke_api_credential".equalsIgnoreCase(action)) {
-      try {
-        String credentialId = tsSafe(request.getParameter("api_credential_id")).trim();
-        boolean changed = apiCredentialStore.revoke(tenantUuid, credentialId);
-        if (changed) {
-          logs.logVerbose("tenant_settings_api_credential_revoked", tenantUuid, userUuid, "", "", Map.of("credential_id", credentialId));
-          response.sendRedirect(ctx + "/tenant_settings.jsp?status=api_credential_revoked" + tabSuffix);
-          return;
+      if (!canManageApiCredentials) {
+        error = "Permission denied: api.credentials.manage is required.";
+      } else {
+        try {
+          String credentialId = tsSafe(request.getParameter("api_credential_id")).trim();
+          boolean changed = apiCredentialStore.revoke(tenantUuid, credentialId);
+          if (changed) {
+            logs.logVerbose("tenant_settings_api_credential_revoked", tenantUuid, userUuid, "", "", Map.of("credential_id", credentialId));
+            response.sendRedirect(ctx + "/tenant_settings.jsp?status=api_credential_revoked" + tabSuffix);
+            return;
+          }
+          error = "API credential not found or already revoked.";
+        } catch (Exception ex) {
+          error = "Unable to revoke API credential: " + tsSafe(ex.getMessage());
         }
-        error = "API credential not found or already revoked.";
-      } catch (Exception ex) {
-        error = "Unable to revoke API credential: " + tsSafe(ex.getMessage());
       }
     }
 
@@ -242,7 +370,12 @@
 
     String storageBackend = tsSafe(request.getParameter("storage_backend")).trim();
     if (storageBackend.isBlank()) storageBackend = "local";
+    String storageBackendLower = storageBackend.toLowerCase(Locale.ROOT);
+    if ("onedrive".equals(storageBackendLower) || "onedrive_for_business".equals(storageBackendLower) || "onedrive-for-business".equals(storageBackendLower)) {
+      storageBackend = "onedrive_business";
+    }
     String storageEndpoint = tsSafe(request.getParameter("storage_endpoint")).trim();
+    String storageRootFolder = tsSafe(request.getParameter("storage_root_folder")).trim();
     String storageAccessKey = tsSafe(request.getParameter("storage_access_key")).trim();
     String storageSecret = tsSafe(request.getParameter("storage_secret")).trim();
     String storageEncryptionMode = tsSafe(request.getParameter("storage_encryption_mode")).trim().toLowerCase(Locale.ROOT);
@@ -251,10 +384,20 @@
     String storageS3SseMode = tsSafe(request.getParameter("storage_s3_sse_mode")).trim().toLowerCase(Locale.ROOT);
     if (!"aes256".equals(storageS3SseMode) && !"aws_kms".equals(storageS3SseMode)) storageS3SseMode = "none";
     String storageS3SseKmsKeyId = tsSafe(request.getParameter("storage_s3_sse_kms_key_id")).trim();
+    String storageOnedriveAuthMode = tsSafe(request.getParameter("storage_onedrive_auth_mode")).trim().toLowerCase(Locale.ROOT);
+    if (!"public".equals(storageOnedriveAuthMode) && !"private".equals(storageOnedriveAuthMode) && !"app_credentials".equals(storageOnedriveAuthMode)) {
+      storageOnedriveAuthMode = "app_credentials";
+    }
+    String storageOnedriveOauthCallbackUrl = tsSafe(request.getParameter("storage_onedrive_oauth_callback_url")).trim();
+    String storageOnedrivePrivateRelayUrl = tsSafe(request.getParameter("storage_onedrive_private_relay_url")).trim();
     String storageCacheSizeFtpMb = tsIntRange(request.getParameter("storage_cache_size_ftp_mb"), 1024, 0, 1048576);
     String storageCacheSizeFtpsMb = tsIntRange(request.getParameter("storage_cache_size_ftps_mb"), 1024, 0, 1048576);
     String storageCacheSizeSftpMb = tsIntRange(request.getParameter("storage_cache_size_sftp_mb"), 1024, 0, 1048576);
+    String storageCacheSizeWebdavMb = tsIntRange(request.getParameter("storage_cache_size_webdav_mb"), 1024, 0, 1048576);
     String storageCacheSizeS3CompatibleMb = tsIntRange(request.getParameter("storage_cache_size_s3_compatible_mb"), 1024, 0, 1048576);
+    String storageCacheSizeOnedriveBusinessMb = tsIntRange(request.getParameter("storage_cache_size_onedrive_business_mb"), 1024, 0, 1048576);
+    String storageMaxPathLength = tsIntRange(request.getParameter("storage_max_path_length"), 0, 0, 8192);
+    String storageMaxFilenameLength = tsIntRange(request.getParameter("storage_max_filename_length"), 0, 0, 1024);
 
     String clioBaseUrl = tsSafe(request.getParameter("clio_base_url")).trim();
     String clioClientId = tsSafe(request.getParameter("clio_client_id")).trim();
@@ -268,6 +411,10 @@
     String clioStorageMode = tsSafe(request.getParameter("clio_storage_mode")).trim().toLowerCase(Locale.ROOT);
     if (!"enabled".equals(clioStorageMode)) clioStorageMode = "disabled";
     String clioMattersSyncIntervalMinutes = tsIntRange(request.getParameter("clio_matters_sync_interval_minutes"), 15, 1, 1440);
+    boolean office365ContactsSyncEnabled = tsChecked(request.getParameter("office365_contacts_sync_enabled"));
+    String office365ContactsSyncIntervalMinutes = tsIntRange(request.getParameter("office365_contacts_sync_interval_minutes"), 30, 1, 1440);
+    String office365ContactsSyncSourcesJson = tsSafe(request.getParameter("office365_contacts_sync_sources_json")).trim();
+    if (office365ContactsSyncSourcesJson.isBlank()) office365ContactsSyncSourcesJson = "[]";
 
     String emailProvider = tsSafe(request.getParameter("email_provider")).trim().toLowerCase(Locale.ROOT);
     if (!"smtp".equals(emailProvider) && !"microsoft_graph".equals(emailProvider)) emailProvider = "disabled";
@@ -332,13 +479,26 @@
 
     settings.put("storage_backend", storageBackend);
     settings.put("storage_endpoint", storageEndpoint);
+    settings.put("storage_root_folder", storageRootFolder);
     settings.put("storage_encryption_mode", storageEncryptionMode);
     settings.put("storage_s3_sse_mode", storageS3SseMode);
     settings.put("storage_s3_sse_kms_key_id", storageS3SseKmsKeyId);
+    settings.put("storage_onedrive_auth_mode", storageOnedriveAuthMode);
+    settings.put("storage_onedrive_oauth_callback_url", storageOnedriveOauthCallbackUrl);
+    settings.put("storage_onedrive_private_relay_url", storageOnedrivePrivateRelayUrl);
     settings.put("storage_cache_size_ftp_mb", storageCacheSizeFtpMb);
     settings.put("storage_cache_size_ftps_mb", storageCacheSizeFtpsMb);
     settings.put("storage_cache_size_sftp_mb", storageCacheSizeSftpMb);
+    settings.put("storage_cache_size_webdav_mb", storageCacheSizeWebdavMb);
     settings.put("storage_cache_size_s3_compatible_mb", storageCacheSizeS3CompatibleMb);
+    settings.put("storage_cache_size_onedrive_business_mb", storageCacheSizeOnedriveBusinessMb);
+    settings.put("storage_max_path_length", storageMaxPathLength);
+    settings.put("storage_max_filename_length", storageMaxFilenameLength);
+    if (!"onedrive_business".equalsIgnoreCase(storageBackend)) {
+      settings.put("storage_onedrive_auth_mode", "app_credentials");
+      settings.put("storage_onedrive_oauth_callback_url", "");
+      settings.put("storage_onedrive_private_relay_url", "");
+    }
     if (!storageAccessKey.isBlank()) settings.put("storage_access_key", storageAccessKey);
     settings.put("clio_base_url", clioBaseUrl);
     settings.put("clio_client_id", clioClientId);
@@ -348,6 +508,9 @@
     settings.put("clio_enabled", clioEnabled ? "true" : "false");
     settings.put("clio_storage_mode", clioStorageMode);
     settings.put("clio_matters_sync_interval_minutes", clioMattersSyncIntervalMinutes);
+    settings.put("office365_contacts_sync_enabled", office365ContactsSyncEnabled ? "true" : "false");
+    settings.put("office365_contacts_sync_interval_minutes", office365ContactsSyncIntervalMinutes);
+    settings.put("office365_contacts_sync_sources_json", office365ContactsSyncSourcesJson);
     settings.put("email_provider", emailProvider);
     settings.put("email_from_address", emailFromAddress);
     settings.put("email_from_name", emailFromName);
@@ -426,6 +589,16 @@
         ok = false;
         storageFailures.add("SSE-KMS selected without KMS key id");
       }
+      if ("onedrive_business".equalsIgnoreCase(storageBackend)) {
+        if ("public".equals(storageOnedriveAuthMode) && (storageOnedriveOauthCallbackUrl.isBlank() || !storageOnedriveOauthCallbackUrl.startsWith("http"))) {
+          ok = false;
+          storageFailures.add("OneDrive public profile requires OAuth callback URL");
+        }
+        if ("private".equals(storageOnedriveAuthMode) && storageOnedrivePrivateRelayUrl.isBlank()) {
+          ok = false;
+          storageFailures.add("OneDrive private profile requires relay/admin exchange URL");
+        }
+      }
       settings.put("storage_connection_status", ok ? "ok" : "failed");
       settings.put("storage_connection_checked_at", store.nowIso());
       if (ok) {
@@ -437,8 +610,10 @@
       details.put("action", "test_storage_connection");
       details.put("result", ok ? "ok" : "failed");
       details.put("storage_backend", storageBackend);
+      details.put("storage_root_folder", storageRootFolder);
       details.put("storage_encryption_mode", storageEncryptionMode);
       details.put("storage_s3_sse_mode", storageS3SseMode);
+      details.put("storage_onedrive_auth_mode", storageOnedriveAuthMode);
       details.put("validation_issues", storageFailures.isEmpty() ? "none" : String.join(" | ", storageFailures));
       logs.logVerbose("tenant_settings_storage_test", tenantUuid, userUuid, "", "", details);
 
@@ -528,6 +703,30 @@
         ));
       }
 
+    } else if ("sync_office365_contacts_now".equalsIgnoreCase(action)) {
+      try {
+        Office365ContactsSyncService.SyncResult result = new Office365ContactsSyncService().syncContacts(tenantUuid, true);
+        settings.putAll(store.read(tenantUuid));
+        if (result.ok) {
+          message = "Office 365 contact sync completed. Upserted " + result.contactsUpserted
+                  + " contact(s) from " + result.sourcesProcessed + " source(s).";
+        } else {
+          error = "Office 365 contact sync completed with issues: " + tsSafe(result.error);
+        }
+        logs.logVerbose("tenant_settings_office365_contacts_sync_now", tenantUuid, userUuid, "", "", Map.of(
+          "result", result.ok ? "ok" : "failed",
+          "sources_configured", String.valueOf(result.sourcesConfigured),
+          "sources_processed", String.valueOf(result.sourcesProcessed),
+          "contacts_upserted", String.valueOf(result.contactsUpserted)
+        ));
+      } catch (Exception ex) {
+        error = "Unable to sync Office 365 contacts: " + tsSafe(ex.getMessage());
+        logs.logVerbose("tenant_settings_office365_contacts_sync_now", tenantUuid, userUuid, "", "", Map.of(
+          "result", "failed",
+          "error", tsSafe(ex.getClass().getSimpleName())
+        ));
+      }
+
     } else if ("test_email_connection".equalsIgnoreCase(action)) {
       LinkedHashMap<String, String> emailCfg = new LinkedHashMap<String, String>();
       emailCfg.putAll(settings);
@@ -590,6 +789,12 @@
         valid = false;
         error = "Private mode requires relay/admin exchange instructions endpoint or note.";
       }
+      String officeSourcesRaw = tsSafe(office365ContactsSyncSourcesJson).trim();
+      if (office365ContactsSyncEnabled
+              && (officeSourcesRaw.isBlank() || "[]".equals(officeSourcesRaw) || "{}".equals(officeSourcesRaw))) {
+        valid = false;
+        error = "Office 365 contact sync is enabled, but no sync sources are configured.";
+      }
       if ("tenant_managed".equals(storageEncryptionMode) && effectiveStorageEncryptionKey.isBlank()) {
         valid = false;
         error = "Tenant-managed encryption requires an application encryption key.";
@@ -597,6 +802,16 @@
       if ("s3_compatible".equalsIgnoreCase(storageBackend) && "aws_kms".equals(storageS3SseMode) && storageS3SseKmsKeyId.isBlank()) {
         valid = false;
         error = "S3 SSE aws_kms requires a KMS key id.";
+      }
+      if ("onedrive_business".equalsIgnoreCase(storageBackend)) {
+        if ("public".equals(storageOnedriveAuthMode) && (storageOnedriveOauthCallbackUrl.isBlank() || !storageOnedriveOauthCallbackUrl.startsWith("http"))) {
+          valid = false;
+          error = "OneDrive public auth profile requires a web-accessible OAuth callback URL.";
+        }
+        if ("private".equals(storageOnedriveAuthMode) && storageOnedrivePrivateRelayUrl.isBlank()) {
+          valid = false;
+          error = "OneDrive private auth profile requires relay/admin exchange instructions endpoint or note.";
+        }
       }
       if ((themeLatitude.isBlank() && !themeLongitude.isBlank()) || (!themeLatitude.isBlank() && themeLongitude.isBlank())) {
         valid = false;
@@ -652,6 +867,7 @@
 
           Map<String, String> details = new LinkedHashMap<String, String>();
           details.put("storage_backend", tsSafe(settings.get("storage_backend")));
+          details.put("storage_root_folder", tsSafe(settings.get("storage_root_folder")));
           details.put("feature_advanced_assembly", tsSafe(settings.get("feature_advanced_assembly")));
           details.put("feature_async_sync", tsSafe(settings.get("feature_async_sync")));
           details.put("theme_mode_default", tsSafe(settings.get("theme_mode_default")));
@@ -666,10 +882,15 @@
           details.put("storage_connection_status", tsSafe(settings.get("storage_connection_status")));
           details.put("storage_encryption_mode", tsSafe(settings.get("storage_encryption_mode")));
           details.put("storage_s3_sse_mode", tsSafe(settings.get("storage_s3_sse_mode")));
+          details.put("storage_onedrive_auth_mode", tsSafe(settings.get("storage_onedrive_auth_mode")));
           details.put("storage_cache_size_ftp_mb", tsSafe(settings.get("storage_cache_size_ftp_mb")));
           details.put("storage_cache_size_ftps_mb", tsSafe(settings.get("storage_cache_size_ftps_mb")));
           details.put("storage_cache_size_sftp_mb", tsSafe(settings.get("storage_cache_size_sftp_mb")));
+          details.put("storage_cache_size_webdav_mb", tsSafe(settings.get("storage_cache_size_webdav_mb")));
           details.put("storage_cache_size_s3_compatible_mb", tsSafe(settings.get("storage_cache_size_s3_compatible_mb")));
+          details.put("storage_cache_size_onedrive_business_mb", tsSafe(settings.get("storage_cache_size_onedrive_business_mb")));
+          details.put("storage_max_path_length", tsSafe(settings.get("storage_max_path_length")));
+          details.put("storage_max_filename_length", tsSafe(settings.get("storage_max_filename_length")));
           details.put("clio_connection_status", tsSafe(settings.get("clio_connection_status")));
           details.put("clio_auth_mode", tsSafe(settings.get("clio_auth_mode")));
           details.put("clio_auth_health_status", tsSafe(settings.get("clio_auth_health_status")));
@@ -679,6 +900,10 @@
           details.put("clio_documents_last_sync_at", tsSafe(settings.get("clio_documents_last_sync_at")));
           details.put("clio_contacts_last_sync_status", tsSafe(settings.get("clio_contacts_last_sync_status")));
           details.put("clio_contacts_last_sync_at", tsSafe(settings.get("clio_contacts_last_sync_at")));
+          details.put("office365_contacts_sync_enabled", tsSafe(settings.get("office365_contacts_sync_enabled")));
+          details.put("office365_contacts_sync_interval_minutes", tsSafe(settings.get("office365_contacts_sync_interval_minutes")));
+          details.put("office365_contacts_last_sync_status", tsSafe(settings.get("office365_contacts_last_sync_status")));
+          details.put("office365_contacts_last_sync_at", tsSafe(settings.get("office365_contacts_last_sync_at")));
           details.put("email_provider", tsSafe(settings.get("email_provider")));
           details.put("email_connection_status", tsSafe(settings.get("email_connection_status")));
           details.put("email_queue_batch_size", tsSafe(settings.get("email_queue_batch_size")));
@@ -722,6 +947,7 @@
   if ("taxonomy_saved".equals(status)) message = "Taxonomy updated.";
   if ("api_credential_created".equals(status)) message = "API credential created.";
   if ("api_credential_revoked".equals(status)) message = "API credential revoked.";
+  if ("ssl_runtime_saved".equals(status)) message = "TLS runtime settings saved. Restart the application to apply updates.";
 
   String newApiKey = tsSafe((String)session.getAttribute(S_API_NEW_KEY)).trim();
   String newApiSecret = tsSafe((String)session.getAttribute(S_API_NEW_SECRET)).trim();
@@ -748,12 +974,25 @@
   if (!"flowroute_sms".equals(twoFactorDefaultEngineMode)) twoFactorDefaultEngineMode = "email_pin";
   String clioMode = tsSafe(settings.get("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
   if (!"private".equals(clioMode)) clioMode = "public";
+  String storageOnedriveAuthModeSaved = tsSafe(settings.get("storage_onedrive_auth_mode")).trim().toLowerCase(Locale.ROOT);
+  if (!"public".equals(storageOnedriveAuthModeSaved)
+          && !"private".equals(storageOnedriveAuthModeSaved)
+          && !"app_credentials".equals(storageOnedriveAuthModeSaved)) {
+    storageOnedriveAuthModeSaved = "app_credentials";
+  }
+  String storageOnedriveOauthCallbackUrlSaved = tsSafe(settings.get("storage_onedrive_oauth_callback_url")).trim();
+  String storageOnedrivePrivateRelayUrlSaved = tsSafe(settings.get("storage_onedrive_private_relay_url")).trim();
   String clioStorageModeSaved = tsSafe(settings.get("clio_storage_mode")).trim().toLowerCase(Locale.ROOT);
   if (!"enabled".equals(clioStorageModeSaved)) clioStorageModeSaved = "disabled";
   String clioSyncIntervalMinutesSaved = tsIntRange(settings.get("clio_matters_sync_interval_minutes"), 15, 1, 1440);
   String clioContactsSyncStatusSaved = tsSafe(settings.get("clio_contacts_last_sync_status")).trim().toLowerCase(Locale.ROOT);
   if (!"ok".equals(clioContactsSyncStatusSaved) && !"failed".equals(clioContactsSyncStatusSaved)) clioContactsSyncStatusSaved = "never";
   String clioContactsSyncErrorSaved = tsSafe(settings.get("clio_contacts_last_sync_error")).trim();
+  String office365ContactsSyncIntervalMinutesSaved = tsIntRange(settings.get("office365_contacts_sync_interval_minutes"), 30, 1, 1440);
+  String office365ContactsSyncStatusSaved = tsSafe(settings.get("office365_contacts_last_sync_status")).trim().toLowerCase(Locale.ROOT);
+  if (!"ok".equals(office365ContactsSyncStatusSaved) && !"failed".equals(office365ContactsSyncStatusSaved)) office365ContactsSyncStatusSaved = "never";
+  String office365ContactsSyncErrorSaved = tsSafe(settings.get("office365_contacts_last_sync_error")).trim();
+  String office365SourcesJsonSaved = tsSafe(settings.get("office365_contacts_sync_sources_json"));
   String themeMode = tsThemeMode(settings.get("theme_mode_default"));
   String themeTextSize = tsTextSize(settings.get("theme_text_size_default"));
   String themeLatitudeSaved = tsSafe(settings.get("theme_latitude")).trim();
@@ -762,7 +1001,9 @@
   String themeDarkHourSaved = tsHour(settings.get("theme_dark_start_hour"), 19);
   String passwordPolicyMinLengthSaved = tsIntRange(settings.get("password_policy_min_length"), 12, 8, 128);
   List<api_credentials.CredentialRec> apiCredentials = new ArrayList<api_credentials.CredentialRec>();
-  try { apiCredentials = apiCredentialStore.list(tenantUuid); } catch (Exception ignored) {}
+  if (canManageApiCredentials) {
+    try { apiCredentials = apiCredentialStore.list(tenantUuid); } catch (Exception ignored) {}
+  }
   document_taxonomy.Taxonomy tx = new document_taxonomy.Taxonomy();
   try { tx = taxonomyStore.read(tenantUuid); } catch (Exception ignored) {}
 %>
@@ -832,6 +1073,54 @@
   </div>
 </section>
 
+<section class="card" style="margin-top:12px;" data-ts-panel="operations">
+  <h2 style="margin-top:0;">TLS / SSL Runtime</h2>
+  <div class="meta" style="margin-bottom:10px;">
+    Configure runtime TLS source selection for startup. These settings are stored in
+    <code><%= tsEsc(tsRuntimeSslConfigPath().toString()) %></code>.
+  </div>
+  <form class="form" method="post" action="<%= ctx %>/tenant_settings.jsp">
+    <input type="hidden" name="csrfToken" value="<%= tsEsc(csrfToken) %>" />
+    <input type="hidden" name="action" value="save_ssl_runtime_config" />
+    <input type="hidden" name="tab" id="tenantSettingsTabFieldSsl" value="<%= tsEsc(activeTab) %>" />
+
+    <div class="grid grid-2">
+      <label>TLS Mode
+        <select name="ssl_mode">
+          <option value="auto" <%= "auto".equals(sslModeSaved) ? "selected" : "" %>>Auto (custom, then certbot, then self-signed)</option>
+          <option value="self_signed" <%= "self_signed".equals(sslModeSaved) ? "selected" : "" %>>Self-signed only</option>
+          <option value="certbot" <%= "certbot".equals(sslModeSaved) ? "selected" : "" %>>Certbot only</option>
+          <option value="custom" <%= "custom".equals(sslModeSaved) ? "selected" : "" %>>Custom keystore only</option>
+        </select>
+      </label>
+      <label>Custom Keystore Path
+        <input type="text" name="ssl_keystore_path" value="<%= tsEsc(sslKeystorePathSaved) %>" placeholder="/path/to/keystore.p12" />
+      </label>
+      <label>Custom Keystore Alias
+        <input type="text" name="ssl_keystore_alias" value="<%= tsEsc(sslKeystoreAliasSaved) %>" placeholder="tomcat" />
+      </label>
+      <label>Certbot Domain
+        <input type="text" name="ssl_certbot_domain" value="<%= tsEsc(sslCertbotDomainSaved) %>" placeholder="example.com" />
+      </label>
+      <label>Certbot Live Directory
+        <input type="text" name="ssl_certbot_live_dir" value="<%= tsEsc(sslCertbotLiveDirSaved) %>" placeholder="/etc/letsencrypt/live/example.com" />
+      </label>
+      <label>OpenSSL Command
+        <input type="text" name="ssl_certbot_openssl_cmd" value="<%= tsEsc(sslCertbotOpenSslCmdSaved) %>" placeholder="openssl" />
+      </label>
+      <label><input type="checkbox" name="ssl_certbot_force_rebuild" value="1" <%= sslCertbotForceRebuildSaved ? "checked" : "" %> /> Force certbot PKCS12 rebuild at startup</label>
+    </div>
+
+    <div class="meta" style="margin-top:8px;">
+      Keep keystore password management in environment/JVM options only:
+      <code>CONTROVERSIES_SSL_KEYSTORE_PASSWORD</code>. Restart the application after saving TLS runtime settings.
+    </div>
+    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+      <button type="submit" class="btn btn-ghost">Save TLS Runtime Settings</button>
+    </div>
+  </form>
+</section>
+
 <form class="form" method="post" action="<%= ctx %>/tenant_settings.jsp">
   <input type="hidden" name="csrfToken" value="<%= tsEsc(csrfToken) %>" />
   <input type="hidden" name="api_credential_id" value="" />
@@ -875,11 +1164,16 @@
           <option value="ftp" <%= "ftp".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>FTP</option>
           <option value="ftps" <%= "ftps".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>FTPS</option>
           <option value="sftp" <%= "sftp".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>SFTP</option>
+          <option value="webdav" <%= "webdav".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>WebDAV</option>
           <option value="s3_compatible" <%= "s3_compatible".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>S3 Compatible</option>
+          <option value="onedrive_business" <%= "onedrive_business".equalsIgnoreCase(tsSafe(settings.get("storage_backend"))) ? "selected" : "" %>>OneDrive for Business</option>
         </select>
       </label>
       <label>Endpoint
-        <input type="text" name="storage_endpoint" value="<%= tsEsc(tsSafe(settings.get("storage_endpoint"))) %>" placeholder="ftp://, sftp://, or https://s3.endpoint.example" />
+        <input type="text" name="storage_endpoint" value="<%= tsEsc(tsSafe(settings.get("storage_endpoint"))) %>" placeholder="ftp://, sftp://, webdav://, https://s3.endpoint.example, or https://graph.microsoft.com/v1.0/drives/{drive-id}/root:/controversies" />
+      </label>
+      <label>External Root Folder (optional)
+        <input type="text" name="storage_root_folder" value="<%= tsEsc(tsSafe(settings.get("storage_root_folder"))) %>" placeholder="backups/primary" />
       </label>
       <label>Access Key
         <input type="password" name="storage_access_key" value="" placeholder="<%= tsEsc(maskedStorageAccessKey) %>" />
@@ -906,6 +1200,19 @@
       <label>S3 SSE KMS Key Id
         <input type="text" name="storage_s3_sse_kms_key_id" value="<%= tsEsc(tsSafe(settings.get("storage_s3_sse_kms_key_id"))) %>" placeholder="arn:aws:kms:... or key id" />
       </label>
+      <label>OneDrive Auth Profile
+        <select name="storage_onedrive_auth_mode">
+          <option value="app_credentials" <%= "app_credentials".equals(storageOnedriveAuthModeSaved) ? "selected" : "" %>>App credentials only</option>
+          <option value="public" <%= "public".equals(storageOnedriveAuthModeSaved) ? "selected" : "" %>>Public callback</option>
+          <option value="private" <%= "private".equals(storageOnedriveAuthModeSaved) ? "selected" : "" %>>Private relay/admin flow</option>
+        </select>
+      </label>
+      <label>OneDrive OAuth Callback URL (public profile)
+        <input type="text" name="storage_onedrive_oauth_callback_url" value="<%= tsEsc(storageOnedriveOauthCallbackUrlSaved) %>" placeholder="https://your-app.example.com/onedrive/oauth/callback" />
+      </label>
+      <label>OneDrive Relay/Admin Exchange URL (private profile)
+        <input type="text" name="storage_onedrive_private_relay_url" value="<%= tsEsc(storageOnedrivePrivateRelayUrlSaved) %>" placeholder="https://relay.example.com/onedrive/exchange or internal SOP reference" />
+      </label>
       <label>FTP Cache Size (MB)
         <input type="number" min="0" max="1048576" name="storage_cache_size_ftp_mb" value="<%= tsEsc(tsIntRange(settings.get("storage_cache_size_ftp_mb"), 1024, 0, 1048576)) %>" />
       </label>
@@ -915,12 +1222,24 @@
       <label>SFTP Cache Size (MB)
         <input type="number" min="0" max="1048576" name="storage_cache_size_sftp_mb" value="<%= tsEsc(tsIntRange(settings.get("storage_cache_size_sftp_mb"), 1024, 0, 1048576)) %>" />
       </label>
+      <label>WebDAV Cache Size (MB)
+        <input type="number" min="0" max="1048576" name="storage_cache_size_webdav_mb" value="<%= tsEsc(tsIntRange(settings.get("storage_cache_size_webdav_mb"), 1024, 0, 1048576)) %>" />
+      </label>
       <label>S3-Compatible Cache Size (MB)
         <input type="number" min="0" max="1048576" name="storage_cache_size_s3_compatible_mb" value="<%= tsEsc(tsIntRange(settings.get("storage_cache_size_s3_compatible_mb"), 1024, 0, 1048576)) %>" />
       </label>
+      <label>OneDrive Business Cache Size (MB)
+        <input type="number" min="0" max="1048576" name="storage_cache_size_onedrive_business_mb" value="<%= tsEsc(tsIntRange(settings.get("storage_cache_size_onedrive_business_mb"), 1024, 0, 1048576)) %>" />
+      </label>
+      <label>External Max Path Length (chars)
+        <input type="number" min="0" max="8192" name="storage_max_path_length" value="<%= tsEsc(tsIntRange(settings.get("storage_max_path_length"), 0, 0, 8192)) %>" />
+      </label>
+      <label>External Max Filename Length (chars)
+        <input type="number" min="0" max="1024" name="storage_max_filename_length" value="<%= tsEsc(tsIntRange(settings.get("storage_max_filename_length"), 0, 0, 1024)) %>" />
+      </label>
     </div>
 
-    <div class="meta" style="margin-top:8px;">Each external source keeps a bounded local cache to reduce bandwidth costs. Set a source to <code>0</code> to disable that cache. Default is 1024 MB (1 GB) per source.</div>
+    <div class="meta" style="margin-top:8px;">Each external source keeps a bounded local cache to reduce bandwidth costs. Set a source to <code>0</code> to disable that cache. Default is 1024 MB (1 GB) per source. Path/filename limits apply only to external object keys, and collisions are stored under unique non-destructive keys. OneDrive for Business defaults to 400-path / 255-filename limits if tenant limits are unset and supports app-credentials-only, public callback, or private relay auth profiles.</div>
 
     <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
       <button type="submit" class="btn btn-ghost" name="action" value="test_storage_connection">Test Storage Connection</button>
@@ -997,6 +1316,37 @@
       <button type="submit" class="btn btn-ghost" name="action" value="sync_clio_contacts_now">Sync Clio Contacts Now</button>
       <button type="submit" class="btn btn-ghost" name="action" value="rotate_clio_secret">Rotate Clio Secret</button>
       <label><input type="checkbox" name="save_clio_secret" value="1" /> Persist entered Clio secret on Save</label>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
+    <h2 style="margin-top:0;">Office 365 Contact Sync</h2>
+    <div class="meta" style="margin-bottom:10px;">One-way sync imports contacts from one or more Microsoft Graph sources (mailboxes/folders) into Controversies as read-only external contacts.</div>
+
+    <label><input type="checkbox" name="office365_contacts_sync_enabled" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("office365_contacts_sync_enabled"))) ? "checked" : "" %> /> Enable one-way Office 365 contact sync</label>
+
+    <div class="grid grid-2">
+      <label>Sync Interval (minutes)
+        <input type="number" min="1" max="1440" name="office365_contacts_sync_interval_minutes" value="<%= tsEsc(office365ContactsSyncIntervalMinutesSaved) %>" />
+      </label>
+      <label>Last Contact Sync
+        <input type="text" value="<%= tsEsc(tsRotationLabel(tsSafe(settings.get("office365_contacts_last_sync_at")))) %>" disabled />
+      </label>
+      <label>Last Contact Sync Status
+        <input type="text" value="<%= tsEsc(tsStatusLabel(office365ContactsSyncStatusSaved)) %>" disabled />
+      </label>
+      <label>Last Contact Sync Error
+        <input type="text" value="<%= tsEsc(office365ContactsSyncErrorSaved.isBlank() ? "None" : office365ContactsSyncErrorSaved) %>" disabled />
+      </label>
+    </div>
+
+    <label>Sources JSON
+      <textarea name="office365_contacts_sync_sources_json" rows="10" spellcheck="false" placeholder='[{"source_id":"corp_directory","tenant_id":"00000000-0000-0000-0000-000000000000","client_id":"app-client-id","client_secret":"app-client-secret","user_principal":"contacts@yourfirm.com","contact_folder_id":"","enabled":true}]'><%= tsEsc(office365SourcesJsonSaved) %></textarea>
+    </label>
+    <div class="meta" style="margin-top:6px;">Each source supports keys: <code>source_id</code>, <code>tenant_id</code>, <code>client_id</code>, <code>client_secret</code>, <code>user_principal</code>, optional <code>contact_folder_id</code>, optional <code>scope</code>, and <code>enabled</code>.</div>
+
+    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+      <button type="submit" class="btn btn-ghost" name="action" value="sync_office365_contacts_now">Sync Office 365 Contacts Now</button>
     </div>
   </section>
 
@@ -1210,38 +1560,43 @@
     <div class="meta" style="margin-bottom:10px;">
       Tenant-scoped automation credentials for n8n/OpenClaw. Use headers <code>X-Tenant-UUID</code>, <code>X-API-Key</code>, and <code>X-API-Secret</code>.
     </div>
-    <div class="actions" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
-      <input type="text" name="api_credential_label" placeholder="Credential label (optional)" style="min-width:260px;" />
-      <button type="submit" class="btn btn-ghost" name="action" value="generate_api_credential">Generate API Credential</button>
-    </div>
-    <% if (apiCredentials == null || apiCredentials.isEmpty()) { %>
-      <div class="meta">No API credentials created yet.</div>
-    <% } else { %>
-      <div style="display:grid; gap:8px;">
-        <% for (api_credentials.CredentialRec cred : apiCredentials) { %>
-          <% if (cred == null) continue; %>
-          <div style="display:grid; gap:8px; grid-template-columns:minmax(0,1fr) auto; align-items:center; border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:var(--surface);">
-            <div>
-              <div><strong><%= tsEsc(tsSafe(cred.label).isBlank() ? "Automation Key" : cred.label) %></strong></div>
-              <div class="meta">ID: <code><%= tsEsc(cred.credentialId) %></code></div>
-              <div class="meta">Scope: <code><%= tsEsc(cred.scope) %></code> • Created: <%= tsEsc(tsRotationLabel(tsSafe(cred.createdAt))) %></div>
-              <div class="meta">Last used: <%= tsEsc(tsRotationLabel(tsSafe(cred.lastUsedAt))) %> <%= tsSafe(cred.lastUsedFromIp).isBlank() ? "" : ("from " + tsEsc(cred.lastUsedFromIp)) %></div>
-              <% if (cred.revoked) { %>
-                <div class="meta" style="color:#9b2c2c;">Revoked</div>
-              <% } %>
-            </div>
-            <div>
-              <% if (!cred.revoked) { %>
-                <button type="submit"
-                        class="btn btn-ghost"
-                        name="action"
-                        value="revoke_api_credential"
-                        onclick="this.form.api_credential_id.value='<%= tsEsc(cred.credentialId) %>';">Revoke</button>
-              <% } %>
-            </div>
-          </div>
-        <% } %>
+    <% if (!canManageApiCredentials) { %>
+      <div class="meta">This section requires <code>api.credentials.manage</code>.</div>
+    <% } %>
+    <% if (canManageApiCredentials) { %>
+      <div class="actions" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
+        <input type="text" name="api_credential_label" placeholder="Credential label (optional)" style="min-width:260px;" />
+        <button type="submit" class="btn btn-ghost" name="action" value="generate_api_credential">Generate API Credential</button>
       </div>
+      <% if (apiCredentials == null || apiCredentials.isEmpty()) { %>
+        <div class="meta">No API credentials created yet.</div>
+      <% } else { %>
+        <div style="display:grid; gap:8px;">
+          <% for (api_credentials.CredentialRec cred : apiCredentials) { %>
+            <% if (cred == null) continue; %>
+            <div style="display:grid; gap:8px; grid-template-columns:minmax(0,1fr) auto; align-items:center; border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:var(--surface);">
+              <div>
+                <div><strong><%= tsEsc(tsSafe(cred.label).isBlank() ? "Automation Key" : cred.label) %></strong></div>
+                <div class="meta">ID: <code><%= tsEsc(cred.credentialId) %></code></div>
+                <div class="meta">Scope: <code><%= tsEsc(cred.scope) %></code> • Created: <%= tsEsc(tsRotationLabel(tsSafe(cred.createdAt))) %></div>
+                <div class="meta">Last used: <%= tsEsc(tsRotationLabel(tsSafe(cred.lastUsedAt))) %> <%= tsSafe(cred.lastUsedFromIp).isBlank() ? "" : ("from " + tsEsc(cred.lastUsedFromIp)) %></div>
+                <% if (cred.revoked) { %>
+                  <div class="meta" style="color:#9b2c2c;">Revoked</div>
+                <% } %>
+              </div>
+              <div>
+                <% if (!cred.revoked) { %>
+                  <button type="submit"
+                          class="btn btn-ghost"
+                          name="action"
+                          value="revoke_api_credential"
+                          onclick="this.form.api_credential_id.value='<%= tsEsc(cred.credentialId) %>';">Revoke</button>
+                <% } %>
+              </div>
+            </div>
+          <% } %>
+        </div>
+      <% } %>
     <% } %>
   </section>
 
@@ -1252,11 +1607,22 @@
       <div>Clio secret last rotated: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("secret_rotation_clio_at")))) %></strong></div>
       <div>Storage connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("storage_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("storage_connection_checked_at")))) %>)</div>
       <div>Application encryption: <strong><%= tsEsc(tsSafe(settings.get("storage_encryption_mode"))) %></strong></div>
+      <div>TLS mode: <strong><%= tsEsc(sslModeSaved) %></strong></div>
+      <div>TLS custom keystore path: <strong><%= tsEsc(sslKeystorePathSaved.isBlank() ? "Not set" : "Set") %></strong></div>
+      <div>TLS certbot domain: <strong><%= tsEsc(sslCertbotDomainSaved.isBlank() ? "Not set" : sslCertbotDomainSaved) %></strong></div>
+      <div>TLS certbot live directory: <strong><%= tsEsc(sslCertbotLiveDirSaved.isBlank() ? "Not set" : sslCertbotLiveDirSaved) %></strong></div>
       <div>S3 SSE mode: <strong><%= tsEsc(tsSafe(settings.get("storage_s3_sse_mode"))) %></strong></div>
+      <div>OneDrive auth profile: <strong><%= tsEsc(storageOnedriveAuthModeSaved) %></strong></div>
+      <div>OneDrive callback URL: <strong><%= tsEsc(storageOnedriveOauthCallbackUrlSaved.isBlank() ? "Not set" : "Set") %></strong></div>
+      <div>OneDrive private relay URL: <strong><%= tsEsc(storageOnedrivePrivateRelayUrlSaved.isBlank() ? "Not set" : "Set") %></strong></div>
       <div>FTP cache size: <strong><%= tsEsc(tsIntRange(settings.get("storage_cache_size_ftp_mb"), 1024, 0, 1048576)) %> MB</strong></div>
       <div>FTPS cache size: <strong><%= tsEsc(tsIntRange(settings.get("storage_cache_size_ftps_mb"), 1024, 0, 1048576)) %> MB</strong></div>
       <div>SFTP cache size: <strong><%= tsEsc(tsIntRange(settings.get("storage_cache_size_sftp_mb"), 1024, 0, 1048576)) %> MB</strong></div>
+      <div>WebDAV cache size: <strong><%= tsEsc(tsIntRange(settings.get("storage_cache_size_webdav_mb"), 1024, 0, 1048576)) %> MB</strong></div>
       <div>S3-compatible cache size: <strong><%= tsEsc(tsIntRange(settings.get("storage_cache_size_s3_compatible_mb"), 1024, 0, 1048576)) %> MB</strong></div>
+      <div>OneDrive Business cache size: <strong><%= tsEsc(tsIntRange(settings.get("storage_cache_size_onedrive_business_mb"), 1024, 0, 1048576)) %> MB</strong></div>
+      <div>External max path length: <strong><%= tsEsc(tsIntRange(settings.get("storage_max_path_length"), 0, 0, 8192)) %></strong></div>
+      <div>External max filename length: <strong><%= tsEsc(tsIntRange(settings.get("storage_max_filename_length"), 0, 0, 1024)) %></strong></div>
       <div>Clio connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_connection_checked_at")))) %>)</div>
       <div>Clio auth mode health: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("clio_auth_health_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_auth_health_checked_at")))) %>)</div>
       <div>Clio sync enabled: <strong><%= "true".equalsIgnoreCase(tsSafe(settings.get("clio_enabled"))) ? "Yes" : "No" %></strong></div>
@@ -1265,6 +1631,10 @@
       <div>Last Clio document sync: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_documents_last_sync_at")))) %></strong></div>
       <div>Last Clio contact sync: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("clio_contacts_last_sync_at")))) %></strong></div>
       <div>Clio contact sync status: <strong><%= tsEsc(tsStatusLabel(clioContactsSyncStatusSaved)) %></strong></div>
+      <div>Office 365 contact sync enabled: <strong><%= "true".equalsIgnoreCase(tsSafe(settings.get("office365_contacts_sync_enabled"))) ? "Yes" : "No" %></strong></div>
+      <div>Office 365 sync interval (minutes): <strong><%= tsEsc(office365ContactsSyncIntervalMinutesSaved) %></strong></div>
+      <div>Last Office 365 contact sync: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("office365_contacts_last_sync_at")))) %></strong></div>
+      <div>Office 365 contact sync status: <strong><%= tsEsc(tsStatusLabel(office365ContactsSyncStatusSaved)) %></strong></div>
       <div>Email provider: <strong><%= tsEsc(tsSafe(settings.get("email_provider"))) %></strong></div>
       <div>Email connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("email_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("email_connection_checked_at")))) %>)</div>
       <div>Two-factor policy: <strong><%= tsEsc(tsSafe(settings.get("two_factor_policy"))) %></strong></div>
@@ -1291,6 +1661,7 @@
   var panels = Array.prototype.slice.call(document.querySelectorAll("[data-ts-panel]"));
   var hiddenMain = document.getElementById("tenantSettingsTabFieldMain");
   var hiddenTaxonomy = document.getElementById("tenantSettingsTabFieldTaxonomy");
+  var hiddenSsl = document.getElementById("tenantSettingsTabFieldSsl");
   if (!buttons.length || !panels.length) return;
 
   function setTab(name) {
@@ -1308,6 +1679,7 @@
     });
     if (hiddenMain) hiddenMain.value = key;
     if (hiddenTaxonomy) hiddenTaxonomy.value = key;
+    if (hiddenSsl) hiddenSsl.value = key;
   }
 
   buttons.forEach(function (btn) {

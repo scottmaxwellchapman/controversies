@@ -110,7 +110,7 @@ public final class version_upload_service {
 
         Path outputDir = partFolder.resolve("version_files");
         Files.createDirectories(outputDir);
-        String outputName = UUID.randomUUID().toString() + "__" + safeFileName(req.uploadFileName);
+        String outputName = UUID.randomUUID().toString().replace("-", "_") + "__" + safeFileName(req.uploadFileName);
         Path outputPath = outputDir.resolve(outputName);
 
         long assembledSize = 0L;
@@ -191,7 +191,7 @@ public final class version_upload_service {
     }
 
     private static String safeFileName(String s) {
-        String v = safe(s).trim().replaceAll("[^A-Za-z0-9._-]", "_");
+        String v = safe(s).trim().replaceAll("[^A-Za-z0-9.]", "_");
         if (v.isBlank()) return "version.bin";
         if (v.length() > 140) return v.substring(v.length() - 140);
         return v;

@@ -21,14 +21,20 @@ public final class StorageBackendResolver {
 
     public DocumentStorageBackend resolve(String tenantUuid, String matterUuid, String backendType) {
         String normalized = FilesystemRemoteStorageBackend.normalizeBackendType(backendType);
+        LinkedHashMap<String, String> settings = tenant_settings.defaultStore().read(tenantUuid);
+        int maxPathLength = parseInt(settings.get("storage_max_path_length"), 0);
+        int maxFilenameLength = parseInt(settings.get("storage_max_filename_length"), 0);
         DocumentStorageBackend base = "local".equals(normalized)
                 ? new LocalFsStorageBackend(tenantUuid, matterUuid)
-                : new FilesystemRemoteStorageBackend(normalized, tenantUuid);
-        LinkedHashMap<String, String> settings = tenant_settings.defaultStore().read(tenantUuid);
+                : new FilesystemRemoteStorageBackend(normalized, tenantUuid, maxPathLength, maxFilenameLength);
         if (!"local".equals(normalized)) {
             long cacheMaxBytes = resolveCacheBytes(settings, normalized);
             if (cacheMaxBytes > 0L) {
-                String sourceToken = cacheSourceToken(normalized, settings.get("storage_endpoint"));
+                String sourceToken = cacheSourceToken(
+                        normalized,
+                        settings.get("storage_endpoint"),
+                        settings.get("storage_root_folder")
+                );
                 base = new CachedDocumentStorageBackend(base, tenantUuid, sourceToken, cacheMaxBytes);
             }
         }
@@ -80,15 +86,17 @@ public final class StorageBackendResolver {
         return t.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
-    private static String cacheSourceToken(String backendType, String endpoint) {
+    private static String cacheSourceToken(String backendType, String endpoint, String rootFolder) {
         String normalizedBackend = FilesystemRemoteStorageBackend.normalizeBackendType(backendType);
         String ep = safe(endpoint).trim().toLowerCase(Locale.ROOT);
+        String root = safe(rootFolder).trim().toLowerCase(Locale.ROOT);
         String endpointHash = "default";
-        if (!ep.isBlank()) {
+        if (!ep.isBlank() || !root.isBlank()) {
             try {
-                endpointHash = StorageCrypto.checksumSha256Hex(ep.getBytes(StandardCharsets.UTF_8)).substring(0, 12);
+                String material = ep + "|" + root;
+                endpointHash = StorageCrypto.checksumSha256Hex(material.getBytes(StandardCharsets.UTF_8)).substring(0, 12);
             } catch (Exception ignored) {
-                endpointHash = Integer.toHexString(ep.hashCode());
+                endpointHash = Integer.toHexString((ep + "|" + root).hashCode());
             }
         }
         return normalizedBackend + "_" + endpointHash;
@@ -100,7 +108,9 @@ public final class StorageBackendResolver {
             case "ftp" -> "storage_cache_size_ftp_mb";
             case "ftps" -> "storage_cache_size_ftps_mb";
             case "sftp" -> "storage_cache_size_sftp_mb";
+            case "webdav" -> "storage_cache_size_webdav_mb";
             case "s3_compatible" -> "storage_cache_size_s3_compatible_mb";
+            case "onedrive_business" -> "storage_cache_size_onedrive_business_mb";
             default -> "";
         };
         if (key.isBlank()) return 0L;

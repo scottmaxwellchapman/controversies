@@ -595,9 +595,9 @@ public final class tasks {
 
             Path versionDir = partStore.partFolder(tu, matterUuid, docUuid, partUuid).resolve("version_files");
             Files.createDirectories(versionDir);
-            String fileName = "task_report_" + safe(task.uuid).replaceAll("[^A-Za-z0-9._-]", "_") + "_"
-                    + nowIso().replace(':', '-') + ".pdf";
-            Path reportPath = versionDir.resolve(UUID.randomUUID().toString() + "__" + fileName).toAbsolutePath().normalize();
+            String fileName = ("task_report_" + safe(task.uuid) + "_" + nowIso() + ".pdf")
+                    .replaceAll("[^A-Za-z0-9.]", "_");
+            Path reportPath = versionDir.resolve(UUID.randomUUID().toString().replace("-", "_") + "__" + fileName).toAbsolutePath().normalize();
             pdf_redaction_service.requirePathWithinTenant(reportPath, tu, "Task report path");
 
             writeTaskReportPdf(reportPath, task, matter, notes, assignments, matterTasks);

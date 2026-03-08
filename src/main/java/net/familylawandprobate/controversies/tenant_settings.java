@@ -32,16 +32,24 @@ public final class tenant_settings {
     private static final String[] ALLOWED_KEYS = new String[] {
             "storage_backend",
             "storage_endpoint",
+            "storage_root_folder",
             "storage_access_key",
             "storage_secret",
             "storage_encryption_mode",
             "storage_encryption_key",
             "storage_s3_sse_mode",
             "storage_s3_sse_kms_key_id",
+            "storage_onedrive_auth_mode",
+            "storage_onedrive_oauth_callback_url",
+            "storage_onedrive_private_relay_url",
             "storage_cache_size_ftp_mb",
             "storage_cache_size_ftps_mb",
             "storage_cache_size_sftp_mb",
+            "storage_cache_size_webdav_mb",
             "storage_cache_size_s3_compatible_mb",
+            "storage_cache_size_onedrive_business_mb",
+            "storage_max_path_length",
+            "storage_max_filename_length",
             "clio_base_url",
             "clio_client_id",
             "clio_client_secret",
@@ -58,6 +66,12 @@ public final class tenant_settings {
             "clio_contacts_last_sync_at",
             "clio_contacts_last_sync_status",
             "clio_contacts_last_sync_error",
+            "office365_contacts_sync_enabled",
+            "office365_contacts_sync_interval_minutes",
+            "office365_contacts_sync_sources_json",
+            "office365_contacts_last_sync_at",
+            "office365_contacts_last_sync_status",
+            "office365_contacts_last_sync_error",
             "feature_advanced_assembly",
             "feature_async_sync",
             "theme_mode_default",
@@ -122,6 +136,7 @@ public final class tenant_settings {
             "clio_client_secret",
             "clio_access_token",
             "clio_refresh_token",
+            "office365_contacts_sync_sources_json",
             "email_smtp_password",
             "email_graph_client_secret",
             "flowroute_sms_access_key",
@@ -356,16 +371,24 @@ public final class tenant_settings {
         LinkedHashMap<String, String> d = new LinkedHashMap<String, String>();
         d.put("storage_backend", "local");
         d.put("storage_endpoint", "");
+        d.put("storage_root_folder", "");
         d.put("storage_access_key", "");
         d.put("storage_secret", "");
         d.put("storage_encryption_mode", "disabled");
         d.put("storage_encryption_key", "");
         d.put("storage_s3_sse_mode", "none");
         d.put("storage_s3_sse_kms_key_id", "");
+        d.put("storage_onedrive_auth_mode", "app_credentials");
+        d.put("storage_onedrive_oauth_callback_url", "");
+        d.put("storage_onedrive_private_relay_url", "");
         d.put("storage_cache_size_ftp_mb", "1024");
         d.put("storage_cache_size_ftps_mb", "1024");
         d.put("storage_cache_size_sftp_mb", "1024");
+        d.put("storage_cache_size_webdav_mb", "1024");
         d.put("storage_cache_size_s3_compatible_mb", "1024");
+        d.put("storage_cache_size_onedrive_business_mb", "1024");
+        d.put("storage_max_path_length", "0");
+        d.put("storage_max_filename_length", "0");
         d.put("clio_base_url", "");
         d.put("clio_client_id", "");
         d.put("clio_client_secret", "");
@@ -382,8 +405,19 @@ public final class tenant_settings {
         d.put("clio_contacts_last_sync_at", "");
         d.put("clio_contacts_last_sync_status", "never");
         d.put("clio_contacts_last_sync_error", "");
+        d.put("office365_contacts_sync_enabled", "false");
+        d.put("office365_contacts_sync_interval_minutes", "30");
+        d.put("office365_contacts_sync_sources_json", "[]");
+        d.put("office365_contacts_last_sync_at", "");
+        d.put("office365_contacts_last_sync_status", "never");
+        d.put("office365_contacts_last_sync_error", "");
         d.put("feature_advanced_assembly", "false");
         d.put("feature_async_sync", "false");
+        d.put("bpm_aging_alarm_enabled", "false");
+        d.put("bpm_aging_alarm_interval_minutes", "15");
+        d.put("bpm_aging_alarm_running_stale_minutes", "60");
+        d.put("bpm_aging_alarm_review_stale_minutes", "1440");
+        d.put("bpm_aging_alarm_max_issues_per_scan", "200");
         d.put("theme_mode_default", "auto");
         d.put("theme_use_location", "true");
         d.put("theme_latitude", "");
@@ -458,7 +492,8 @@ public final class tenant_settings {
         String v = safe(value).trim();
 
         if ("feature_advanced_assembly".equals(key) || "feature_async_sync".equals(key)
-                || "clio_enabled".equals(key) || "theme_use_location".equals(key)
+                || "clio_enabled".equals(key) || "office365_contacts_sync_enabled".equals(key)
+                || "theme_use_location".equals(key)
                 || "email_smtp_auth".equals(key) || "email_smtp_starttls".equals(key)
                 || "email_smtp_ssl".equals(key) || "password_policy_enabled".equals(key)
                 || "password_policy_require_uppercase".equals(key)
@@ -559,6 +594,12 @@ public final class tenant_settings {
             return mode;
         }
 
+        if ("storage_onedrive_auth_mode".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if ("public".equals(mode) || "private".equals(mode) || "app_credentials".equals(mode)) return mode;
+            return "app_credentials";
+        }
+
         if ("clio_storage_mode".equals(key)) {
             String mode = v.toLowerCase(Locale.ROOT);
             if (!"enabled".equals(mode) && !"disabled".equals(mode)) return "disabled";
@@ -577,12 +618,37 @@ public final class tenant_settings {
             return s;
         }
 
+        if ("office365_contacts_sync_interval_minutes".equals(key)) {
+            int n = parseInt(v, 30);
+            if (n < 1 || n > 1440) return "30";
+            return String.valueOf(n);
+        }
+
+        if ("office365_contacts_last_sync_status".equals(key)) {
+            String s = v.toLowerCase(Locale.ROOT);
+            if (!"ok".equals(s) && !"failed".equals(s) && !"never".equals(s)) return "never";
+            return s;
+        }
+
+        if ("office365_contacts_sync_sources_json".equals(key)) {
+            if (v.isBlank()) return "[]";
+            if (v.length() > 200000) v = v.substring(0, 200000);
+            return v;
+        }
+
         if ("storage_backend".equals(key)) {
             String mode = v.toLowerCase(Locale.ROOT);
             if ("localfs".equals(mode)) return "local";
             if ("filesystem_remote".equals(mode)) return "sftp";
-            if (!"local".equals(mode) && !"ftp".equals(mode) && !"ftps".equals(mode) && !"sftp".equals(mode) && !"s3_compatible".equals(mode)) return "local";
+            if ("onedrive".equals(mode) || "onedrive_for_business".equals(mode) || "onedrive-for-business".equals(mode)) return "onedrive_business";
+            if (!"local".equals(mode) && !"ftp".equals(mode) && !"ftps".equals(mode) && !"sftp".equals(mode)
+                    && !"webdav".equals(mode) && !"s3_compatible".equals(mode)
+                    && !"onedrive_business".equals(mode)) return "local";
             return mode;
+        }
+
+        if ("storage_root_folder".equals(key)) {
+            return normalizeStorageRootFolder(v);
         }
 
         if ("storage_encryption_mode".equals(key)) {
@@ -600,10 +666,24 @@ public final class tenant_settings {
         if ("storage_cache_size_ftp_mb".equals(key)
                 || "storage_cache_size_ftps_mb".equals(key)
                 || "storage_cache_size_sftp_mb".equals(key)
-                || "storage_cache_size_s3_compatible_mb".equals(key)) {
+                || "storage_cache_size_webdav_mb".equals(key)
+                || "storage_cache_size_s3_compatible_mb".equals(key)
+                || "storage_cache_size_onedrive_business_mb".equals(key)) {
             int sizeMb = parseInt(v, 1024);
             if (sizeMb < 0 || sizeMb > 1048576) return "1024";
             return String.valueOf(sizeMb);
+        }
+
+        if ("storage_max_path_length".equals(key)) {
+            int n = parseInt(v, 0);
+            if (n < 0 || n > 8192) return "0";
+            return String.valueOf(n);
+        }
+
+        if ("storage_max_filename_length".equals(key)) {
+            int n = parseInt(v, 0);
+            if (n < 0 || n > 1024) return "0";
+            return String.valueOf(n);
         }
 
         if ("storage_connection_status".equals(key) || "clio_connection_status".equals(key) || "clio_auth_health_status".equals(key)) {
@@ -692,6 +772,20 @@ public final class tenant_settings {
             }
         }
 
+        if ("onedrive_business".equals(storageBackend)) {
+            String oneDriveMode = safe(cfg.get("storage_onedrive_auth_mode")).trim().toLowerCase(Locale.ROOT);
+            if (!"public".equals(oneDriveMode) && !"private".equals(oneDriveMode) && !"app_credentials".equals(oneDriveMode)) {
+                oneDriveMode = "app_credentials";
+            }
+            boolean modeReady = "app_credentials".equals(oneDriveMode)
+                    || ("public".equals(oneDriveMode)
+                    ? safe(cfg.get("storage_onedrive_oauth_callback_url")).startsWith("http")
+                    : !safe(cfg.get("storage_onedrive_private_relay_url")).isBlank());
+            if (!modeReady) {
+                failures.add("tenant=" + safeFileToken(tenantUuid) + " onedrive_business enabled with invalid auth mode settings");
+            }
+        }
+
         boolean clioEnabled = "true".equalsIgnoreCase(safe(cfg.get("clio_enabled")));
         if (clioEnabled) {
             String clioMode = safe(cfg.get("clio_auth_mode")).trim().toLowerCase(Locale.ROOT);
@@ -703,6 +797,14 @@ public final class tenant_settings {
                     : !safe(cfg.get("clio_private_relay_url")).isBlank();
             if (!(baseReady && secretReady && modeReady)) {
                 failures.add("tenant=" + safeFileToken(tenantUuid) + " clio enabled with invalid credentials");
+            }
+        }
+
+        boolean office365Enabled = "true".equalsIgnoreCase(safe(cfg.get("office365_contacts_sync_enabled")));
+        if (office365Enabled) {
+            String sourcesRaw = safe(cfg.get("office365_contacts_sync_sources_json")).trim();
+            if (sourcesRaw.isBlank() || "[]".equals(sourcesRaw)) {
+                failures.add("tenant=" + safeFileToken(tenantUuid) + " office365 contacts sync enabled without configured sources");
             }
         }
 
@@ -753,6 +855,26 @@ public final class tenant_settings {
         } catch (Exception ignored) {
             return fallback;
         }
+    }
+
+    private static String normalizeStorageRootFolder(String raw) {
+        String src = safe(raw).replace('\\', '/').trim();
+        if (src.isBlank()) return "";
+
+        String[] rawParts = src.split("/");
+        ArrayList<String> cleanParts = new ArrayList<String>();
+        for (int i = 0; i < rawParts.length; i++) {
+            String part = safe(rawParts[i]).trim();
+            if (part.isBlank() || ".".equals(part)) continue;
+            if ("..".equals(part)) return "";
+            part = part.replaceAll("[^A-Za-z0-9._-]", "_");
+            if (part.length() > 128) part = part.substring(0, 128);
+            if (!part.isBlank()) cleanParts.add(part);
+        }
+        if (cleanParts.isEmpty()) return "";
+        String joined = String.join("/", cleanParts);
+        if (joined.length() > 1024) joined = joined.substring(0, 1024);
+        return joined;
     }
 
     private static Path settingsPath(String tenantUuid) {

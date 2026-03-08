@@ -99,6 +99,36 @@ public class tenant_settings_test {
         assertEquals("15", out.get("clio_matters_sync_interval_minutes"));
     }
 
+    @Test
+    void sanitize_supports_office365_contact_sync_settings() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("office365_contacts_sync_enabled", "yes");
+        in.put("office365_contacts_sync_interval_minutes", "45");
+        in.put("office365_contacts_last_sync_status", "OK");
+        in.put("office365_contacts_sync_sources_json", "[{\"source_id\":\"dir\",\"tenant_id\":\"t\",\"client_id\":\"c\",\"client_secret\":\"s\",\"user_principal\":\"u@example.test\"}]");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("true", out.get("office365_contacts_sync_enabled"));
+        assertEquals("45", out.get("office365_contacts_sync_interval_minutes"));
+        assertEquals("ok", out.get("office365_contacts_last_sync_status"));
+        assertTrue(out.get("office365_contacts_sync_sources_json").contains("\"source_id\":\"dir\""));
+    }
+
+    @Test
+    void sanitize_defaults_invalid_office365_sync_interval_and_status() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("office365_contacts_sync_interval_minutes", "99999");
+        in.put("office365_contacts_last_sync_status", "degraded");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("30", out.get("office365_contacts_sync_interval_minutes"));
+        assertEquals("never", out.get("office365_contacts_last_sync_status"));
+    }
+
 
     @Test
     void sanitize_supports_storage_encryption_and_s3_sse_modes() {
@@ -124,14 +154,18 @@ public class tenant_settings_test {
         in.put("storage_cache_size_ftp_mb", "256");
         in.put("storage_cache_size_ftps_mb", "512");
         in.put("storage_cache_size_sftp_mb", "768");
+        in.put("storage_cache_size_webdav_mb", "1536");
         in.put("storage_cache_size_s3_compatible_mb", "1024");
+        in.put("storage_cache_size_onedrive_business_mb", "2048");
 
         Map<String, String> out = store.sanitizeSettings(in);
 
         assertEquals("256", out.get("storage_cache_size_ftp_mb"));
         assertEquals("512", out.get("storage_cache_size_ftps_mb"));
         assertEquals("768", out.get("storage_cache_size_sftp_mb"));
+        assertEquals("1536", out.get("storage_cache_size_webdav_mb"));
         assertEquals("1024", out.get("storage_cache_size_s3_compatible_mb"));
+        assertEquals("2048", out.get("storage_cache_size_onedrive_business_mb"));
     }
 
     @Test
@@ -142,14 +176,118 @@ public class tenant_settings_test {
         in.put("storage_cache_size_ftp_mb", "-1");
         in.put("storage_cache_size_ftps_mb", "9999999");
         in.put("storage_cache_size_sftp_mb", "not-a-number");
+        in.put("storage_cache_size_webdav_mb", "-999");
         in.put("storage_cache_size_s3_compatible_mb", "");
+        in.put("storage_cache_size_onedrive_business_mb", "99999999");
 
         Map<String, String> out = store.sanitizeSettings(in);
 
         assertEquals("1024", out.get("storage_cache_size_ftp_mb"));
         assertEquals("1024", out.get("storage_cache_size_ftps_mb"));
         assertEquals("1024", out.get("storage_cache_size_sftp_mb"));
+        assertEquals("1024", out.get("storage_cache_size_webdav_mb"));
         assertEquals("1024", out.get("storage_cache_size_s3_compatible_mb"));
+        assertEquals("1024", out.get("storage_cache_size_onedrive_business_mb"));
+    }
+
+    @Test
+    void sanitize_supports_storage_path_and_filename_length_limits() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_max_path_length", "220");
+        in.put("storage_max_filename_length", "120");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("220", out.get("storage_max_path_length"));
+        assertEquals("120", out.get("storage_max_filename_length"));
+    }
+
+    @Test
+    void sanitize_defaults_invalid_storage_path_and_filename_length_limits() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_max_path_length", "-1");
+        in.put("storage_max_filename_length", "999999");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("0", out.get("storage_max_path_length"));
+        assertEquals("0", out.get("storage_max_filename_length"));
+    }
+
+    @Test
+    void sanitize_supports_storage_root_folder() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_root_folder", "/Client A/2026 Q1/records");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("Client_A/2026_Q1/records", out.get("storage_root_folder"));
+    }
+
+    @Test
+    void sanitize_rejects_storage_root_folder_with_traversal() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_root_folder", "../outside");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("", out.get("storage_root_folder"));
+    }
+
+    @Test
+    void sanitize_supports_webdav_storage_backend() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_backend", "WEBDAV");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("webdav", out.get("storage_backend"));
+    }
+
+    @Test
+    void sanitize_supports_onedrive_business_storage_backend_aliases() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_backend", "OneDrive_For_Business");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("onedrive_business", out.get("storage_backend"));
+    }
+
+    @Test
+    void sanitize_supports_onedrive_auth_profile_settings() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_onedrive_auth_mode", "PRIVATE");
+        in.put("storage_onedrive_oauth_callback_url", "https://example.test/onedrive/callback");
+        in.put("storage_onedrive_private_relay_url", "https://relay.example.test/onedrive/exchange");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("private", out.get("storage_onedrive_auth_mode"));
+        assertEquals("https://example.test/onedrive/callback", out.get("storage_onedrive_oauth_callback_url"));
+        assertEquals("https://relay.example.test/onedrive/exchange", out.get("storage_onedrive_private_relay_url"));
+    }
+
+    @Test
+    void sanitize_defaults_invalid_onedrive_auth_mode_to_app_credentials() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_onedrive_auth_mode", "relay-only");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("app_credentials", out.get("storage_onedrive_auth_mode"));
     }
 
     @Test

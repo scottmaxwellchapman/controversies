@@ -132,6 +132,7 @@ public final class api_servlet extends HttpServlet {
         LinkedHashMap<String, Object> params = collectParams(req, payload);
 
         String operation = safe(op).trim().toLowerCase(Locale.ROOT);
+        String credentialScope = safe((String) req.getAttribute(REQ_CREDENTIAL_SCOPE)).trim();
         try {
             LinkedHashMap<String, Object> result = executeOperation(
                     operation,
@@ -139,6 +140,7 @@ public final class api_servlet extends HttpServlet {
                     tenantUuid,
                     safe((String) req.getAttribute(REQ_CREDENTIAL_ID)),
                     safe((String) req.getAttribute(REQ_CREDENTIAL_LABEL)),
+                    credentialScope,
                     safe(req.getRemoteAddr()),
                     method
             );
@@ -200,6 +202,19 @@ public final class api_servlet extends HttpServlet {
                     safe(ex.getMessage())
             );
             writeError(resp, 409, "conflict", safe(ex.getMessage()));
+        } catch (SecurityException ex) {
+            auditApiInvocation(
+                    tenantUuid,
+                    operation,
+                    safe((String) req.getAttribute(REQ_CREDENTIAL_ID)),
+                    safe(req.getRemoteAddr()),
+                    method,
+                    false,
+                    403,
+                    "forbidden",
+                    safe(ex.getMessage())
+            );
+            writeError(resp, 403, "forbidden", safe(ex.getMessage()));
         } catch (Exception ex) {
             LOG.log(
                     Level.WARNING,
@@ -316,8 +331,20 @@ public final class api_servlet extends HttpServlet {
                                                                    String credentialLabel,
                                                                    String clientIp,
                                                                    String method) throws Exception {
+        return executeOperation(op, params, tenantUuid, credentialId, credentialLabel, "full_access", clientIp, method);
+    }
+
+    private static LinkedHashMap<String, Object> executeOperation(String op,
+                                                                   Map<String, Object> params,
+                                                                   String tenantUuid,
+                                                                   String credentialId,
+                                                                   String credentialLabel,
+                                                                   String credentialScope,
+                                                                   String clientIp,
+                                                                   String method) throws Exception {
 
         String operation = safe(op).trim().toLowerCase(Locale.ROOT);
+        requireOperationPermission(operation, credentialScope);
 
         LinkedHashMap<String, Object> omnichannel = executeOmnichannelOperation(operation, params, tenantUuid);
         if (omnichannel != null) return omnichannel;
@@ -334,7 +361,8 @@ public final class api_servlet extends HttpServlet {
                 out.put("tenant_uuid", tenantUuid);
                 out.put("credential_id", credentialId);
                 out.put("credential_label", credentialLabel);
-                out.put("scope", "full_access");
+                out.put("scope", normalizeCredentialScope(credentialScope));
+                out.put("required_permissions", requiredPermissionKeys(operation));
                 return out;
             }
 
@@ -361,21 +389,45 @@ public final class api_servlet extends HttpServlet {
                 return out;
             }
 
+            case "permissions.catalog": {
+                permission_layers store = permission_layers.defaultStore();
+                ArrayList<LinkedHashMap<String, Object>> defs = new ArrayList<LinkedHashMap<String, Object>>();
+                for (permission_layers.PermissionDef def : store.permissionCatalog()) {
+                    if (def == null) continue;
+                    LinkedHashMap<String, Object> m = new LinkedHashMap<String, Object>();
+                    m.put("key", def.key);
+                    m.put("label", def.label);
+                    m.put("description", def.description);
+                    m.put("category", def.category);
+                    m.put("admin_only", def.adminOnly);
+                    defs.add(m);
+                }
+
+                ArrayList<LinkedHashMap<String, Object>> profiles = new ArrayList<LinkedHashMap<String, Object>>();
+                for (permission_layers.PermissionProfile profile : store.permissionProfiles()) {
+                    if (profile == null) continue;
+                    LinkedHashMap<String, Object> m = new LinkedHashMap<String, Object>();
+                    m.put("key", profile.key);
+                    m.put("label", profile.label);
+                    m.put("description", profile.description);
+                    m.put("permissions", new LinkedHashMap<String, String>(profile.permissions));
+                    profiles.add(m);
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("permissions", defs);
+                out.put("profiles", profiles);
+                out.put("permission_count", defs.size());
+                out.put("profile_count", profiles.size());
+                return out;
+            }
+
             case "api.credentials.list": {
                 List<api_credentials.CredentialRec> rows = api_credentials.defaultStore().list(tenantUuid);
                 ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
                 for (api_credentials.CredentialRec r : rows) {
                     if (r == null) continue;
-                    LinkedHashMap<String, Object> m = new LinkedHashMap<String, Object>();
-                    m.put("credential_id", r.credentialId);
-                    m.put("label", r.label);
-                    m.put("scope", r.scope);
-                    m.put("created_at", r.createdAt);
-                    m.put("created_by_user_uuid", r.createdByUserUuid);
-                    m.put("last_used_at", r.lastUsedAt);
-                    m.put("last_used_from_ip", r.lastUsedFromIp);
-                    m.put("revoked", r.revoked);
-                    items.add(m);
+                    items.add(credentialMap(r));
                 }
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
                 out.put("items", items);
@@ -383,21 +435,53 @@ public final class api_servlet extends HttpServlet {
                 return out;
             }
 
+            case "api.credentials.get": {
+                String targetCredentialId = str(params, "credential_id");
+                api_credentials.CredentialRec rec = api_credentials.defaultStore().get(tenantUuid, targetCredentialId);
+                if (rec == null) throw new IllegalArgumentException("Credential not found.");
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("credential", credentialMap(rec));
+                return out;
+            }
+
             case "api.credentials.create": {
                 String label = str(params, "label");
                 String userUuid = str(params, "created_by_user_uuid");
-                api_credentials.GeneratedCredential created = api_credentials.defaultStore().create(tenantUuid, label, userUuid);
-
-                LinkedHashMap<String, Object> c = new LinkedHashMap<String, Object>();
-                c.put("credential_id", created.credential.credentialId);
-                c.put("label", created.credential.label);
-                c.put("scope", created.credential.scope);
-                c.put("created_at", created.credential.createdAt);
+                String scope = hasParam(params, "scope") ? str(params, "scope") : "full_access";
+                api_credentials.GeneratedCredential created = api_credentials.defaultStore().create(tenantUuid, label, userUuid, scope);
 
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
-                out.put("credential", c);
+                out.put("credential", credentialMap(created.credential));
                 out.put("api_key", created.apiKey);
                 out.put("api_secret", created.apiSecret);
+                out.put("note", "Store the API secret now. It is not retrievable later.");
+                return out;
+            }
+
+            case "api.credentials.update": {
+                String targetCredentialId = str(params, "credential_id");
+                boolean changed = api_credentials.defaultStore().update(
+                        tenantUuid,
+                        targetCredentialId,
+                        hasParam(params, "label") ? str(params, "label") : null,
+                        hasParam(params, "scope") ? str(params, "scope") : null
+                );
+                api_credentials.CredentialRec rec = api_credentials.defaultStore().get(tenantUuid, targetCredentialId);
+                if (rec == null) throw new IllegalArgumentException("Credential not found.");
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("credential", credentialMap(rec));
+                return out;
+            }
+
+            case "api.credentials.rotate_secret": {
+                String targetCredentialId = str(params, "credential_id");
+                api_credentials.GeneratedCredential rotated = api_credentials.defaultStore().rotateSecret(tenantUuid, targetCredentialId);
+                if (rotated == null) throw new IllegalArgumentException("Credential not found or revoked.");
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("credential", credentialMap(rotated.credential));
+                out.put("api_key", rotated.apiKey);
+                out.put("api_secret", rotated.apiSecret);
                 out.put("note", "Store the API secret now. It is not retrievable later.");
                 return out;
             }
@@ -697,7 +781,8 @@ public final class api_servlet extends HttpServlet {
             case "contacts.list": {
                 boolean includeTrashed = boolVal(params, "include_trashed", false);
                 String sourceFilter = str(params, "source").trim().toLowerCase(Locale.ROOT);
-                if (!"clio".equals(sourceFilter) && !"native".equals(sourceFilter)) sourceFilter = "";
+                if (!"clio".equals(sourceFilter) && !"native".equals(sourceFilter)
+                        && !"office365".equals(sourceFilter) && !"external".equals(sourceFilter)) sourceFilter = "";
 
                 contacts contactStore = contacts.defaultStore();
                 matter_contacts linkStore = matter_contacts.defaultStore();
@@ -709,9 +794,12 @@ public final class api_servlet extends HttpServlet {
                 for (contacts.ContactRec r : rows) {
                     if (r == null) continue;
                     if (!includeTrashed && r.trashed) continue;
-                    boolean clio = contacts.isClioLocked(r);
-                    if ("clio".equals(sourceFilter) && !clio) continue;
-                    if ("native".equals(sourceFilter) && clio) continue;
+                    boolean external = contacts.isExternalReadOnly(r);
+                    String sourceType = contacts.sourceType(r);
+                    if ("clio".equals(sourceFilter) && !"clio".equals(sourceType)) continue;
+                    if ("native".equals(sourceFilter) && !"native".equals(sourceType)) continue;
+                    if ("office365".equals(sourceFilter) && !sourceType.startsWith("office365")) continue;
+                    if ("external".equals(sourceFilter) && !external) continue;
                     items.add(contactMap(r, linksByContact.getOrDefault(safe(r.uuid), List.of())));
                 }
 
@@ -1285,7 +1373,7 @@ public final class api_servlet extends HttpServlet {
                 String sourceFileName = sourcePath.getFileName() == null ? "document.pdf" : sourcePath.getFileName().toString();
                 String outputName = pdf_redaction_service.suggestRedactedFileName(sourceFileName);
                 String outputVersionUuid = UUID.randomUUID().toString();
-                Path outputPath = outputDir.resolve(outputVersionUuid + "__" + outputName);
+                Path outputPath = outputDir.resolve(outputVersionUuid.replace("-", "_") + "__" + outputName);
 
                 pdf_redaction_service.RedactionRun run = pdf_redaction_service.redact(sourcePath, outputPath, rects);
                 long outputBytes = Files.size(outputPath);
@@ -2058,11 +2146,21 @@ public final class api_servlet extends HttpServlet {
             }
 
             case "bpm.reviews.list": {
-                List<business_process_manager.HumanReviewTask> rows = business_process_manager.defaultService().listReviews(
-                        tenantUuid,
-                        boolVal(params, "pending_only", true),
-                        clampInt(intVal(params, "limit", 100), 1, 500)
-                );
+                business_process_manager bpm = business_process_manager.defaultService();
+                String viewerUserUuid = str(params, "viewer_user_uuid");
+                if (viewerUserUuid.isBlank()) viewerUserUuid = str(params, "user_uuid");
+                List<business_process_manager.HumanReviewTask> rows = viewerUserUuid.isBlank()
+                        ? bpm.listReviews(
+                                tenantUuid,
+                                boolVal(params, "pending_only", true),
+                                clampInt(intVal(params, "limit", 100), 1, 500)
+                        )
+                        : bpm.listReviewsForUser(
+                                tenantUuid,
+                                viewerUserUuid,
+                                boolVal(params, "pending_only", true),
+                                clampInt(intVal(params, "limit", 100), 1, 500)
+                        );
                 ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
                 for (business_process_manager.HumanReviewTask row : rows) {
                     if (row == null) continue;
@@ -2075,16 +2173,111 @@ public final class api_servlet extends HttpServlet {
             }
 
             case "bpm.reviews.complete": {
+                String reviewer = str(params, "reviewed_by_user_uuid");
+                if (reviewer.isBlank()) reviewer = str(params, "actor_user_uuid");
                 business_process_manager.HumanReviewTask row = business_process_manager.defaultService().completeReview(
                         tenantUuid,
                         str(params, "review_uuid"),
                         boolVal(params, "approved", true),
-                        str(params, "reviewed_by_user_uuid"),
+                        reviewer,
                         stringMap(params.get("input")),
                         str(params, "comment")
                 );
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
                 out.put("review", bpmReviewMap(row));
+                return out;
+            }
+
+            case "search.types": {
+                ArrayList<search_jobs_service.SearchTypeInfo> rows = search_jobs_service.defaultService().listSearchTypes();
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (search_jobs_service.SearchTypeInfo row : rows) {
+                    if (row == null) continue;
+                    items.add(searchTypeMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                out.put("tesseract_available", search_jobs_service.defaultService().isTesseractAvailable());
+                return out;
+            }
+
+            case "search.jobs.enqueue": {
+                String requestedBy = str(params, "requested_by");
+                if (requestedBy.isBlank()) requestedBy = safe(credentialId).trim();
+                if (requestedBy.isBlank()) requestedBy = safe(credentialLabel).trim();
+                if (requestedBy.isBlank()) requestedBy = "api_client";
+
+                search_jobs_service.SearchJobRequest in = new search_jobs_service.SearchJobRequest();
+                in.tenantUuid = tenantUuid;
+                in.requestedBy = requestedBy;
+                in.searchType = str(params, "search_type");
+                in.logic = str(params, "logic");
+                in.query = str(params, "query");
+                in.operator = str(params, "operator");
+                in.caseSensitive = boolVal(params, "case_sensitive", false);
+                in.includeMetadata = boolVal(params, "include_metadata", true);
+                in.includeOcr = boolVal(params, "include_ocr", true);
+                in.maxResults = clampInt(intVal(params, "max_results", 200), 1, 500);
+                in.criteria = searchCriteriaList(params);
+
+                String jobId = search_jobs_service.defaultService().enqueue(in);
+                search_jobs_service.SearchJobSnapshot snapshot = search_jobs_service.defaultService().getJob(
+                        tenantUuid,
+                        requestedBy,
+                        jobId,
+                        false
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("job_id", jobId);
+                out.put("job", searchJobMap(snapshot, false));
+                return out;
+            }
+
+            case "search.jobs.list": {
+                String requestedBy = str(params, "requested_by");
+                if (requestedBy.isBlank()) requestedBy = safe(credentialId).trim();
+                if (requestedBy.isBlank()) requestedBy = safe(credentialLabel).trim();
+                if (requestedBy.isBlank()) requestedBy = "api_client";
+
+                int limit = clampInt(intVal(params, "limit", 20), 1, 100);
+                boolean includeResults = boolVal(params, "include_results", false);
+                ArrayList<search_jobs_service.SearchJobSnapshot> rows = search_jobs_service.defaultService().listJobs(
+                        tenantUuid,
+                        requestedBy,
+                        limit,
+                        includeResults
+                );
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (search_jobs_service.SearchJobSnapshot row : rows) {
+                    if (row == null) continue;
+                    items.add(searchJobMap(row, includeResults));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "search.jobs.get":
+            case "search.jobs.status": {
+                String requestedBy = str(params, "requested_by");
+                if (requestedBy.isBlank()) requestedBy = safe(credentialId).trim();
+                if (requestedBy.isBlank()) requestedBy = safe(credentialLabel).trim();
+                if (requestedBy.isBlank()) requestedBy = "api_client";
+
+                String jobId = str(params, "job_id");
+                boolean includeResults = boolVal(params, "include_results", true);
+                search_jobs_service.SearchJobSnapshot row = search_jobs_service.defaultService().getJob(
+                        tenantUuid,
+                        requestedBy,
+                        jobId,
+                        includeResults
+                );
+                if (row == null) throw new IllegalArgumentException("Search job not found.");
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("job", searchJobMap(row, includeResults));
                 return out;
             }
 
@@ -3571,6 +3764,7 @@ public final class api_servlet extends HttpServlet {
             row.put("operation", e.getKey());
             row.put("summary", e.getValue());
             row.put("endpoint", "/api/v1/op/" + e.getKey().replace('.', '/'));
+            row.put("required_permissions", requiredPermissionKeys(e.getKey()));
             items.add(row);
         }
         return items;
@@ -3581,9 +3775,13 @@ public final class api_servlet extends HttpServlet {
 
         ops.put("auth.whoami", "Credential identity and tenant scope");
         ops.put("activity.recent", "Recent tenant activity log events");
+        ops.put("permissions.catalog", "List permission definitions and built-in profiles");
 
         ops.put("api.credentials.list", "List API credentials for tenant");
+        ops.put("api.credentials.get", "Get one API credential");
         ops.put("api.credentials.create", "Create API credential (returns key + one-time secret)");
+        ops.put("api.credentials.update", "Update API credential label/scope");
+        ops.put("api.credentials.rotate_secret", "Rotate API credential secret (returns one-time secret)");
         ops.put("api.credentials.revoke", "Revoke API credential");
 
         ops.put("tenant.settings.get", "Read tenant settings (secrets redacted)");
@@ -3679,6 +3877,11 @@ public final class api_servlet extends HttpServlet {
         ops.put("document.versions.create", "Create part version metadata");
         ops.put("document.versions.render_page", "Render source PDF/word-processor version page as PNG base64 + text + navigation");
         ops.put("document.versions.redact", "Redact source PDF version and create new redacted version");
+        ops.put("search.types", "List configured search types and operators");
+        ops.put("search.jobs.enqueue", "Queue asynchronous search job");
+        ops.put("search.jobs.list", "List asynchronous search jobs for requester");
+        ops.put("search.jobs.get", "Get asynchronous search job details");
+        ops.put("search.jobs.status", "Alias for search.jobs.get");
 
         ops.put("templates.list", "List templates");
         ops.put("templates.get", "Get template metadata");
@@ -3753,6 +3956,168 @@ public final class api_servlet extends HttpServlet {
         return ops;
     }
 
+    private static void requireOperationPermission(String operation, String credentialScope) {
+        List<String> required = requiredPermissionKeys(operation);
+        if (required == null || required.isEmpty()) return;
+
+        CredentialScope resolved = resolveCredentialScopePermissions(credentialScope);
+        if (resolved.fullAccess) return;
+        if (resolved.permissionKeys.contains("tenant_admin")) return;
+
+        for (String key : required) {
+            String k = safe(key).trim().toLowerCase(Locale.ROOT);
+            if (!k.isBlank() && resolved.permissionKeys.contains(k)) return;
+        }
+
+        throw new SecurityException(
+                "Credential scope does not allow operation '" + safe(operation).trim().toLowerCase(Locale.ROOT)
+                        + "'. Required permission: " + String.join(" or ", required)
+        );
+    }
+
+    private static List<String> requiredPermissionKeys(String operation) {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (op.isBlank()) return List.of();
+
+        if ("auth.whoami".equals(op)) return List.of();
+        if ("activity.recent".equals(op)) return List.of("logs.view");
+        if ("permissions.catalog".equals(op)) return List.of("permissions.manage");
+
+        if (op.startsWith("api.credentials.")) return List.of("api.credentials.manage");
+
+        if (op.startsWith("tenant.settings.")) return List.of("tenant_settings.manage");
+        if (op.startsWith("tenant.fields.")) return List.of("tenant_fields.manage");
+
+        if (op.startsWith("roles.") || op.startsWith("users.")) return List.of("security.manage");
+
+        if (op.startsWith("matters.")) return List.of("cases.access");
+        if (op.startsWith("contacts.")) return List.of("contacts.access");
+
+        if (op.startsWith("facts.")) return List.of("facts.access");
+
+        if (op.startsWith("task.attributes.")) return List.of("attributes.manage");
+        if (op.startsWith("task.fields.") || op.startsWith("tasks.")) return List.of("tasks.access");
+
+        if (op.startsWith("case.attributes.")) return List.of("attributes.manage");
+        if (op.startsWith("case.fields.") || op.startsWith("case.list_items.")) return List.of("case_fields.access");
+
+        if (op.startsWith("document.taxonomy.")) return List.of("tenant_settings.manage");
+        if (op.startsWith("document.attributes.")) return List.of("attributes.manage");
+        if (op.startsWith("documents.")
+                || op.startsWith("document.fields.")
+                || op.startsWith("document.parts.")
+                || op.startsWith("document.versions.")) return List.of("documents.access");
+        if (op.startsWith("search.")) return List.of("documents.access");
+
+        if (op.startsWith("templates.")
+                || op.startsWith("template.tools.")
+                || op.startsWith("assembler.")
+                || op.startsWith("assembly.")
+                || op.startsWith("assembled_forms.")) return List.of("forms.access");
+
+        if (op.startsWith("custom_objects.")) return List.of("custom_objects.manage");
+        if (op.startsWith("custom_object_attributes.")) return List.of("attributes.manage");
+        if ("custom_object_records.list".equals(op) || "custom_object_records.get".equals(op)) {
+            return List.of("custom_objects.records.access");
+        }
+        if ("custom_object_records.create".equals(op)) return List.of("custom_objects.records.create");
+        if ("custom_object_records.update".equals(op)) return List.of("custom_objects.records.edit");
+        if ("custom_object_records.set_trashed".equals(op)) return List.of("custom_objects.records.archive");
+
+        if (op.startsWith("omnichannel.")) return List.of("threads.access");
+
+        if (op.startsWith("bpm.reviews.")) return List.of("business_process_reviews.manage");
+        if (op.startsWith("bpm.")) return List.of("business_processes.manage");
+
+        if (op.startsWith("texas_law.")) return List.of("texas_law.access");
+
+        return List.of();
+    }
+
+    private static final class CredentialScope {
+        boolean fullAccess = false;
+        final LinkedHashSet<String> permissionKeys = new LinkedHashSet<String>();
+    }
+
+    private static CredentialScope resolveCredentialScopePermissions(String scopeLiteral) {
+        CredentialScope out = new CredentialScope();
+        String normalized = normalizeCredentialScope(scopeLiteral);
+        if ("full_access".equals(normalized)) {
+            out.fullAccess = true;
+            return out;
+        }
+
+        if (normalized.startsWith("profile:")) {
+            String profile = safe(normalized.substring("profile:".length())).trim();
+            LinkedHashMap<String, String> perms = permission_layers.defaultStore().profilePermissions(profile);
+            for (Map.Entry<String, String> e : perms.entrySet()) {
+                if (e == null) continue;
+                String k = safe(e.getKey()).trim().toLowerCase(Locale.ROOT);
+                if (k.isBlank()) continue;
+                if ("true".equalsIgnoreCase(safe(e.getValue()).trim())) {
+                    out.permissionKeys.add(k);
+                }
+            }
+            return out;
+        }
+
+        String payload = normalized;
+        if (normalized.startsWith("permissions:")) {
+            payload = normalized.substring("permissions:".length());
+        }
+
+        LinkedHashSet<String> keys = parseScopePermissionKeys(payload);
+        if (keys.contains("full_access")) {
+            out.fullAccess = true;
+            return out;
+        }
+        out.permissionKeys.addAll(keys);
+        return out;
+    }
+
+    private static String normalizeCredentialScope(String scopeLiteral) {
+        String raw = safe(scopeLiteral).trim();
+        if (raw.isBlank()) return "full_access";
+
+        String lower = raw.toLowerCase(Locale.ROOT);
+        if ("full_access".equals(lower) || "full".equals(lower) || "all".equals(lower) || "*".equals(lower)) {
+            return "full_access";
+        }
+
+        if (lower.startsWith("profile:")) {
+            String profile = safe(raw.substring(raw.indexOf(':') + 1)).trim().toLowerCase(Locale.ROOT);
+            if (profile.isBlank()) return "full_access";
+            return "profile:" + profile;
+        }
+
+        String payload = raw;
+        if (lower.startsWith("permissions:")) {
+            payload = raw.substring(raw.indexOf(':') + 1);
+        }
+        LinkedHashSet<String> keys = parseScopePermissionKeys(payload);
+        if (keys.isEmpty() || keys.contains("full_access")) return "full_access";
+        return "permissions:" + String.join(",", keys);
+    }
+
+    private static LinkedHashSet<String> parseScopePermissionKeys(String raw) {
+        LinkedHashSet<String> out = new LinkedHashSet<String>();
+        String text = safe(raw).trim();
+        if (text.isBlank()) return out;
+
+        String[] parts = text.split("[,;|\\s]+");
+        for (String part : parts) {
+            String k = safe(part).trim().toLowerCase(Locale.ROOT);
+            if (k.isBlank()) continue;
+            if ("full_access".equals(k) || "full".equals(k) || "all".equals(k) || "*".equals(k)) {
+                out.clear();
+                out.add("full_access");
+                return out;
+            }
+            out.add(k);
+        }
+        return out;
+    }
+
     private static String helpReadme(HttpServletRequest req) {
         String base = apiBase(req);
         return """
@@ -3770,6 +4135,10 @@ This API is tenant-scoped and designed for automation clients such as n8n and Op
   - `X-API-Key`: API key
   - `X-API-Secret`: API secret
 - API credentials are managed by tenant admins in Tenant Settings.
+- Credential scopes are enforced per operation:
+  - `full_access`
+  - `profile:<profile-key>`
+  - `permissions:<comma-separated permission keys>`
 
 ## Endpoint Patterns
 - `GET /api/v1/help`
@@ -3825,6 +4194,20 @@ When features are added or changed in the application, matching API operations s
         if (req == null) return "/api/v1";
         String ctx = safe(req.getContextPath());
         return ctx + "/api/v1";
+    }
+
+    private static LinkedHashMap<String, Object> credentialMap(api_credentials.CredentialRec r) {
+        LinkedHashMap<String, Object> m = new LinkedHashMap<String, Object>();
+        if (r == null) return m;
+        m.put("credential_id", r.credentialId);
+        m.put("label", r.label);
+        m.put("scope", r.scope);
+        m.put("created_at", r.createdAt);
+        m.put("created_by_user_uuid", r.createdByUserUuid);
+        m.put("last_used_at", r.lastUsedAt);
+        m.put("last_used_from_ip", r.lastUsedFromIp);
+        m.put("revoked", r.revoked);
+        return m;
     }
 
     private static LinkedHashMap<String, Object> roleMap(users_roles.RoleRec r) {
@@ -3938,10 +4321,12 @@ When features are added or changed in the application, matching API operations s
         out.put("postal_code", safe(c.postalCode));
         out.put("country", safe(c.country));
         out.put("notes", safe(c.notes));
-        out.put("source", safe(c.source));
+        out.put("source", contacts.sourceType(c));
+        out.put("source_display", contacts.sourceDisplayName(c));
         out.put("source_contact_id", safe(c.sourceContactId));
         out.put("clio_updated_at", safe(c.clioUpdatedAt));
         out.put("updated_at", safe(c.updatedAt));
+        out.put("external_read_only", contacts.isExternalReadOnly(c));
         out.put("clio_read_only", contacts.isClioLocked(c));
 
         ArrayList<LinkedHashMap<String, Object>> linkRows = new ArrayList<LinkedHashMap<String, Object>>();
@@ -4013,6 +4398,86 @@ When features are added or changed in the application, matching API operations s
         out.put("notes", r.notes);
         out.put("created_at", r.createdAt);
         out.put("current", r.current);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> searchTypeMap(search_jobs_service.SearchTypeInfo r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("key", safe(r.key));
+        out.put("label", safe(r.label));
+        out.put("description", safe(r.description));
+        out.put("permission_key", safe(r.permissionKey));
+        out.put("operators", new ArrayList<String>(r.operators == null ? List.of() : r.operators));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> searchJobMap(search_jobs_service.SearchJobSnapshot r, boolean includeResults) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("job_id", safe(r.jobId));
+        out.put("tenant_uuid", safe(r.tenantUuid));
+        out.put("requested_by", safe(r.requestedBy));
+        out.put("search_type", safe(r.searchType));
+        out.put("query", safe(r.query));
+        out.put("operator", safe(r.operator));
+        out.put("logic", safe(r.logic));
+        ArrayList<LinkedHashMap<String, Object>> criteria = new ArrayList<LinkedHashMap<String, Object>>();
+        for (search_jobs_service.SearchCriterion c : r.criteria) {
+            if (c == null) continue;
+            criteria.add(searchCriterionMap(c));
+        }
+        out.put("criteria", criteria);
+        out.put("case_sensitive", r.caseSensitive);
+        out.put("include_metadata", r.includeMetadata);
+        out.put("include_ocr", r.includeOcr);
+        out.put("status", safe(r.status));
+        out.put("message", safe(r.message));
+        out.put("created_at", safe(r.createdAt));
+        out.put("started_at", safe(r.startedAt));
+        out.put("completed_at", safe(r.completedAt));
+        out.put("processed_count", r.processedCount);
+        out.put("total_count", r.totalCount);
+        out.put("result_count", r.resultCount);
+        out.put("truncated", r.truncated);
+        out.put("queued_ahead", r.queuedAhead);
+        if (includeResults) {
+            ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+            for (search_jobs_service.SearchResultRec row : r.results) {
+                if (row == null) continue;
+                items.add(searchResultMap(row));
+            }
+            out.put("results", items);
+        }
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> searchResultMap(search_jobs_service.SearchResultRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("matter_label", safe(r.matterLabel));
+        out.put("document_uuid", safe(r.documentUuid));
+        out.put("document_title", safe(r.documentTitle));
+        out.put("part_uuid", safe(r.partUuid));
+        out.put("part_label", safe(r.partLabel));
+        out.put("version_uuid", safe(r.versionUuid));
+        out.put("version_label", safe(r.versionLabel));
+        out.put("source", safe(r.source));
+        out.put("mime_type", safe(r.mimeType));
+        out.put("created_at", safe(r.createdAt));
+        out.put("created_by", safe(r.createdBy));
+        out.put("matched_in", safe(r.matchedIn));
+        out.put("snippet", safe(r.snippet));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> searchCriterionMap(search_jobs_service.SearchCriterion r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("query", safe(r.query));
+        out.put("operator", safe(r.operator));
+        out.put("scope", safe(r.scope));
         return out;
     }
 
@@ -4156,6 +4621,7 @@ When features are added or changed in the application, matching API operations s
         LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
         if (r == null) return out;
         out.put("review_uuid", r.reviewUuid);
+        out.put("review_type", r.reviewType);
         out.put("process_uuid", r.processUuid);
         out.put("process_name", r.processName);
         out.put("request_run_uuid", r.requestRunUuid);
@@ -4167,6 +4633,10 @@ When features are added or changed in the application, matching API operations s
         out.put("comment", r.comment);
         out.put("requested_by_user_uuid", r.requestedByUserUuid);
         out.put("reviewed_by_user_uuid", r.reviewedByUserUuid);
+        out.put("assignee_user_uuid", r.assigneeUserUuid);
+        out.put("assignee_role_uuid", r.assigneeRoleUuid);
+        out.put("queue_permission_key", r.queuePermissionKey);
+        out.put("due_at", r.dueAt);
         out.put("created_at", r.createdAt);
         out.put("resolved_at", r.resolvedAt);
         out.put("next_step_order", r.nextStepOrder);
@@ -4534,9 +5004,11 @@ When features are added or changed in the application, matching API operations s
         if (v.isBlank()) {
             String base = safe(templateLabel).trim();
             if (base.isBlank()) base = "assembled";
-            base = base.replaceAll("[^A-Za-z0-9._-]", "_");
+            base = base.replaceAll("[^A-Za-z0-9.]", "_");
             v = base;
         }
+        v = v.replaceAll("[^A-Za-z0-9.]", "_");
+        if (v.isBlank()) v = "assembled";
         if (!v.contains(".")) {
             String e = safe(ext).trim().toLowerCase(Locale.ROOT);
             if (!e.isBlank()) v = v + "." + e;
@@ -4640,6 +5112,43 @@ When features are added or changed in the application, matching API operations s
         if (s.isBlank()) return out;
         out.add(s);
         return out;
+    }
+
+    private static ArrayList<search_jobs_service.SearchCriterion> searchCriteriaList(Map<String, Object> params) {
+        ArrayList<search_jobs_service.SearchCriterion> out = new ArrayList<search_jobs_service.SearchCriterion>();
+        if (params == null) return out;
+
+        Object raw = params.get("criteria");
+        collectSearchCriteria(raw, out);
+        if (!out.isEmpty()) return out;
+
+        String criteriaJson = str(params, "criteria_json");
+        if (!criteriaJson.isBlank()) {
+            try {
+                Object parsed = JSON.readValue(criteriaJson, Object.class);
+                collectSearchCriteria(parsed, out);
+            } catch (Exception ignored) {
+                return new ArrayList<search_jobs_service.SearchCriterion>();
+            }
+        }
+        return out;
+    }
+
+    private static void collectSearchCriteria(Object raw, ArrayList<search_jobs_service.SearchCriterion> out) {
+        if (out == null || raw == null) return;
+        if (raw instanceof List<?> xs) {
+            for (Object item : xs) {
+                collectSearchCriteria(item, out);
+            }
+            return;
+        }
+        if (!(raw instanceof Map<?, ?> m)) return;
+        search_jobs_service.SearchCriterion c = new search_jobs_service.SearchCriterion();
+        c.query = safe(asString(m.get("query")));
+        c.operator = safe(asString(m.get("operator")));
+        c.scope = safe(asString(m.get("scope")));
+        if (safe(c.query).trim().isBlank()) return;
+        out.add(c);
     }
 
     private static List<String> csvOrList(Object raw) {

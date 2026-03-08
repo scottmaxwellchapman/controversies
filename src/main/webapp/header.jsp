@@ -78,7 +78,7 @@
         if ("/index.jsp".equals(h)) return "home";
         if ("/cases.jsp".equals(h) || "/case_lists.jsp".equals(h) || "/case_focus.jsp".equals(h)) return "cases";
         if ("/contacts.jsp".equals(h)) return "contacts";
-        if ("/documents.jsp".equals(h) || "/parts.jsp".equals(h) || "/versions.jsp".equals(h) || "/pdf_redact.jsp".equals(h)) return "documents";
+        if ("/documents.jsp".equals(h) || "/parts.jsp".equals(h) || "/versions.jsp".equals(h) || "/pdf_redact.jsp".equals(h) || "/search.jsp".equals(h)) return "documents";
         if ("/facts.jsp".equals(h)) return "facts";
         if ("/tasks.jsp".equals(h)) return "tasks";
         if ("/omnichannel.jsp".equals(h) || "/omnichannel_manifest.jsp".equals(h)) return "threads";
@@ -99,7 +99,7 @@
         if ("/business_process_reviews.jsp".equals(h)) return "reviews";
         if ("/plugin_manager.jsp".equals(h)) return "plugins";
         if ("/log_viewer.jsp".equals(h)) return "logs";
-        if ("/help_center.jsp".equals(h) || "/help_getting_started.jsp".equals(h) || "/token_guide.jsp".equals(h)) return "info";
+        if ("/help_browser.jsp".equals(h) || "/help_center.jsp".equals(h) || "/help_getting_started.jsp".equals(h) || "/token_guide.jsp".equals(h)) return "info";
         if ("/help_permissions.jsp".equals(h)) return "security";
         if (h.startsWith("/help_")) return "help";
 
@@ -236,6 +236,7 @@
         g.items.add(new MenuNode("Home", "/index.jsp"));
         g.items.add(new MenuNode("Cases", "/cases.jsp"));
         g.items.add(new MenuNode("Contacts", "/contacts.jsp"));
+        g.items.add(new MenuNode("Search", "/search.jsp"));
         g.items.add(new MenuNode("Facts Case Plan", "/facts.jsp"));
         g.items.add(new MenuNode("Tasks", "/tasks.jsp"));
         g.items.add(new MenuNode("Omnichannel Threads", "/omnichannel.jsp"));
@@ -257,17 +258,18 @@
         g.items.add(new MenuNode("Template Library", "/template_library.jsp"));
         g.items.add(new MenuNode("Template Editor", "/template_editor.jsp"));
         MenuNode help = new MenuNode("Help", "");
-        help.children.add(new MenuNode("Help Center", "/help_center.jsp"));
-        help.children.add(new MenuNode("Getting Started (Legal Team)", "/help_getting_started.jsp"));
-        help.children.add(new MenuNode("Case Workflow Guide", "/help_case_workflow.jsp"));
-        help.children.add(new MenuNode("Form Assembly Guide", "/help_form_assembly.jsp"));
-        help.children.add(new MenuNode("Facts Guide (Novice)", "/help_facts_novice.jsp"));
-        help.children.add(new MenuNode("Facts Guide (Expert)", "/help_facts_expert.jsp"));
-        help.children.add(new MenuNode("Tasks Guide (Novice)", "/help_tasks_novice.jsp"));
-        help.children.add(new MenuNode("Tasks Guide (Expert)", "/help_tasks_expert.jsp"));
-        help.children.add(new MenuNode("Threads Guide (Novice)", "/help_threads_novice.jsp"));
-        help.children.add(new MenuNode("Threads Guide (Expert)", "/help_threads_expert.jsp"));
-        help.children.add(new MenuNode("Permissions Guide", "/help_permissions.jsp"));
+        help.children.add(new MenuNode("Help Center", "/help_browser.jsp?topic=help_center"));
+        help.children.add(new MenuNode("Getting Started (Legal Team)", "/help_browser.jsp?topic=getting_started"));
+        help.children.add(new MenuNode("Case Workflow Guide", "/help_browser.jsp?topic=case_workflow"));
+        help.children.add(new MenuNode("Form Assembly Guide", "/help_browser.jsp?topic=form_assembly"));
+        help.children.add(new MenuNode("Facts Guide (Novice)", "/help_browser.jsp?topic=facts_novice"));
+        help.children.add(new MenuNode("Facts Guide (Expert)", "/help_browser.jsp?topic=facts_expert"));
+        help.children.add(new MenuNode("Tasks Guide (Novice)", "/help_browser.jsp?topic=tasks_novice"));
+        help.children.add(new MenuNode("Tasks Guide (Expert)", "/help_browser.jsp?topic=tasks_expert"));
+        help.children.add(new MenuNode("Business Processes Guide (Expert)", "/help_browser.jsp?topic=business_processes_expert"));
+        help.children.add(new MenuNode("Threads Guide (Novice)", "/help_browser.jsp?topic=threads_novice"));
+        help.children.add(new MenuNode("Threads Guide (Expert)", "/help_browser.jsp?topic=threads_expert"));
+        help.children.add(new MenuNode("Permissions Guide", "/help_browser.jsp?topic=permissions_guide"));
         help.children.add(new MenuNode("Token Guide", "/token_guide.jsp"));
         help.children.add(new MenuNode("Markup Notation", "/markup_notation.jsp"));
         g.items.add(help);
@@ -288,7 +290,8 @@
                 || "/document_preview.jsp".equals(h)
                 || "/parts.jsp".equals(h)
                 || "/versions.jsp".equals(h)
-                || "/pdf_redact.jsp".equals(h)) return "documents.access";
+                || "/pdf_redact.jsp".equals(h)
+                || "/search.jsp".equals(h)) return "documents.access";
         if ("/facts.jsp".equals(h)) return "facts.access";
         if ("/tasks.jsp".equals(h)) return "tasks.access";
         if ("/omnichannel.jsp".equals(h) || "/omnichannel_manifest.jsp".equals(h)) return "threads.access";

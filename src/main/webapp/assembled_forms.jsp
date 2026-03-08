@@ -78,7 +78,7 @@
   }
 
   private static String safeFileName(String raw) {
-    String v = safe(raw).trim().replaceAll("[^A-Za-z0-9._-]", "_");
+    String v = safe(raw).trim().replaceAll("[^A-Za-z0-9.]", "_");
     if (v.isBlank()) return "version.bin";
     if (v.length() > 160) return v.substring(v.length() - 160);
     return v;
@@ -137,7 +137,7 @@
     if (partFolder == null) throw new IllegalArgumentException("Part folder unavailable.");
     Path versionDir = partFolder.resolve("version_files");
     Files.createDirectories(versionDir);
-    String finalName = UUID.randomUUID().toString() + "__" + fileNameWithExt(outputName, outputExt);
+    String finalName = UUID.randomUUID().toString().replace("-", "_") + "__" + fileNameWithExt(outputName, outputExt);
     Path out = versionDir.resolve(finalName);
     Files.write(out, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
     return out;

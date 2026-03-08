@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
@@ -140,11 +141,16 @@ public final class api_credentials {
     }
 
     public GeneratedCredential create(String tenantUuid, String label, String createdByUserUuid) throws Exception {
+        return create(tenantUuid, label, createdByUserUuid, "full_access");
+    }
+
+    public GeneratedCredential create(String tenantUuid, String label, String createdByUserUuid, String scope) throws Exception {
         String tu = safeFileToken(tenantUuid);
         if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
 
         String normalizedLabel = normalizeLabel(label);
         if (normalizedLabel.isBlank()) normalizedLabel = "Automation Key";
+        String normalizedScope = normalizeScope(scope);
 
         ReentrantReadWriteLock lock = lockFor(tu);
         lock.writeLock().lock();
@@ -169,7 +175,7 @@ public final class api_credentials {
             stored.label = normalizedLabel;
             stored.api_key = apiKey;
             stored.secret_hash = secretHash;
-            stored.scope = "full_access";
+            stored.scope = normalizedScope;
             stored.created_at = now;
             stored.created_by_user_uuid = safe(createdByUserUuid).trim();
             stored.last_used_at = "";
@@ -180,6 +186,112 @@ public final class api_credentials {
 
             writeLocked(tu, rec);
             return new GeneratedCredential(toPublic(stored), apiKey, apiSecret);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public CredentialRec get(String tenantUuid, String credentialId) throws Exception {
+        String tu = safeFileToken(tenantUuid);
+        String cid = safe(credentialId).trim();
+        if (tu.isBlank() || cid.isBlank()) return null;
+
+        ReentrantReadWriteLock lock = lockFor(tu);
+        lock.readLock().lock();
+        try {
+            ensureLocked(tu);
+            FileRec rec = readLocked(tu);
+            StoredRec stored = findByCredentialId(rec, cid);
+            if (stored == null) return null;
+            return toPublic(stored);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public boolean update(String tenantUuid, String credentialId, String label, String scope) throws Exception {
+        String tu = safeFileToken(tenantUuid);
+        String cid = safe(credentialId).trim();
+        if (tu.isBlank() || cid.isBlank()) return false;
+
+        boolean applyLabel = label != null;
+        boolean applyScope = scope != null;
+        if (!applyLabel && !applyScope) return false;
+
+        String normalizedLabel = normalizeLabel(label);
+        String normalizedScope = normalizeScope(scope);
+
+        ReentrantReadWriteLock lock = lockFor(tu);
+        lock.writeLock().lock();
+        try {
+            ensureLocked(tu);
+            FileRec rec = readLocked(tu);
+            if (rec.credentials == null || rec.credentials.isEmpty()) return false;
+
+            boolean changed = false;
+            for (StoredRec s : rec.credentials) {
+                if (s == null) continue;
+                if (!cid.equals(safe(s.credential_id).trim())) continue;
+
+                if (applyLabel) {
+                    String nextLabel = normalizedLabel.isBlank() ? "Automation Key" : normalizedLabel;
+                    if (!safe(nextLabel).equals(safe(s.label))) {
+                        s.label = nextLabel;
+                        changed = true;
+                    }
+                }
+                if (applyScope) {
+                    if (!safe(normalizedScope).equals(safe(s.scope))) {
+                        s.scope = normalizedScope;
+                        changed = true;
+                    }
+                }
+                break;
+            }
+
+            if (changed) {
+                rec.updated_at = Instant.now().toString();
+                writeLocked(tu, rec);
+            }
+            return changed;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public GeneratedCredential rotateSecret(String tenantUuid, String credentialId) throws Exception {
+        String tu = safeFileToken(tenantUuid);
+        String cid = safe(credentialId).trim();
+        if (tu.isBlank() || cid.isBlank()) return null;
+
+        ReentrantReadWriteLock lock = lockFor(tu);
+        lock.writeLock().lock();
+        try {
+            ensureLocked(tu);
+            FileRec rec = readLocked(tu);
+            if (rec.credentials == null || rec.credentials.isEmpty()) return null;
+
+            StoredRec target = null;
+            for (StoredRec s : rec.credentials) {
+                if (s == null) continue;
+                if (!cid.equals(safe(s.credential_id).trim())) continue;
+                if (s.revoked) return null;
+                target = s;
+                break;
+            }
+            if (target == null) return null;
+
+            String apiKey = safe(target.api_key).trim();
+            if (apiKey.isBlank()) return null;
+
+            String apiSecret = "sec_" + randomToken(24);
+            target.secret_hash = hashSecret(tu, apiKey, apiSecret);
+            target.last_used_at = "";
+            target.last_used_from_ip = "";
+            rec.updated_at = Instant.now().toString();
+            writeLocked(tu, rec);
+
+            return new GeneratedCredential(toPublic(target), apiKey, apiSecret);
         } finally {
             lock.writeLock().unlock();
         }
@@ -253,9 +365,12 @@ public final class api_credentials {
 
             if (matched == null) return new VerificationResult(false, tu, "", "", "");
 
+            String normalizedScope = normalizeScope(matched.scope);
+            boolean scopeChanged = !normalizedScope.equals(safe(matched.scope));
+            if (scopeChanged) matched.scope = normalizedScope;
             rec.updated_at = now;
             writeLocked(tu, rec);
-            return new VerificationResult(true, tu, safe(matched.credential_id), safe(matched.label), safe(matched.scope));
+            return new VerificationResult(true, tu, safe(matched.credential_id), safe(matched.label), normalizedScope);
         } catch (Exception ignored) {
             return new VerificationResult(false, tu, "", "", "");
         } finally {
@@ -329,7 +444,7 @@ public final class api_credentials {
         return new CredentialRec(
                 safe(s.credential_id),
                 safe(s.label),
-                safe(s.scope),
+                normalizeScope(s.scope),
                 safe(s.created_at),
                 safe(s.created_by_user_uuid),
                 safe(s.last_used_at),
@@ -338,10 +453,63 @@ public final class api_credentials {
         );
     }
 
+    private static StoredRec findByCredentialId(FileRec rec, String credentialId) {
+        if (rec == null || rec.credentials == null || rec.credentials.isEmpty()) return null;
+        String cid = safe(credentialId).trim();
+        if (cid.isBlank()) return null;
+        for (StoredRec s : rec.credentials) {
+            if (s == null) continue;
+            if (cid.equals(safe(s.credential_id).trim())) return s;
+        }
+        return null;
+    }
+
     private static String normalizeLabel(String label) {
         String v = safe(label).trim();
         if (v.length() > 120) v = v.substring(0, 120).trim();
         return v;
+    }
+
+    private static String normalizeScope(String scope) {
+        String raw = safe(scope).trim();
+        if (raw.isBlank()) return "full_access";
+
+        String lower = raw.toLowerCase(Locale.ROOT);
+        if ("full_access".equals(lower) || "full".equals(lower) || "all".equals(lower) || "*".equals(lower)) {
+            return "full_access";
+        }
+
+        if (lower.startsWith("profile:")) {
+            String profile = safe(raw.substring(raw.indexOf(':') + 1)).trim().toLowerCase(Locale.ROOT);
+            if (profile.isBlank()) return "full_access";
+            return "profile:" + profile;
+        }
+
+        String payload = raw;
+        if (lower.startsWith("permissions:")) {
+            payload = raw.substring(raw.indexOf(':') + 1);
+        }
+        LinkedHashSet<String> keys = normalizeScopeKeys(payload);
+        if (keys.isEmpty() || keys.contains("full_access")) return "full_access";
+        return "permissions:" + String.join(",", keys);
+    }
+
+    private static LinkedHashSet<String> normalizeScopeKeys(String raw) {
+        LinkedHashSet<String> out = new LinkedHashSet<String>();
+        String scope = safe(raw).trim();
+        if (scope.isBlank()) return out;
+        String[] parts = scope.split("[,;|\\s]+");
+        for (String part : parts) {
+            String key = safe(part).trim().toLowerCase(Locale.ROOT);
+            if (key.isBlank()) continue;
+            if ("full_access".equals(key) || "full".equals(key) || "all".equals(key) || "*".equals(key)) {
+                out.clear();
+                out.add("full_access");
+                return out;
+            }
+            out.add(key);
+        }
+        return out;
     }
 
     private static String hashSecret(String tenantUuid, String apiKey, String apiSecret) throws Exception {

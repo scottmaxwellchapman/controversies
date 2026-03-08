@@ -374,7 +374,7 @@ public final class pdf_redaction_service {
     public static String suggestRedactedFileName(String sourceFileName) {
         String name = safe(sourceFileName).trim();
         if (name.isBlank()) name = "document.pdf";
-        name = name.replaceAll("[^A-Za-z0-9._-]", "_");
+        name = name.replaceAll("[^A-Za-z0-9.]", "_");
         if (name.length() > 140) name = name.substring(name.length() - 140);
 
         String lower = name.toLowerCase(Locale.ROOT);

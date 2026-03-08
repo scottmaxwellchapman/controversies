@@ -12,6 +12,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -38,6 +39,7 @@ public class contacts_test {
             nativeInput.countrySecondary = "US";
             contacts.ContactRec nativeRec = store.createNative(tenantUuid, nativeInput);
             assertFalse(contacts.isClioLocked(nativeRec));
+            assertFalse(contacts.isExternalReadOnly(nativeRec));
             assertEquals("200 Oak Ave", nativeRec.streetSecondary);
 
             contacts.ContactInput update = new contacts.ContactInput();
@@ -58,11 +60,64 @@ public class contacts_test {
             clioInput.emailPrimary = "clio@example.test";
             contacts.ContactRec clioRec = store.upsertClio(tenantUuid, clioInput, "clio-123", "2026-03-04T00:00:00Z");
             assertTrue(contacts.isClioLocked(clioRec));
+            assertTrue(contacts.isExternalReadOnly(clioRec));
 
             contacts.ContactInput attemptUpdate = new contacts.ContactInput();
             attemptUpdate.displayName = "Should Fail";
             assertThrows(IllegalStateException.class, () -> store.updateNative(tenantUuid, clioRec.uuid, attemptUpdate));
             assertThrows(IllegalStateException.class, () -> store.trash(tenantUuid, clioRec.uuid));
+        } finally {
+            deleteTenantDirQuiet(tenantUuid);
+        }
+    }
+
+    @Test
+    void contact_change_events_trigger_bpm_runs_and_external_sources_are_read_only() throws Exception {
+        String tenantUuid = "contacts-events-test-" + UUID.randomUUID();
+        try {
+            contacts store = contacts.defaultStore();
+            business_process_manager bpm = business_process_manager.defaultService();
+
+            business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+            process.name = "Contact Change Watcher";
+            business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+            trigger.type = "contact.changed";
+            process.triggers.add(trigger);
+            business_process_manager.ProcessStep step = new business_process_manager.ProcessStep();
+            step.stepId = "log";
+            step.order = 10;
+            step.action = "log_note";
+            step.settings.put("message", "Contact changed: {{event.contact_uuid}}");
+            process.steps.add(step);
+            bpm.saveProcess(tenantUuid, process);
+
+            contacts.ContactInput in = new contacts.ContactInput();
+            in.displayName = "Native Event Contact";
+            contacts.ContactRec nativeRec = store.createNative(tenantUuid, in);
+
+            contacts.ContactInput update = new contacts.ContactInput();
+            update.displayName = "Native Event Contact Updated";
+            assertTrue(store.updateNative(tenantUuid, nativeRec.uuid, update));
+            assertTrue(store.trash(tenantUuid, nativeRec.uuid));
+            assertTrue(store.restore(tenantUuid, nativeRec.uuid));
+
+            contacts.ContactInput externalIn = new contacts.ContactInput();
+            externalIn.displayName = "Office Contact";
+            contacts.ContactRec externalRec = store.upsertExternal(
+                    tenantUuid,
+                    externalIn,
+                    "office365:directory",
+                    "o365-contact-1",
+                    "2026-03-05T00:00:00Z"
+            );
+            assertNotNull(externalRec);
+            assertTrue(contacts.isExternalReadOnly(externalRec));
+            assertThrows(IllegalStateException.class, () -> store.updateNative(tenantUuid, externalRec.uuid, new contacts.ContactInput()));
+            assertThrows(IllegalStateException.class, () -> store.trash(tenantUuid, externalRec.uuid));
+            assertThrows(IllegalStateException.class, () -> store.restore(tenantUuid, externalRec.uuid));
+
+            List<business_process_manager.RunResult> runs = bpm.listRuns(tenantUuid, 100);
+            assertEquals(5, runs.size());
         } finally {
             deleteTenantDirQuiet(tenantUuid);
         }

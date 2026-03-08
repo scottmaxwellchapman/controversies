@@ -15,6 +15,7 @@
 <%@ page import="net.familylawandprobate.controversies.matter_contacts" %>
 <%@ page import="net.familylawandprobate.controversies.matters" %>
 <%@ page import="net.familylawandprobate.controversies.integrations.clio.ClioIntegrationService" %>
+<%@ page import="net.familylawandprobate.controversies.integrations.office365.Office365ContactsSyncService" %>
 
 <%@ include file="security.jspf" %>
 <%
@@ -178,8 +179,8 @@
       try {
         contacts.ContactRec current = contactStore.getByUuid(tenantUuid, contactUuid);
         if (current == null) throw new IllegalStateException("Contact not found.");
-        if (contacts.isClioLocked(current)) {
-          throw new IllegalStateException("This contact is synced from Clio and is read-only here. Edit it in Clio.");
+        if (contacts.isExternalReadOnly(current)) {
+          throw new IllegalStateException(contacts.readOnlyMessage(current));
         }
         contactStore.updateNative(tenantUuid, contactUuid, toInput(request));
         String matterUuid = safe(request.getParameter("matter_uuid")).trim();
@@ -229,6 +230,20 @@
       }
     }
 
+    if ("sync_office365_contacts_now".equalsIgnoreCase(action)) {
+      try {
+        Office365ContactsSyncService.SyncResult result = new Office365ContactsSyncService().syncContacts(tenantUuid, true);
+        if (result.ok) {
+          message = "Office 365 contact sync completed. Upserted " + result.contactsUpserted
+                  + " contact(s) from " + result.sourcesProcessed + " source(s).";
+        } else {
+          error = "Office 365 contact sync finished with issues: " + safe(result.error);
+        }
+      } catch (Exception ex) {
+        error = "Unable to sync Office 365 contacts: " + safe(ex.getMessage());
+      }
+    }
+
     if ("import_vcards".equalsIgnoreCase(action)) {
       String payload = safe(request.getParameter("vcard_payload"));
       String matterUuid = safe(request.getParameter("import_matter_uuid")).trim();
@@ -265,7 +280,8 @@
   if (show.isBlank()) show = "active";
   String reqAction = safe(request.getParameter("action")).trim().toLowerCase(Locale.ROOT);
   String sourceFilter = safe(request.getParameter("source")).trim().toLowerCase(Locale.ROOT);
-  if (!"native".equals(sourceFilter) && !"clio".equals(sourceFilter)) sourceFilter = "all";
+  if (!"native".equals(sourceFilter) && !"clio".equals(sourceFilter)
+      && !"office365".equals(sourceFilter) && !"external".equals(sourceFilter)) sourceFilter = "all";
   String matterFilter = safe(request.getParameter("matter")).trim();
 
   List<matters.MatterRec> mattersAll = new ArrayList<matters.MatterRec>();
@@ -298,9 +314,12 @@
     if ("active".equals(show) && c.trashed) continue;
     if ("archived".equals(show) && !c.trashed) continue;
 
-    boolean clioLocked = contacts.isClioLocked(c);
-    String source = clioLocked ? "clio" : "native";
-    if (!"all".equals(sourceFilter) && !sourceFilter.equals(source)) continue;
+    boolean externalReadOnly = contacts.isExternalReadOnly(c);
+    String source = contacts.sourceType(c);
+    if ("native".equals(sourceFilter) && !"native".equals(source)) continue;
+    if ("clio".equals(sourceFilter) && !"clio".equals(source)) continue;
+    if ("office365".equals(sourceFilter) && !source.startsWith("office365")) continue;
+    if ("external".equals(sourceFilter) && !externalReadOnly) continue;
 
     List<matter_contacts.LinkRec> contactLinks = linksByContact.getOrDefault(safe(c.uuid), List.of());
     if (!matterFilter.isBlank()) {
@@ -389,11 +408,16 @@
   <div class="section-head">
     <div>
       <h1 style="margin:0;">Contacts</h1>
-      <div class="meta">Manage native contacts and Clio-synced contacts linked to matters. Clio contacts are read-only in Controversies.</div>
+      <div class="meta">Manage native contacts and externally synced contacts linked to matters. Externally synced contacts are read-only in Controversies.</div>
       <div class="meta" style="margin-top:4px;">Field names align with Microsoft Graph contact conventions (`displayName`, `givenName`, `surname`, email/phone/address slots) and vCard interoperability.</div>
     </div>
     <div style="display:flex; gap:8px; flex-wrap:wrap;">
       <a class="btn btn-ghost" href="<%= ctx %>/contacts.jsp?action=export_vcard_all">Export All vCards</a>
+      <form method="post" action="<%= ctx %>/contacts.jsp" style="margin:0;">
+        <input type="hidden" name="action" value="sync_office365_contacts_now" />
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <button class="btn btn-ghost" type="submit">Sync Office 365 Contacts Now</button>
+      </form>
       <form method="post" action="<%= ctx %>/contacts.jsp" style="margin:0;">
         <input type="hidden" name="action" value="sync_clio_contacts_now" />
         <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
@@ -576,6 +600,8 @@
         <select name="source">
           <option value="all" <%= "all".equals(sourceFilter) ? "selected" : "" %>>All</option>
           <option value="native" <%= "native".equals(sourceFilter) ? "selected" : "" %>>Native</option>
+          <option value="external" <%= "external".equals(sourceFilter) ? "selected" : "" %>>External</option>
+          <option value="office365" <%= "office365".equals(sourceFilter) ? "selected" : "" %>>Office 365</option>
           <option value="clio" <%= "clio".equals(sourceFilter) ? "selected" : "" %>>Clio</option>
         </select>
       </label>
@@ -618,11 +644,12 @@
             contacts.ContactRec c = filtered.get(i);
             if (c == null) continue;
             String contactUuid = safe(c.uuid);
-            boolean clioLocked = contacts.isClioLocked(c);
+            boolean externalReadOnly = contacts.isExternalReadOnly(c);
+            String sourceLabel = contacts.sourceDisplayName(c);
             String rowId = "edit_contact_" + i;
             List<matter_contacts.LinkRec> cLinks = linksByContact.getOrDefault(contactUuid, List.of());
             String selectedNativeMatter = "";
-            if (!clioLocked) {
+            if (!externalReadOnly) {
               for (matter_contacts.LinkRec link : cLinks) {
                 if (link == null) continue;
                 if ("native".equalsIgnoreCase(safe(link.source))) {
@@ -641,9 +668,9 @@
             <% } %>
           </td>
           <td>
-            <% if (clioLocked) { %>
-              <span class="badge badge-info">Clio</span>
-              <div class="muted" style="margin-top:6px;">Read-only. Edit in Clio.</div>
+            <% if (externalReadOnly) { %>
+              <span class="badge badge-info"><%= esc(sourceLabel) %></span>
+              <div class="muted" style="margin-top:6px;">Read-only. Edit in <%= esc(sourceLabel) %>.</div>
             <% } else { %>
               <span class="badge">Native</span>
             <% } %>
@@ -662,34 +689,42 @@
                } %>
           </td>
           <td>
-            <% if (!clioLocked) { %>
+            <% if (!externalReadOnly) { %>
               <button class="btn btn-ghost" type="button" onclick="toggleEdit('<%= rowId %>')">Edit</button>
             <% } else { %>
-              <button class="btn btn-ghost" type="button" disabled title="Edit in Clio">Edit (Clio only)</button>
+              <button class="btn btn-ghost" type="button" disabled title="Edit in source system">Edit (read-only)</button>
             <% } %>
             <a class="btn btn-ghost" href="<%= ctx %>/contacts.jsp?action=export_vcard&uuid=<%= URLEncoder.encode(contactUuid, StandardCharsets.UTF_8) %>">Export vCard</a>
             <% if (!c.trashed) { %>
-              <form method="post" action="<%= ctx %>/contacts.jsp?<%= baseQs %>" style="display:inline;">
-                <input type="hidden" name="action" value="archive_contact" />
-                <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-                <input type="hidden" name="uuid" value="<%= esc(contactUuid) %>" />
-                <button class="btn btn-ghost" type="submit" onclick="return confirm('Archive this contact?');">Archive</button>
-              </form>
+              <% if (!externalReadOnly) { %>
+                <form method="post" action="<%= ctx %>/contacts.jsp?<%= baseQs %>" style="display:inline;">
+                  <input type="hidden" name="action" value="archive_contact" />
+                  <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                  <input type="hidden" name="uuid" value="<%= esc(contactUuid) %>" />
+                  <button class="btn btn-ghost" type="submit" onclick="return confirm('Archive this contact?');">Archive</button>
+                </form>
+              <% } else { %>
+                <button class="btn btn-ghost" type="button" disabled title="Read-only contact">Archive</button>
+              <% } %>
             <% } else { %>
-              <form method="post" action="<%= ctx %>/contacts.jsp?<%= baseQs %>" style="display:inline;">
-                <input type="hidden" name="action" value="restore_contact" />
-                <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
-                <input type="hidden" name="uuid" value="<%= esc(contactUuid) %>" />
-                <button class="btn" type="submit">Restore</button>
-              </form>
+              <% if (!externalReadOnly) { %>
+                <form method="post" action="<%= ctx %>/contacts.jsp?<%= baseQs %>" style="display:inline;">
+                  <input type="hidden" name="action" value="restore_contact" />
+                  <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                  <input type="hidden" name="uuid" value="<%= esc(contactUuid) %>" />
+                  <button class="btn" type="submit">Restore</button>
+                </form>
+              <% } else { %>
+                <button class="btn btn-ghost" type="button" disabled title="Read-only contact">Restore</button>
+              <% } %>
             <% } %>
           </td>
         </tr>
 
         <tr id="<%= rowId %>" style="display:none;">
           <td colspan="4">
-            <% if (clioLocked) { %>
-              <div class="alert alert-error" style="margin:8px 0;">This contact is synced from Clio and cannot be edited in Controversies. Edit it in Clio, then run contact sync again.</div>
+            <% if (externalReadOnly) { %>
+              <div class="alert alert-error" style="margin:8px 0;"><%= esc(contacts.readOnlyMessage(c)) %> Run sync again after edits in the source system.</div>
             <% } else { %>
               <div class="card" style="margin:8px 0; padding:14px; background:rgba(0,0,0,0.02);">
                 <form class="form" method="post" action="<%= ctx %>/contacts.jsp?<%= baseQs %>">

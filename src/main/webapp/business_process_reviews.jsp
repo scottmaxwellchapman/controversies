@@ -146,8 +146,8 @@
   String message = "1".equals(request.getParameter("done")) ? "Review decision saved." : null;
   String error = safe(request.getParameter("error")).trim();
 
-  List<business_process_manager.HumanReviewTask> pending = bpm.listReviews(tenantUuid, true, 200);
-  List<business_process_manager.HumanReviewTask> recent = bpm.listReviews(tenantUuid, false, 200);
+  List<business_process_manager.HumanReviewTask> pending = bpm.listReviewsForUser(tenantUuid, userUuid, true, 200);
+  List<business_process_manager.HumanReviewTask> recent = bpm.listReviewsForUser(tenantUuid, userUuid, false, 200);
 %>
 
 <jsp:include page="header.jsp" />
@@ -189,11 +189,28 @@
         Event: <code><%= esc(safe(r.eventType)) %></code>
       </div>
       <div class="meta" style="margin-top:4px;">
+        Review type: <code><%= esc(safe(r.reviewType)) %></code>
+      </div>
+      <div class="meta" style="margin-top:4px;">
         Created: <%= esc(safe(r.createdAt)) %>
         <% if (!userDisplay(r.requestedByUserUuid).isBlank()) { %>
           • Requested by: <code><%= esc(userDisplay(r.requestedByUserUuid)) %></code>
         <% } %>
       </div>
+      <% if (!safe(r.assigneeUserUuid).isBlank() || !safe(r.assigneeRoleUuid).isBlank()) { %>
+        <div class="meta" style="margin-top:4px;">
+          Assigned:
+          <% if (!safe(r.assigneeUserUuid).isBlank()) { %>
+            user <code><%= esc(safe(r.assigneeUserUuid)) %></code>
+          <% } %>
+          <% if (!safe(r.assigneeRoleUuid).isBlank()) { %>
+            <%= safe(r.assigneeUserUuid).isBlank() ? "" : " • " %>role <code><%= esc(safe(r.assigneeRoleUuid)) %></code>
+          <% } %>
+        </div>
+      <% } %>
+      <% if (!safe(r.dueAt).isBlank()) { %>
+        <div class="meta" style="margin-top:4px;">Due: <%= esc(safe(r.dueAt)) %></div>
+      <% } %>
 
       <% if (!safe(r.instructions).isBlank()) { %>
         <div style="margin-top:8px;"><%= esc(safe(r.instructions)) %></div>
@@ -237,6 +254,7 @@
       <thead>
         <tr>
           <th>Created</th>
+          <th>Type</th>
           <th>Process</th>
           <th>Status</th>
           <th>Resolved</th>
@@ -249,6 +267,7 @@
       %>
         <tr>
           <td><%= esc(safe(r.createdAt)) %></td>
+          <td><code><%= esc(safe(r.reviewType)) %></code></td>
           <td><%= esc(safe(r.processName)) %></td>
           <td><%= esc(safe(r.status)) %></td>
           <td><%= esc(safe(r.resolvedAt)) %></td>

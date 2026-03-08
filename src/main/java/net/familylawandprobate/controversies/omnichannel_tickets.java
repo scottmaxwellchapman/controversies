@@ -587,7 +587,7 @@ public final class omnichannel_tickets {
             Files.createDirectories(folder);
 
             String attachmentUuid = UUID.randomUUID().toString();
-            String storageName = attachmentUuid + "__" + safeName;
+            String storageName = attachmentUuid.replace("-", "_") + "__" + safeName;
             Path normalizedFolder = folder.toAbsolutePath().normalize();
             Path p = normalizedFolder.resolve(storageName).normalize();
             if (!p.startsWith(normalizedFolder)) {
@@ -857,9 +857,9 @@ public final class omnichannel_tickets {
 
             Path versionDir = partStore.partFolder(tu, matterUuid, docUuid, partUuid).resolve("version_files");
             Files.createDirectories(versionDir);
-            String fileName = "thread_report_" + safe(ticket.uuid).replaceAll("[^A-Za-z0-9._-]", "_") + "_"
-                    + nowIso().replace(':', '-') + ".pdf";
-            Path reportPath = versionDir.resolve(UUID.randomUUID().toString() + "__" + fileName).toAbsolutePath().normalize();
+            String fileName = ("thread_report_" + safe(ticket.uuid) + "_" + nowIso() + ".pdf")
+                    .replaceAll("[^A-Za-z0-9.]", "_");
+            Path reportPath = versionDir.resolve(UUID.randomUUID().toString().replace("-", "_") + "__" + fileName).toAbsolutePath().normalize();
             pdf_redaction_service.requirePathWithinTenant(reportPath, tu, "Omnichannel thread report path");
 
             writeTicketReportPdf(reportPath, tu, tid, ticket, matter, messages, attachments, assignments);
@@ -1917,7 +1917,7 @@ public final class omnichannel_tickets {
 
     private static String sanitizeFileName(String raw) {
         String s = safe(raw).trim().replaceAll("[\\r\\n]+", " ");
-        s = s.replaceAll("[^A-Za-z0-9._-]", "_");
+        s = s.replaceAll("[^A-Za-z0-9.]", "_");
         while (s.contains("__")) s = s.replace("__", "_");
         while (s.startsWith(".")) s = s.substring(1);
         if (s.length() > 180) s = s.substring(0, 180);

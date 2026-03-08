@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -73,8 +74,13 @@ public class pdf_redaction_service_test {
             String sha = pdf_redaction_service.sha256(output);
             assertEquals(64, sha.length());
 
-            String suggested = pdf_redaction_service.suggestRedactedFileName("Motion to Compel.pdf");
+            String suggested = pdf_redaction_service.suggestRedactedFileName("Motion-to Compel(v1).pdf");
             assertTrue(suggested.toLowerCase().endsWith("_redacted.pdf"));
+            assertTrue(suggested.matches("[A-Za-z0-9._]+"));
+            assertFalse(suggested.contains("-"));
+            assertFalse(suggested.contains(" "));
+            assertFalse(suggested.contains("("));
+            assertFalse(suggested.contains(")"));
         } finally {
             deleteRecursively(work);
         }

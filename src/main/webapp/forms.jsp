@@ -82,13 +82,16 @@
   private static String tokenPreview(String token) {
     String t = safe(token).trim();
     if (t.isBlank()) return "";
+    if (t.startsWith("{{") && t.endsWith("}}") && t.length() > 4) return t;
+    if (t.startsWith("[") && t.endsWith("]") && t.length() > 2) return t;
+    if (t.startsWith("{") && t.endsWith("}") && t.indexOf('/') >= 0) return t;
     return "{{" + t + "}}";
   }
 
   private static String fileSafe(String s) {
     String t = safe(s).trim();
     if (t.isBlank()) return "assembled-form";
-    t = t.replaceAll("[^A-Za-z0-9._-]", "_");
+    t = t.replaceAll("[^A-Za-z0-9.]", "_");
     if (t.length() > 80) t = t.substring(0, 80);
     return t;
   }
@@ -368,10 +371,12 @@
   byte[] templateBytes = new byte[0];
   String templateLabel = "";
   String templateExt = "txt";
+  boolean templateIsPdf = false;
 
   if (selectedTemplate != null) {
     templateLabel = safe(selectedTemplate.label);
     templateExt = assembler.normalizeExtension(safe(selectedTemplate.fileExt));
+    templateIsPdf = "pdf".equalsIgnoreCase(templateExt);
     templateBytes = templateStore.readBytes(tenantUuid, selectedTemplate.uuid);
   }
 
@@ -380,7 +385,10 @@
   LinkedHashSet<String> usedTokens = preview.usedTokens;
   LinkedHashSet<String> missingTokens = preview.missingTokens;
   LinkedHashMap<String, Integer> tokenCounts = preview.tokenCounts;
-  LinkedHashMap<String, String> workspaceTokenDefaults = assembler.workspaceTokenDefaults(sourcePreviewText, mergeValues);
+  LinkedHashMap<String, String> workspaceTokenDefaults =
+      templateIsPdf
+          ? assembler.workspacePdfFieldDefaults(templateBytes, mergeValues)
+          : assembler.workspaceTokenDefaults(sourcePreviewText, mergeValues);
 
   document_assembler.StyledPreview styledPreview = assembler.previewStyled(templateBytes, templateExt);
   ArrayList<document_assembler.StyledSegment> workspaceSegments =

@@ -189,7 +189,7 @@ public final class pdf_version_background_jobs {
         String sourceFileName = sourcePath.getFileName() == null ? "document.pdf" : sourcePath.getFileName().toString();
         String suffix = "ocr".equals(mode) ? "_sandwiched" : "_flattened";
         String outputFileName = suggestOutputFileName(sourceFileName, suffix);
-        Path outputPath = outputDir.resolve(UUID.randomUUID().toString() + "__" + outputFileName).toAbsolutePath().normalize();
+        Path outputPath = outputDir.resolve(UUID.randomUUID().toString().replace("-", "_") + "__" + outputFileName).toAbsolutePath().normalize();
         pdf_redaction_service.requirePathWithinTenant(outputPath, tu, "Output PDF path");
 
         String sourceLabel = safe(source.versionLabel).trim();
@@ -284,7 +284,7 @@ public final class pdf_version_background_jobs {
     }
 
     private static String suggestOutputFileName(String sourceFileName, String suffix) {
-        String name = safe(sourceFileName).trim().replaceAll("[^A-Za-z0-9._-]", "_");
+        String name = safe(sourceFileName).trim().replaceAll("[^A-Za-z0-9.]", "_");
         if (name.isBlank()) name = "document.pdf";
         String lower = name.toLowerCase(Locale.ROOT);
         if (lower.endsWith(".pdf") && name.length() > 4) {

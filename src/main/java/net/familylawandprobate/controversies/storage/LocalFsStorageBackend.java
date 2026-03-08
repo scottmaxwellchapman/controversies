@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -27,26 +28,35 @@ public final class LocalFsStorageBackend implements DocumentStorageBackend {
 
     @Override
     public byte[] get(String key) throws Exception {
-        Path p = pathFor(normalizeKey(key));
+        Path p = resolveReadPath(key);
         if (!Files.exists(p)) return new byte[0];
         return Files.readAllBytes(p);
     }
 
     @Override
     public void delete(String key) throws Exception {
-        Files.deleteIfExists(pathFor(normalizeKey(key)));
+        String strict = normalizeKey(key);
+        String legacy = normalizeKeyLegacy(key);
+        Files.deleteIfExists(pathFor(strict));
+        if (!strict.equals(legacy)) {
+            Files.deleteIfExists(pathFor(legacy));
+        }
     }
 
     @Override
     public boolean exists(String key) {
-        return Files.exists(pathFor(normalizeKey(key)));
+        try {
+            return Files.exists(resolveReadPath(key));
+        } catch (Exception ex) {
+            return false;
+        }
     }
 
     @Override
     public Map<String, String> metadata(String key) throws Exception {
         LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
         String normalized = normalizeKey(key);
-        Path p = pathFor(normalized);
+        Path p = resolveReadPath(key);
         out.put("key", normalized);
         out.put("backend", "local");
         if (!Files.exists(p)) return out;
@@ -58,14 +68,54 @@ public final class LocalFsStorageBackend implements DocumentStorageBackend {
     }
 
     private Path pathFor(String key) {
-        return root.resolve(key).normalize();
+        Path p = root.resolve(key).normalize();
+        if (!p.startsWith(root)) throw new IllegalArgumentException("invalid key");
+        return p;
     }
 
     private static String normalizeKey(String key) {
+        ArrayList<String> segments = splitSegments(normalizeKeyLegacy(key));
+        if (segments.isEmpty()) throw new IllegalArgumentException("invalid key");
+        int tail = segments.size() - 1;
+        String fileName = sanitizeFilenameSegment(segments.get(tail));
+        if (fileName.isBlank()) fileName = "_";
+        segments.set(tail, fileName);
+        return String.join("/", segments);
+    }
+
+    private static String normalizeKeyLegacy(String key) {
         String cleaned = safe(key).replace("\\", "/").trim();
         cleaned = cleaned.replaceAll("^/+", "");
-        if (cleaned.contains("..")) throw new IllegalArgumentException("invalid key");
+        if (cleaned.isBlank() || cleaned.contains("..")) throw new IllegalArgumentException("invalid key");
         return cleaned;
+    }
+
+    private Path resolveReadPath(String key) {
+        String strict = normalizeKey(key);
+        Path strictPath = pathFor(strict);
+        if (Files.exists(strictPath)) return strictPath;
+        String legacy = normalizeKeyLegacy(key);
+        if (!strict.equals(legacy)) {
+            Path legacyPath = pathFor(legacy);
+            if (Files.exists(legacyPath)) return legacyPath;
+        }
+        return strictPath;
+    }
+
+    private static ArrayList<String> splitSegments(String key) {
+        String[] parts = safe(key).split("/");
+        ArrayList<String> out = new ArrayList<String>();
+        for (int i = 0; i < parts.length; i++) {
+            String seg = safe(parts[i]).trim();
+            if (seg.isBlank() || ".".equals(seg)) continue;
+            if ("..".equals(seg)) throw new IllegalArgumentException("invalid key");
+            out.add(seg);
+        }
+        return out;
+    }
+
+    private static String sanitizeFilenameSegment(String fileName) {
+        return safe(fileName).replaceAll("[^A-Za-z0-9.]", "_");
     }
 
     private static String safeFileToken(String s) {

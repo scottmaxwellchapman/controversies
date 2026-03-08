@@ -721,7 +721,7 @@ public final class ClioIntegrationService {
                 "clio-version.bin"
         );
         String name = safeFileName(preferred);
-        Path output = outputDir.resolve(java.util.UUID.randomUUID().toString() + "__" + name);
+        Path output = outputDir.resolve(java.util.UUID.randomUUID().toString().replace("-", "_") + "__" + name);
         byte[] bytes = downloaded == null ? new byte[0] : downloaded.bytes;
         Files.write(output, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
         return output;
@@ -737,7 +737,7 @@ public final class ClioIntegrationService {
     }
 
     private static String safeFileName(String value) {
-        String v = safe(value).trim().replaceAll("[^A-Za-z0-9._-]", "_");
+        String v = safe(value).trim().replaceAll("[^A-Za-z0-9.]", "_");
         if (v.isBlank()) return "clio-version.bin";
         if (v.length() > 140) return v.substring(v.length() - 140);
         return v;

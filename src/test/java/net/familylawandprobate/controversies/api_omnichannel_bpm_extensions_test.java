@@ -138,6 +138,9 @@ public class api_omnichannel_bpm_extensions_test {
         boolean foundUpdateTask = false;
         boolean foundSetCustomObjectRecordField = false;
         boolean foundUpdateCustomObjectRecord = false;
+        boolean foundRequestInformation = false;
+        boolean foundDeadlineRule = false;
+        boolean foundAuditSnapshot = false;
         for (Object row : asList(out.get("items"))) {
             if (!(row instanceof Map<?, ?> map)) continue;
             String action = safe(String.valueOf(map.get("action")));
@@ -146,12 +149,18 @@ public class api_omnichannel_bpm_extensions_test {
             if ("update_task".equals(action)) foundUpdateTask = true;
             if ("set_custom_object_record_field".equals(action)) foundSetCustomObjectRecordField = true;
             if ("update_custom_object_record".equals(action)) foundUpdateCustomObjectRecord = true;
+            if ("request_information".equals(action)) foundRequestInformation = true;
+            if ("deadline_rule_calculation".equals(action)) foundDeadlineRule = true;
+            if ("audit_snapshot".equals(action)) foundAuditSnapshot = true;
         }
         assertTrue(foundUpdateThread);
         assertTrue(foundSetDocumentField);
         assertTrue(foundUpdateTask);
         assertTrue(foundSetCustomObjectRecordField);
         assertTrue(foundUpdateCustomObjectRecord);
+        assertTrue(foundRequestInformation);
+        assertTrue(foundDeadlineRule);
+        assertTrue(foundAuditSnapshot);
     }
 
     @Test

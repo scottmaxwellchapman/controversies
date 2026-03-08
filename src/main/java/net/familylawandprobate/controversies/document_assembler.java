@@ -29,6 +29,9 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import javax.swing.text.Document;
 import javax.swing.text.rtf.RTFEditorKit;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
+import org.apache.pdfbox.pdmodel.interactive.form.PDField;
 import org.apache.poi.hwpf.HWPFDocument;
 import org.apache.poi.hwpf.extractor.WordExtractor;
 import org.apache.poi.hwpf.usermodel.Range;
@@ -58,7 +61,8 @@ import org.xml.sax.InputSource;
 /**
  * document_assembler
  *
- * Performs token replacement for .docx/.doc/.rtf/.odt/.txt templates.
+ * Performs token replacement for .docx/.doc/.rtf/.odt/.txt templates
+ * and AcroForm field filling for .pdf templates.
  * Supported placeholder formats:
  *   {{token_name}}
  *   [Name of defendant]  -> lookup key "name_of_defendant"
@@ -121,11 +125,24 @@ public final class document_assembler {
         }
     }
 
+    private static final class PdfFieldBinding {
+        final String fieldName;
+        final String tokenLiteral;
+        final String replacement;
+
+        PdfFieldBinding(String fieldName, String tokenLiteral, String replacement) {
+            this.fieldName = safe(fieldName).trim();
+            this.tokenLiteral = safe(tokenLiteral).trim();
+            this.replacement = replacement;
+        }
+    }
+
     public PreviewResult preview(byte[] templateBytes, String templateExtOrName, Map<String, String> values) {
         String ext = effectiveExtension(templateExtOrName, templateBytes);
         String source;
 
         if ("doc".equals(ext) && isLikelyRtfContent(templateBytes, null)) ext = "rtf";
+        if ("pdf".equals(ext)) return previewPdf(templateBytes, values);
 
         try {
             if ("docx".equals(ext)) {
@@ -163,6 +180,10 @@ public final class document_assembler {
         String ext = effectiveExtension(templateExtOrName, templateBytes);
         if ("doc".equals(ext) && isLikelyRtfContent(templateBytes, null)) ext = "rtf";
 
+        if ("pdf".equals(ext)) {
+            byte[] out = assemblePdf(templateBytes, values);
+            return new AssembledFile(out, "pdf", "application/pdf");
+        }
         if ("docx".equals(ext)) {
             byte[] out = assembleDocx(templateBytes, values);
             return new AssembledFile(out, "docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
@@ -447,6 +468,22 @@ public final class document_assembler {
     }
 
     /**
+     * Returns UI token defaults for PDF AcroForm templates. Keys are token literals
+     * aligned with forms.jsp token controls and values are resolved field values.
+     */
+    public LinkedHashMap<String, String> workspacePdfFieldDefaults(byte[] templateBytes, Map<String, String> values) {
+        LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
+        ArrayList<PdfFieldBinding> bindings = collectPdfFieldBindings(templateBytes, values);
+        for (PdfFieldBinding binding : bindings) {
+            if (binding == null) continue;
+            String literal = safe(binding.tokenLiteral).trim();
+            if (literal.isBlank()) continue;
+            out.putIfAbsent(literal, safe(binding.replacement));
+        }
+        return out;
+    }
+
+    /**
      * Applies token replacement logic directly to plain text using the same resolver
      * and token grammar as template assembly.
      */
@@ -477,6 +514,7 @@ public final class document_assembler {
         if (looksLikeOdfZip(bytes)) return "odt";
         if (looksLikeOleDoc(bytes)) return "doc";
         if (looksLikeRtf(bytes)) return "rtf";
+        if (looksLikePdf(bytes)) return "pdf";
         return ext;
     }
 
@@ -529,6 +567,15 @@ public final class document_assembler {
         if (bytes == null || bytes.length < 5) return false;
         String prefix = new String(bytes, 0, Math.min(bytes.length, 24), StandardCharsets.US_ASCII).toLowerCase(Locale.ROOT);
         return prefix.contains("{\\rtf");
+    }
+
+    private static boolean looksLikePdf(byte[] bytes) {
+        if (bytes == null || bytes.length < 5) return false;
+        return (bytes[0] & 0xFF) == 0x25
+                && (bytes[1] & 0xFF) == 0x50
+                && (bytes[2] & 0xFF) == 0x44
+                && (bytes[3] & 0xFF) == 0x46
+                && (bytes[4] & 0xFF) == 0x2D;
     }
 
     private static void ensureDocxTemplateTools(String ext) {
@@ -823,9 +870,145 @@ public final class document_assembler {
         return new String(bytes, StandardCharsets.UTF_8);
     }
 
+    private static PreviewResult previewPdf(byte[] templateBytes, Map<String, String> values) {
+        ArrayList<PdfFieldBinding> bindings = collectPdfFieldBindings(templateBytes, values);
+        LinkedHashSet<String> used = new LinkedHashSet<String>();
+        LinkedHashSet<String> missing = new LinkedHashSet<String>();
+        LinkedHashMap<String, Integer> counts = new LinkedHashMap<String, Integer>();
+
+        for (PdfFieldBinding binding : bindings) {
+            if (binding == null) continue;
+            String literal = safe(binding.tokenLiteral).trim();
+            if (literal.isBlank()) continue;
+
+            used.add(literal);
+            counts.put(literal, counts.getOrDefault(literal, 0) + 1);
+
+            String replacement = safe(binding.replacement);
+            if (replacement.isBlank()) missing.add(literal);
+        }
+
+        // Keep forms.jsp workspace text empty for PDF templates so rendered preview
+        // uses actual PDF pages (with field highlights) instead of plain text mode.
+        return new PreviewResult("", "", used, missing, counts);
+    }
+
+    private static ArrayList<PdfFieldBinding> collectPdfFieldBindings(byte[] templateBytes, Map<String, String> values) {
+        ArrayList<PdfFieldBinding> out = new ArrayList<PdfFieldBinding>();
+        if (templateBytes == null || templateBytes.length == 0) return out;
+
+        try (PDDocument doc = PDDocument.load(templateBytes)) {
+            if (doc.getDocumentCatalog() == null) return out;
+            PDAcroForm form = doc.getDocumentCatalog().getAcroForm();
+            if (form == null) return out;
+
+            for (PDField field : form.getFieldTree()) {
+                if (field == null) continue;
+                String fieldName = safe(field.getFullyQualifiedName()).trim();
+                if (fieldName.isBlank()) continue;
+
+                String literal = pdfFieldTokenLiteral(fieldName);
+                if (literal.isBlank()) continue;
+
+                String replacement = resolvePdfFieldValue(values, fieldName);
+                if (replacement == null) {
+                    try {
+                        String current = safe(field.getValueAsString());
+                        if (!current.isBlank()) replacement = current;
+                    } catch (Exception ignored) {}
+                }
+
+                out.add(new PdfFieldBinding(fieldName, literal, replacement));
+            }
+        } catch (Exception ignored) {}
+        return out;
+    }
+
+    static String pdfFieldTokenLiteral(String fieldName) {
+        String name = safe(fieldName).trim();
+        if (name.isBlank()) return "";
+        if (isValidCurlyKey(name)) return "{{" + name + "}}";
+        return "[" + name + "]";
+    }
+
+    private static String resolvePdfFieldValue(Map<String, String> values, String fieldName) {
+        String name = safe(fieldName).trim();
+        if (name.isBlank() || values == null || values.isEmpty()) return null;
+
+        String literal = pdfFieldTokenLiteral(name);
+        if (!literal.isBlank()) {
+            String literalValue = lookupValue(values, literal);
+            if (literalValue != null) return literalValue;
+        }
+
+        String direct = lookupValue(values, name);
+        if (direct != null) return direct;
+
+        String normalized = normalizeLooseKey(name);
+        if (!normalized.isBlank()) {
+            String resolved = lookupValue(
+                    values,
+                    normalized,
+                    "kv." + normalized,
+                    "case." + normalized,
+                    "tenant." + normalized,
+                    "{{" + normalized + "}}",
+                    "[" + normalized + "]"
+            );
+            if (resolved != null) return resolved;
+        }
+
+        if (isValidCurlyKey(name)) {
+            String curly = lookupValue(values, "{{" + name + "}}");
+            if (curly != null) return curly;
+        }
+
+        String bracket = lookupValue(values, "[" + name + "]");
+        if (bracket != null) return bracket;
+        return null;
+    }
+
     // -----------------------------
     // Assembly by format
     // -----------------------------
+    private static byte[] assemblePdf(byte[] templateBytes, Map<String, String> values) throws Exception {
+        if (templateBytes == null || templateBytes.length == 0) return new byte[0];
+
+        try (PDDocument doc = PDDocument.load(templateBytes);
+             ByteArrayOutputStream out = new ByteArrayOutputStream(Math.max(4096, templateBytes.length + 4096))) {
+            if (doc.getDocumentCatalog() != null) {
+                PDAcroForm form = doc.getDocumentCatalog().getAcroForm();
+                if (form != null) {
+                    boolean changed = false;
+                    for (PDField field : form.getFieldTree()) {
+                        if (field == null) continue;
+                        String fieldName = safe(field.getFullyQualifiedName()).trim();
+                        if (fieldName.isBlank()) continue;
+
+                        String value = resolvePdfFieldValue(values, fieldName);
+                        if (value == null) continue;
+
+                        try {
+                            field.setValue(value);
+                            changed = true;
+                        } catch (Exception ignored) {
+                            // Ignore unsupported field/value combinations and continue.
+                        }
+                    }
+
+                    if (changed) {
+                        form.setNeedAppearances(true);
+                        try {
+                            form.refreshAppearances();
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+            doc.save(out);
+            return out.toByteArray();
+        }
+    }
+
     private static byte[] assembleTxt(byte[] templateBytes, Map<String, String> values) {
         String src = extractTxtText(templateBytes);
         TokenScan scan = scanTokens(src, values);

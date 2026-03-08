@@ -85,7 +85,7 @@ mvn -version
      - `http://localhost:8080/` (redirects to HTTPS)
 
 4. **Handle the certificate warning**
-   The first run creates a development self-signed certificate in `data/sec/ssl/keystore.p12`. Your browser may show a warning; proceed for local development.
+   By default, startup auto-selects TLS material in this order: custom keystore, certbot, then generated self-signed cert. If no custom/certbot inputs are set, first run creates a development self-signed certificate in `data/sec/ssl/keystore.p12`. Your browser may show a warning; proceed for local development.
 
 5. **Log in (default bootstrap account)**
    - Tenant label: `Default Tenant`
@@ -269,6 +269,8 @@ Platform notes:
 - Startup uses Java APIs (`Desktop`, NIO `Path`, embedded Tomcat) instead of shell-specific launch code.
 - HTTPS dev keystore generation uses `keytool` from `java.home/bin` and falls back to `keytool` on `PATH`.
 - File paths are built with `java.nio.file.Path` for separator compatibility.
+- Runtime TLS settings are read from env/JVM options first, then `data/sec/ssl/runtime_ssl.properties` (written by Tenant Settings TLS/SSL Runtime form).
+- Certbot PKCS12 conversion uses `openssl` (or the value of `CONTROVERSIES_CERTBOT_OPENSSL_CMD`) and supports Windows/macOS/Linux/FreeBSD command lookup.
 
 Command quick references:
 
@@ -397,7 +399,8 @@ Operational notes:
 
 - Data is persisted as XML/files under `data/`.
 - A random pepper file is maintained at `data/sec/random_pepper.bin`.
-- Dev HTTPS keystore is auto-generated at `data/sec/ssl/keystore.p12`.
+- Dev HTTPS keystore is auto-generated at `data/sec/ssl/keystore.p12` when custom/certbot TLS sources are not configured.
+- Runtime TLS mode and certbot/custom path options can be stored in `data/sec/ssl/runtime_ssl.properties`; keystore password should remain in `CONTROVERSIES_SSL_KEYSTORE_PASSWORD`.
 - Tenant bootstrap credentials are intended for first-run setup; change credentials and role assignments promptly.
 - API discovery endpoints are unauthenticated by design; operation endpoints require tenant API credentials.
 - API server errors return a generic `server_error` response while detailed error context is logged internally.
@@ -447,6 +450,7 @@ For all non-discovery API endpoints, include:
 - `X-API-Secret: <api_secret>`
 
 API credentials are generated/revoked by tenant admins in **Tenant Settings → API Credentials**.
+Credential scopes support `full_access`, `profile:<profile-key>`, or `permissions:<comma-separated permission keys>`.
 
 ### Endpoint patterns
 
@@ -501,7 +505,10 @@ Current API coverage includes:
 - Authentication + introspection:
   - `auth.whoami`, `activity.recent`
 - API credentials:
-  - `api.credentials.list`, `api.credentials.create`, `api.credentials.revoke`
+  - `api.credentials.list`, `api.credentials.get`, `api.credentials.create`
+  - `api.credentials.update`, `api.credentials.rotate_secret`, `api.credentials.revoke`
+- Permission metadata:
+  - `permissions.catalog`
 - Tenant configuration:
   - `tenant.settings.get`, `tenant.settings.update`, `tenant.fields.get`, `tenant.fields.update`
 - Users, roles, permissions:
@@ -530,6 +537,7 @@ Current API coverage includes:
   - `texas_law.status`, `texas_law.sync_now`, `texas_law.list_dir`, `texas_law.search`, `texas_law.render_page`
 - Business process manager:
   - `bpm.actions.catalog`, `bpm.processes.*`, `bpm.events.trigger`, `bpm.runs.*`, `bpm.reviews.*`
+  - optional stale/incomplete run aging alarms (tenant settings + tenant-admin email notifications)
 
 Use `/api/v1/capabilities` for the authoritative operation list.
 
@@ -570,16 +578,37 @@ Built-in BPM step actions now include:
 - `add_task_note`
 - `update_fact`
 - `refresh_facts_report`
+- `document_assembly`
+- `notice_communication`
+- `send_for_signature`
+- `conflict_check`
+- `deadline_rule_calculation`
+- `court_filing_service`
+- `payment_fee_verification`
+- `wait_for_external_event`
+- `request_information`
+- `escalation`
+- `audit_snapshot`
 - `human_review`
 
 Use API operation `bpm.actions.catalog` for machine-readable action metadata including required/optional settings and reversibility.
+
+Optional aging alarms for stale/incomplete runs:
+
+- `bpm_aging_alarm_enabled` (`true`/`false`)
+- `bpm_aging_alarm_interval_minutes` (default `15`)
+- `bpm_aging_alarm_running_stale_minutes` (default `60`)
+- `bpm_aging_alarm_review_stale_minutes` (default `1440`)
+- `bpm_aging_alarm_max_issues_per_scan` (default `200`)
+
+When enabled, the background scheduler scans run health and queues notification emails to tenant administrators for newly detected stale/incomplete runs.
 
 Undo/redo support:
 
 - Reversible out of the box:
   - `set_case_field`, `set_case_list_item`, `set_document_field`, `set_tenant_field`, `set_task_field`
 - Non-reversible by design:
-  - logging, variable/event actions, thread/task updates, note actions, and facts-report refresh actions
+  - logging, variable/event actions, review/notice/escalation actions, thread/task updates, note actions, and facts-report refresh actions
 
 ---
 
@@ -599,6 +628,9 @@ Expected for local dev self-signed cert. Continue after trusting/accepting for l
 
 ### `keytool not found`
 Use a full JDK (not JRE-only runtime) or ensure `keytool` is available on `PATH`, then re-run startup.
+
+### `OpenSSL was not found` in certbot mode
+Install OpenSSL or set `CONTROVERSIES_CERTBOT_OPENSSL_CMD` to a valid executable path, then restart.
 
 ### Unsupported or invalid template uploads
 - If you see `Unsupported template type`, use one of: `.docx`, `.doc`, `.rtf`, `.odt`, or `.txt`.

@@ -93,13 +93,18 @@ public class tenant_wikis_test {
             tenant_wikis.AttachmentRec rec = store.saveAttachment(
                     tenantUuid,
                     page.uuid,
-                    "sample.txt",
+                    "sample file-(v1).txt",
                     "text/plain",
                     bytes,
                     "editor@example.test"
             );
             assertNotNull(rec);
             assertFalse(rec.uuid.isBlank());
+            assertTrue(rec.fileName.matches("[A-Za-z0-9._]+"));
+            assertFalse(rec.fileName.contains("-"));
+            assertFalse(rec.fileName.contains(" "));
+            assertFalse(rec.fileName.contains("("));
+            assertFalse(rec.fileName.contains(")"));
 
             List<tenant_wikis.AttachmentRec> attachments = store.listAttachments(tenantUuid, page.uuid);
             assertEquals(1, attachments.size());
@@ -108,6 +113,9 @@ public class tenant_wikis_test {
             assertNotNull(attachmentPath);
             assertTrue(Files.exists(attachmentPath));
             assertEquals("attachment data", Files.readString(attachmentPath, StandardCharsets.UTF_8));
+            String storedFileName = attachmentPath.getFileName() == null ? "" : attachmentPath.getFileName().toString();
+            assertTrue(storedFileName.matches("[A-Za-z0-9._]+"));
+            assertFalse(storedFileName.contains("-"));
         } finally {
             deleteQuietly(tenantDir);
         }

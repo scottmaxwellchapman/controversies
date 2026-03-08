@@ -17,6 +17,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -93,7 +94,7 @@ public class version_upload_service_test {
         req.totalChunks = totalChunks;
         req.expectedFileSha256 = sha256(allBytes);
         req.expectedBytes = allBytes.length;
-        req.uploadFileName = "test-upload.pdf";
+        req.uploadFileName = "test upload-(v1).pdf";
         req.versionLabel = "Uploaded v1";
         req.source = "uploaded";
         req.mimeType = "application/pdf";
@@ -108,6 +109,12 @@ public class version_upload_service_test {
         assertNotNull(committed.storagePath);
         assertTrue(Files.exists(committed.storagePath));
         assertArrayEquals(allBytes, Files.readAllBytes(committed.storagePath));
+        String storedName = committed.storagePath.getFileName() == null ? "" : committed.storagePath.getFileName().toString();
+        assertTrue(storedName.matches("[A-Za-z0-9._]+"));
+        assertFalse(storedName.contains("-"));
+        assertFalse(storedName.contains(" "));
+        assertFalse(storedName.contains("("));
+        assertFalse(storedName.contains(")"));
 
         List<part_versions.VersionRec> rows = part_versions.defaultStore().listAll(tenant, matter, doc.uuid, part.uuid);
         assertEquals(1, rows.size());

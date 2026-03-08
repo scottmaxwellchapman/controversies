@@ -18,6 +18,16 @@ import java.util.Map;
 
 import javax.imageio.ImageIO;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
+import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
+import org.apache.pdfbox.pdmodel.interactive.form.PDField;
+import org.apache.pdfbox.rendering.ImageType;
+import org.apache.pdfbox.rendering.PDFRenderer;
+
 /**
  * Cross-platform, pure-Java preview renderer.
  *
@@ -47,6 +57,7 @@ public final class document_image_preview {
     private static final String DEFAULT_FONT_FAMILY = "Times New Roman";
     private static final int DEFAULT_FONT_PX = 24;
     private static final int TAB_SPACES = 4;
+    private static final float PDF_PREVIEW_DPI = 144f;
 
     public static final class PageImage {
         public final int pageIndex;
@@ -243,11 +254,13 @@ public final class document_image_preview {
                 segments.add(new document_assembler.StyledSegment(safe(plain == null ? "" : plain.sourceText), ""));
                 warning = "Full fidelity image rendering for " + previewExt.toUpperCase(Locale.ROOT) + " is not available in pure Java mode; using text layout preview.";
                 engine = "Pure Java Text Renderer";
+            } else if ("pdf".equals(previewExt)) {
+                return renderPdf(previewBytes, needles, pageLimit);
             } else {
                 return new PreviewResult(
                         new ArrayList<PageImage>(),
                         new LinkedHashMap<String, ArrayList<HitRect>>(),
-                        "Image preview is currently supported for DOCX/DOC/RTF/ODT/TXT templates.",
+                        "Image preview is currently supported for DOCX/DOC/RTF/ODT/TXT/PDF templates.",
                         ""
                 );
             }
@@ -380,6 +393,164 @@ public final class document_image_preview {
                     safe(engineLabel)
             );
         }
+    }
+
+    private static PreviewResult renderPdf(byte[] pdfBytes,
+                                           ArrayList<String> needles,
+                                           int maxPages) {
+        LinkedHashMap<String, ArrayList<HitRect>> hitRects = new LinkedHashMap<String, ArrayList<HitRect>>();
+        ArrayList<String> tokenNeedles = needles == null ? new ArrayList<String>() : needles;
+        for (String needle : tokenNeedles) {
+            String key = safe(needle).trim();
+            if (key.isBlank()) continue;
+            hitRects.put(key, new ArrayList<HitRect>());
+        }
+
+        try (PDDocument doc = PDDocument.load(pdfBytes)) {
+            int totalPages = Math.max(0, doc.getNumberOfPages());
+            int pageCount = Math.min(Math.max(0, maxPages), totalPages);
+            ArrayList<PageImage> pages = new ArrayList<PageImage>(pageCount);
+
+            if (pageCount > 0) {
+                PDFRenderer renderer = new PDFRenderer(doc);
+                for (int pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+                    BufferedImage image = renderer.renderImageWithDPI(pageIndex, PDF_PREVIEW_DPI, ImageType.RGB);
+                    pages.add(new PageImage(
+                            pageIndex,
+                            image.getWidth(),
+                            image.getHeight(),
+                            encodePngBase64(image),
+                            ""
+                    ));
+                }
+            }
+
+            if (!tokenNeedles.isEmpty() && pageCount > 0 && doc.getDocumentCatalog() != null) {
+                PDAcroForm form = doc.getDocumentCatalog().getAcroForm();
+                if (form != null) {
+                    for (PDField field : form.getFieldTree()) {
+                        if (field == null) continue;
+                        String fieldName = safe(field.getFullyQualifiedName()).trim();
+                        if (fieldName.isBlank()) continue;
+                        String tokenLiteral = document_assembler.pdfFieldTokenLiteral(fieldName);
+
+                        for (PDAnnotationWidget widget : field.getWidgets()) {
+                            if (widget == null) continue;
+                            int pageIndex = widgetPageIndex(doc, widget);
+                            if (pageIndex < 0 || pageIndex >= pageCount) continue;
+
+                            PageImage pageImage = pageByIndex(pages, pageIndex);
+                            if (pageImage == null) continue;
+
+                            HitRect hit = widgetToHitRect(doc.getPage(pageIndex), widget.getRectangle(), pageImage);
+                            if (hit == null) continue;
+
+                            for (String needle : tokenNeedles) {
+                                if (!pdfNeedleMatches(needle, tokenLiteral, fieldName)) continue;
+                                ArrayList<HitRect> out = hitRects.get(needle);
+                                if (out == null) {
+                                    out = new ArrayList<HitRect>();
+                                    hitRects.put(needle, out);
+                                }
+                                out.add(hit);
+                            }
+                        }
+                    }
+                }
+            }
+
+            String warning = "";
+            if (totalPages > pageCount) warning = "Preview truncated to " + pageCount + " page(s).";
+            return new PreviewResult(pages, hitRects, warning, "PDF Renderer");
+        } catch (Exception ex) {
+            return new PreviewResult(
+                    new ArrayList<PageImage>(),
+                    hitRects,
+                    "Image preview unavailable: " + safe(ex.getMessage()),
+                    ""
+            );
+        }
+    }
+
+    private static boolean pdfNeedleMatches(String needle, String tokenLiteral, String fieldName) {
+        String n = safe(needle).trim();
+        if (n.isBlank()) return false;
+
+        String literal = safe(tokenLiteral).trim();
+        String field = safe(fieldName).trim();
+
+        if (!literal.isBlank() && (n.equals(literal) || n.equalsIgnoreCase(literal))) return true;
+        if (!field.isBlank() && (n.equals(field) || n.equalsIgnoreCase(field))) return true;
+
+        String normalizedNeedle = normalizeTokenLookupKey(n);
+        if (normalizedNeedle.isBlank()) return false;
+
+        if (!literal.isBlank() && normalizedNeedle.equals(normalizeTokenLookupKey(literal))) return true;
+        return !field.isBlank() && normalizedNeedle.equals(normalizeTokenLookupKey(field));
+    }
+
+    private static int widgetPageIndex(PDDocument doc, PDAnnotationWidget widget) {
+        if (doc == null || widget == null) return -1;
+
+        PDPage directPage = widget.getPage();
+        if (directPage != null) {
+            int total = Math.max(0, doc.getNumberOfPages());
+            for (int i = 0; i < total; i++) {
+                if (doc.getPage(i) == directPage) return i;
+            }
+        }
+
+        int total = Math.max(0, doc.getNumberOfPages());
+        for (int i = 0; i < total; i++) {
+            PDPage page = doc.getPage(i);
+            if (page == null) continue;
+            try {
+                List<PDAnnotation> annotations = page.getAnnotations();
+                if (annotations == null) continue;
+                for (PDAnnotation ann : annotations) {
+                    if (ann == null) continue;
+                    if (ann == widget) return i;
+                    try {
+                        if (ann.getCOSObject() == widget.getCOSObject()) return i;
+                    } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {}
+        }
+        return -1;
+    }
+
+    private static HitRect widgetToHitRect(PDPage page, PDRectangle widgetRect, PageImage pageImage) {
+        if (page == null || widgetRect == null || pageImage == null) return null;
+        int width = Math.max(1, pageImage.width);
+        int height = Math.max(1, pageImage.height);
+
+        PDRectangle pageBox = page.getCropBox();
+        if (pageBox == null) pageBox = page.getMediaBox();
+        if (pageBox == null) return null;
+
+        double pageWidth = Math.max(1.0d, pageBox.getWidth());
+        double pageHeight = Math.max(1.0d, pageBox.getHeight());
+        double scaleX = width / pageWidth;
+        double scaleY = height / pageHeight;
+
+        double xPt = widgetRect.getLowerLeftX() - pageBox.getLowerLeftX();
+        double yPt = widgetRect.getLowerLeftY() - pageBox.getLowerLeftY();
+        double wPt = Math.max(1.0d, widgetRect.getWidth());
+        double hPt = Math.max(1.0d, widgetRect.getHeight());
+
+        int w = Math.max(1, (int) Math.round(wPt * scaleX));
+        int h = Math.max(1, (int) Math.round(hPt * scaleY));
+
+        int x = (int) Math.round(xPt * scaleX);
+        int yFromBottom = (int) Math.round(yPt * scaleY);
+        int y = height - (yFromBottom + h);
+
+        x = clamp(x, 0, Math.max(0, width - 1));
+        y = clamp(y, 0, Math.max(0, height - 1));
+        if (x + w > width) w = Math.max(1, width - x);
+        if (y + h > height) h = Math.max(1, height - y);
+
+        return new HitRect(pageImage.pageIndex, x, y, w, h);
     }
 
     private static PreviewResult rasterize(ArrayList<document_assembler.StyledSegment> segments,

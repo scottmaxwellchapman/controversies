@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
@@ -772,6 +773,217 @@ public class business_process_manager_test {
         assertEquals(1, pending.size());
     }
 
+    @Test
+    void human_review_assignment_requires_assigned_user_for_completion() throws Exception {
+        String tenant = "tenant-bpm-review-assignee-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Assigned Human Review";
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "manual";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep review = new business_process_manager.ProcessStep();
+        review.stepId = "review";
+        review.order = 10;
+        review.action = "human_review";
+        review.settings.put("title", "Assigned reviewer required");
+        review.settings.put("assignee_user_uuid", "assigned-user");
+        review.settings.put("required_input_keys", "decision");
+        process.steps.add(review);
+
+        business_process_manager.ProcessStep after = new business_process_manager.ProcessStep();
+        after.stepId = "after";
+        after.order = 20;
+        after.action = "set_variable";
+        after.settings.put("name", "post_review_flag");
+        after.settings.put("value", "yes");
+        process.steps.add(after);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, process);
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                Map.of(),
+                "tester",
+                "test"
+        );
+        assertEquals("waiting_human_review", safe(run.status));
+
+        List<business_process_manager.HumanReviewTask> pending = bpm.listReviews(tenant, true, 20);
+        assertEquals(1, pending.size());
+        String reviewUuid = pending.get(0).reviewUuid;
+
+        LinkedHashMap<String, String> input = new LinkedHashMap<String, String>();
+        input.put("decision", "approved");
+
+        IllegalArgumentException denied = assertThrows(
+                IllegalArgumentException.class,
+                () -> bpm.completeReview(tenant, reviewUuid, true, "other-user", input, "Not assigned")
+        );
+        assertTrue(safe(denied.getMessage()).toLowerCase().contains("assigned"));
+
+        business_process_manager.HumanReviewTask done = bpm.completeReview(
+                tenant,
+                reviewUuid,
+                true,
+                "assigned-user",
+                input,
+                "Approved"
+        );
+        assertEquals("approved", safe(done.status));
+        assertEquals("completed", safe(done.resumeStatus));
+
+        business_process_manager.RunResult original = bpm.getRunResult(tenant, run.runUuid);
+        assertEquals("completed", safe(original == null ? "" : original.status));
+    }
+
+    @Test
+    void supports_deadline_rule_calculation_action_and_case_field_write() throws Exception {
+        String tenant = "tenant-bpm-deadline-rule-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        matters.MatterRec matter = matters.defaultStore().create(
+                tenant,
+                "Deadline Matter",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+        );
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Deadline Rule";
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "manual";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep deadline = new business_process_manager.ProcessStep();
+        deadline.stepId = "deadline";
+        deadline.order = 10;
+        deadline.action = "deadline_rule_calculation";
+        deadline.settings.put("trigger_date", "2026-01-05");
+        deadline.settings.put("days_offset", "5");
+        deadline.settings.put("matter_uuid", "{{event.matter_uuid}}");
+        deadline.settings.put("field_key", "computed_deadline");
+        process.steps.add(deadline);
+
+        business_process_manager.ProcessStep audit = new business_process_manager.ProcessStep();
+        audit.stepId = "audit";
+        audit.order = 20;
+        audit.action = "audit_snapshot";
+        audit.settings.put("message", "Deadline calculated");
+        audit.settings.put("include_keys", "vars.last_deadline_value");
+        process.steps.add(audit);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, process);
+
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                Map.of("matter_uuid", matter.uuid),
+                "tester",
+                "test"
+        );
+        assertEquals("completed", safe(run.status));
+
+        LinkedHashMap<String, String> fields = new LinkedHashMap<String, String>(case_fields.defaultStore().read(tenant, matter.uuid));
+        assertEquals("2026-01-10", safe(fields.get("computed_deadline")));
+    }
+
+    @Test
+    void sends_aging_alarm_email_to_tenant_admin_and_dedupes() throws Exception {
+        String tenant = "tenant-bpm-aging-alarm-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, minimalProcess("Aging Alarm", "manual"));
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                Map.of(),
+                "tester",
+                "test"
+        );
+        assertEquals("completed", safe(run.status));
+
+        Path runPath = Paths.get("data", "tenants", tenant, "bpm", "runs", run.runUuid + ".xml").toAbsolutePath();
+        String staleStartedAt = Instant.now().minusSeconds(6 * 3600).toString();
+        replaceInFile(runPath, "status=\"completed\"", "status=\"running\"");
+        replaceInFile(runPath, "started_at=\"" + safe(run.startedAt) + "\"", "started_at=\"" + staleStartedAt + "\"");
+
+        users_roles users = users_roles.defaultStore();
+        users.ensure(tenant);
+        String adminRoleUuid = "";
+        for (users_roles.RoleRec role : users.listRoles(tenant)) {
+            if (role == null || !role.enabled) continue;
+            if ("true".equalsIgnoreCase(safe(role.permissions.get("tenant_admin")))) {
+                adminRoleUuid = safe(role.uuid);
+                break;
+            }
+        }
+        assertFalse(adminRoleUuid.isBlank());
+        String adminEmail = "tenant-admin+" + UUID.randomUUID() + "@example.test";
+        users_roles.UserRec adminUser = users.createUser(
+                tenant,
+                adminEmail,
+                adminRoleUuid,
+                true,
+                "StrongTestPassword!234".toCharArray()
+        );
+        assertNotNull(adminUser);
+
+        tenant_settings settings = tenant_settings.defaultStore();
+        LinkedHashMap<String, String> cfg = settings.read(tenant);
+        cfg.put("email_provider", "smtp");
+        cfg.put("email_from_address", "no-reply@example.test");
+        cfg.put("email_smtp_host", "localhost");
+        cfg.put("email_smtp_port", "25");
+        cfg.put("email_smtp_auth", "false");
+        settings.write(tenant, cfg);
+
+        business_process_manager.AgingAlarmEmailResult first = bpm.sendAgingRunAlarmEmails(
+                tenant,
+                30,
+                60,
+                50,
+                "tester"
+        );
+        assertEquals(1, first.detectedIssues);
+        assertEquals(1, first.newlyAlarmedIssues);
+        assertEquals(1, first.emailsQueued);
+        assertTrue(first.recipients.contains(adminEmail));
+
+        Path queuePath = Paths.get("data", "tenants", tenant, "sync", "notification_email_queue.xml").toAbsolutePath();
+        String queueXmlFirst = Files.readString(queuePath, StandardCharsets.UTF_8);
+        assertTrue(queueXmlFirst.contains(adminEmail));
+        assertTrue(queueXmlFirst.contains("BPM aging alarm"));
+        assertEquals(1, countOccurrences(queueXmlFirst, "<email>"));
+
+        business_process_manager.AgingAlarmEmailResult second = bpm.sendAgingRunAlarmEmails(
+                tenant,
+                30,
+                60,
+                50,
+                "tester"
+        );
+        assertEquals(1, second.detectedIssues);
+        assertEquals(0, second.newlyAlarmedIssues);
+        assertEquals(0, second.emailsQueued);
+
+        String queueXmlSecond = Files.readString(queuePath, StandardCharsets.UTF_8);
+        assertEquals(queueXmlFirst, queueXmlSecond);
+    }
+
     private static business_process_manager.ProcessDefinition minimalProcess(String name, String triggerType) {
         business_process_manager.ProcessDefinition p = new business_process_manager.ProcessDefinition();
         p.name = name;
@@ -805,6 +1017,21 @@ public class business_process_manager_test {
         String current = Files.readString(path, StandardCharsets.UTF_8);
         assertTrue(current.contains(target));
         Files.writeString(path, current.replace(target, replacement), StandardCharsets.UTF_8);
+    }
+
+    private static int countOccurrences(String text, String token) {
+        String src = safe(text);
+        String needle = safe(token);
+        if (src.isBlank() || needle.isBlank()) return 0;
+        int count = 0;
+        int index = 0;
+        while (true) {
+            index = src.indexOf(needle, index);
+            if (index < 0) break;
+            count++;
+            index += needle.length();
+        }
+        return count;
     }
 
     private static String safe(String s) {

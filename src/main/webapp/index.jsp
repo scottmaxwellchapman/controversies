@@ -1,5 +1,6 @@
 <%@ page contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
+<%@ page import="net.familylawandprobate.controversies.installation_state" %>
 
 <%
   boolean tenantLoggedInIndex =
@@ -9,6 +10,18 @@
   boolean userLoggedInIndex =
     session.getAttribute(users_roles.S_USER_UUID) != null &&
     !String.valueOf(session.getAttribute(users_roles.S_USER_UUID)).trim().isBlank();
+
+  boolean installCompleteIndex = false;
+  try {
+    installCompleteIndex = installation_state.defaultStore().isCompleted();
+  } catch (Exception ignored) {
+    installCompleteIndex = false;
+  }
+
+  if (!installCompleteIndex) {
+    response.sendRedirect(request.getContextPath() + "/install.jsp");
+    return;
+  }
 %>
 
 <%@ include file="header.jsp" %>
