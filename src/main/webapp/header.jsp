@@ -655,6 +655,7 @@
 
     // Keep one logout endpoint (recommended: make /logout.jsp clear BOTH tenant+user)
     String logoutHref = ctx + "/logout.jsp";
+    String brandIconHref = ctx + "/branding/project-icon-512.png";
 %>
 
 <!doctype html>
@@ -663,6 +664,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Controversies</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="<%= ctx %>/branding/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="<%= ctx %>/branding/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="<%= ctx %>/branding/apple-touch-icon.png" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -680,7 +684,10 @@
                 <details class="dropdown nav-dropdown">
                     <summary class="dropdown-trigger btn-sm" aria-label="Open navigation menu">
                         <span class="dropdown-trigger-label">
-                            <span class="brand-link">Controversies</span>
+                            <span class="brand-lockup">
+                                <img class="brand-mark" src="<%= esc(brandIconHref) %>" alt="" aria-hidden="true" width="22" height="22" decoding="async" />
+                                <span class="brand-link">Controversies</span>
+                            </span>
                         </span>
                         <span class="chevron" aria-hidden="true">▾</span>
                     </summary>
@@ -711,7 +718,10 @@
                     </div>
                 </details>
             <% } else { %>
-                <span class="brand-link" aria-label="Controversies">Controversies</span>
+                <span class="brand-lockup" aria-label="Controversies">
+                    <img class="brand-mark" src="<%= esc(brandIconHref) %>" alt="" aria-hidden="true" width="22" height="22" decoding="async" />
+                    <span class="brand-link">Controversies</span>
+                </span>
             <% } %>
 
             <div class="header-ui-controls" aria-label="Display controls">

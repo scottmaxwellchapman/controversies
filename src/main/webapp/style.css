@@ -500,6 +500,21 @@ body{
 }
 
 /* App name */
+.brand-lockup{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.brand-mark{
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 0.35rem;
+  object-fit: cover;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
 .brand-link{
   font-weight: 700;
   letter-spacing: -0.01em;
