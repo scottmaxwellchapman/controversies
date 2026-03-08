@@ -35,7 +35,7 @@ String csrfToken = csrfForRender(request);
 
 <section class="card">
   <h1 style="margin:0;">Search</h1>
-  <div class="meta" style="margin-top:6px;">Queue asynchronous search jobs across document part versions with selectable operators and case sensitivity.</div>
+  <div class="meta" style="margin-top:6px;">Queue asynchronous search jobs across built-in search types (including document versions and case conflicts) with selectable operators and case sensitivity.</div>
 </section>
 
 <section class="card" style="margin-top:12px;">

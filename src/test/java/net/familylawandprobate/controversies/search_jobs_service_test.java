@@ -2,7 +2,9 @@ package net.familylawandprobate.controversies;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -305,6 +307,183 @@ public class search_jobs_service_test {
         assertNotNull(orDone);
         assertEquals("completed", orDone.status);
         assertFalse(orDone.results.isEmpty());
+    }
+
+    @Test
+    void document_search_supports_docx_text_extraction() throws Exception {
+        String tenant = "tenant-search-docx-" + UUID.randomUUID();
+        String requestedBy = "search-docx-" + UUID.randomUUID() + "@test.local";
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+        matters.MatterRec matterRec = matters.defaultStore().create(tenant, "DOCX Search Matter", "", "", "", "", "");
+        String matter = matterRec.uuid;
+
+        documents.DocumentRec doc = documents.defaultStore().create(
+                tenant,
+                matter,
+                "DOCX Search Doc",
+                "pleading",
+                "motion",
+                "draft",
+                "Tester",
+                "work_product",
+                "",
+                "",
+                ""
+        );
+        document_parts.PartRec part = document_parts.defaultStore().create(
+                tenant,
+                matter,
+                doc.uuid,
+                "Main Part",
+                "lead",
+                "1",
+                "",
+                "Tester",
+                ""
+        );
+
+        Path partFolder = document_parts.defaultStore().partFolder(tenant, matter, doc.uuid, part.uuid);
+        Files.createDirectories(partFolder.resolve("version_files"));
+        Path versionPath = partFolder.resolve("version_files").resolve("search-source.docx");
+        Files.write(versionPath, minimalDocx("Orion Extraction Phrase"), java.nio.file.StandardOpenOption.CREATE_NEW);
+
+        part_versions.defaultStore().create(
+                tenant,
+                matter,
+                doc.uuid,
+                part.uuid,
+                "DOCX Candidate",
+                "uploaded",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "",
+                String.valueOf(Files.size(versionPath)),
+                versionPath.toUri().toString(),
+                "Tester",
+                "docx searchable",
+                true
+        );
+
+        search_jobs_service.SearchJobRequest req = new search_jobs_service.SearchJobRequest();
+        req.tenantUuid = tenant;
+        req.requestedBy = requestedBy;
+        req.searchType = "document_part_versions";
+        req.query = "Orion Extraction Phrase";
+        req.operator = "contains";
+        req.caseSensitive = false;
+        req.includeMetadata = false;
+        req.includeOcr = true;
+        req.maxResults = 50;
+
+        String jobId = search_jobs_service.defaultService().enqueue(req);
+        search_jobs_service.SearchJobSnapshot done = waitForJob(tenant, requestedBy, jobId, 30_000L);
+        assertNotNull(done);
+        assertEquals("completed", done.status);
+        assertFalse(done.results.isEmpty());
+    }
+
+    @Test
+    void case_conflicts_search_type_scans_versions_and_linked_contacts() throws Exception {
+        String tenant = "tenant-search-conflicts-" + UUID.randomUUID();
+        String requestedBy = "search-conflicts-" + UUID.randomUUID() + "@test.local";
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+        matters.MatterRec matterRec = matters.defaultStore().create(tenant, "Conflict Search Matter", "", "", "", "", "");
+        String matter = matterRec.uuid;
+
+        documents.DocumentRec doc = documents.defaultStore().create(
+                tenant,
+                matter,
+                "Conflict Source Doc",
+                "pleading",
+                "motion",
+                "draft",
+                "Tester",
+                "work_product",
+                "",
+                "",
+                ""
+        );
+        document_parts.PartRec part = document_parts.defaultStore().create(
+                tenant,
+                matter,
+                doc.uuid,
+                "Main Part",
+                "lead",
+                "1",
+                "",
+                "Tester",
+                ""
+        );
+
+        Path partFolder = document_parts.defaultStore().partFolder(tenant, matter, doc.uuid, part.uuid);
+        Files.createDirectories(partFolder.resolve("version_files"));
+        Path versionPath = partFolder.resolve("version_files").resolve("conflict-source.txt");
+        Files.writeString(
+                versionPath,
+                "Counsel noted Alice Walker and Chapman Law Group PLLC in this file.",
+                StandardCharsets.UTF_8
+        );
+        part_versions.defaultStore().create(
+                tenant,
+                matter,
+                doc.uuid,
+                part.uuid,
+                "Conflict Version",
+                "uploaded",
+                "text/plain",
+                "",
+                String.valueOf(Files.size(versionPath)),
+                versionPath.toUri().toString(),
+                "Tester",
+                "",
+                true
+        );
+
+        contacts.ContactInput contactIn = new contacts.ContactInput();
+        contactIn.displayName = "Robert Client";
+        contactIn.givenName = "Robert";
+        contactIn.surname = "Client";
+        contactIn.companyName = "Acme Holdings LLC";
+        contacts.ContactRec contact = contacts.defaultStore().createNative(tenant, contactIn);
+        matter_contacts.defaultStore().replaceNativeLinksForContact(tenant, contact.uuid, List.of(matter));
+
+        search_jobs_service.SearchJobRequest req = new search_jobs_service.SearchJobRequest();
+        req.tenantUuid = tenant;
+        req.requestedBy = requestedBy;
+        req.searchType = "case_conflicts";
+        req.query = "Acme Holdings LLC";
+        req.operator = "contains";
+        req.caseSensitive = false;
+        req.includeMetadata = true;
+        req.includeOcr = true;
+        req.maxResults = 100;
+
+        String jobId = search_jobs_service.defaultService().enqueue(req);
+        search_jobs_service.SearchJobSnapshot done = waitForJob(tenant, requestedBy, jobId, 45_000L);
+        assertNotNull(done);
+        assertEquals("completed", done.status);
+        assertFalse(done.results.isEmpty());
+        boolean matched = false;
+        for (search_jobs_service.SearchResultRec row : done.results) {
+            if (row == null) continue;
+            if (safe(row.documentTitle).toLowerCase().contains("acme holdings llc")) {
+                matched = true;
+                break;
+            }
+        }
+        assertTrue(matched);
+    }
+
+    private static byte[] minimalDocx(String text) throws Exception {
+        try (XWPFDocument doc = new XWPFDocument();
+             ByteArrayOutputStream out = new ByteArrayOutputStream(2048)) {
+            doc.createParagraph().createRun().setText(safe(text));
+            doc.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    private static String safe(String s) {
+        return s == null ? "" : s;
     }
 
     private static search_jobs_service.SearchJobSnapshot waitForJob(String tenantUuid,

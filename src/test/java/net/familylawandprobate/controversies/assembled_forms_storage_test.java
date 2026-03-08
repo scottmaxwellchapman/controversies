@@ -174,12 +174,21 @@ public class assembled_forms_storage_test {
 
         assertArrayEquals("hello encrypted world".getBytes(), store.readOutputBytes(tenantUuid, matterUuid, completed.uuid));
 
-        Path rawPath = Paths.get("data", "tenants", tenantUuid, "matters", matterUuid, "assembled", "files", completed.uuid + ".txt").toAbsolutePath();
+        Path rawPath = Paths.get("data", "tenants", tenantUuid, "matters", matterUuid, "assembled", "files")
+                .toAbsolutePath()
+                .resolve(completed.storageObjectKey)
+                .normalize();
+        assertTrue(Files.exists(rawPath));
         byte[] raw = Files.readAllBytes(rawPath);
         assertFalse(new String(raw).contains("hello encrypted world"));
 
         assertTrue(store.retrySyncNow(tenantUuid, matterUuid, completed.uuid));
-        Path remotePath = Paths.get("data", "tenants", tenantUuid, "assembled_remote", "s3_compatible", "matters", matterUuid, "assemblies", completed.uuid + ".txt").toAbsolutePath();
+        assembled_forms.AssemblyRec synced = store.getByUuid(tenantUuid, matterUuid, completed.uuid);
+        Path remotePath = Paths.get("data", "tenants", tenantUuid, "assembled_remote", "s3_compatible")
+                .toAbsolutePath()
+                .resolve(synced.storageObjectKey)
+                .normalize();
+        assertTrue(Files.exists(remotePath));
         byte[] remoteRaw = Files.readAllBytes(remotePath);
         assertFalse(new String(remoteRaw).contains("hello encrypted world"));
     }

@@ -206,6 +206,7 @@ public final class search_jobs_service {
             }
         });
         registerHandler(new document_part_versions_search_type());
+        registerHandler(new case_conflicts_search_type());
     }
 
     public static search_jobs_service defaultService() {
@@ -510,7 +511,7 @@ public final class search_jobs_service {
             SearchTypeInfo out = new SearchTypeInfo();
             out.key = "document_part_versions";
             out.label = "Document Part Versions";
-            out.description = "Search part version metadata and companion OCR text.";
+            out.description = "Search part version metadata and companion OCR/extracted text.";
             out.permissionKey = "documents.access";
             LinkedHashSet<String> ops = new LinkedHashSet<String>();
             for (search_query_operator op : search_query_operator.values()) {
@@ -772,6 +773,287 @@ public final class search_jobs_service {
             if (v.isBlank()) return;
             if (sb.length() > 0) sb.append('\n');
             sb.append(v);
+        }
+
+        private static String snippet(String haystack, String query, boolean caseSensitive) {
+            String original = safe(haystack).replaceAll("\\s+", " ").trim();
+            if (original.isBlank()) return "";
+            String q = safe(query).trim();
+            if (q.isBlank()) {
+                return original.length() <= 180 ? original : original.substring(0, 180) + "...";
+            }
+
+            String probe = original;
+            String needle = q;
+            if (!caseSensitive) {
+                probe = probe.toLowerCase(Locale.ROOT);
+                needle = needle.toLowerCase(Locale.ROOT);
+            }
+
+            int idx = probe.indexOf(needle);
+            if (idx < 0) {
+                String[] terms = q.split("\\s+");
+                for (String term : terms) {
+                    String t = safe(term).trim();
+                    if (t.isBlank()) continue;
+                    String tn = caseSensitive ? t : t.toLowerCase(Locale.ROOT);
+                    idx = probe.indexOf(tn);
+                    if (idx >= 0) {
+                        needle = tn;
+                        break;
+                    }
+                }
+            }
+            if (idx < 0) idx = 0;
+
+            int start = Math.max(0, idx - 70);
+            int end = Math.min(original.length(), idx + Math.max(needle.length(), 1) + 90);
+            String core = original.substring(start, end).trim();
+            if (start > 0) core = "..." + core;
+            if (end < original.length()) core = core + "...";
+            return core;
+        }
+    }
+
+    private static final class case_conflicts_search_type implements search_type_handler {
+        @Override
+        public SearchTypeInfo info() {
+            SearchTypeInfo out = new SearchTypeInfo();
+            out.key = "case_conflicts";
+            out.label = "Case Conflicts";
+            out.description = "Search case conflicts.xml entries with NLP/contact-derived entities.";
+            out.permissionKey = "conflicts.access";
+            LinkedHashSet<String> ops = new LinkedHashSet<String>();
+            for (search_query_operator op : search_query_operator.values()) {
+                ops.add(op.key());
+            }
+            out.operators.addAll(ops);
+            return out;
+        }
+
+        @Override
+        public SearchExecutionResult execute(SearchContext ctx) throws Exception {
+            SearchExecutionResult out = new SearchExecutionResult();
+            if (ctx == null || ctx.request == null) return out;
+            SearchJobRequest req = ctx.request;
+
+            List<matters.MatterRec> mattersRows = matters.defaultStore().listAll(req.tenantUuid);
+            ArrayList<matters.MatterRec> activeMatters = new ArrayList<matters.MatterRec>();
+            for (matters.MatterRec row : mattersRows) {
+                if (row == null) continue;
+                String mu = safe(row.uuid).trim();
+                if (mu.isBlank()) continue;
+                if (!row.enabled || row.trashed) continue;
+                activeMatters.add(row);
+            }
+
+            int total = activeMatters.size();
+            int processed = 0;
+            int scanWarnings = 0;
+            ctx.progress(0, total, "Preparing conflict search.");
+
+            ArrayList<SearchCriterion> criteria = req.criteria == null
+                    ? new ArrayList<SearchCriterion>()
+                    : new ArrayList<SearchCriterion>(req.criteria);
+            String logic = normalizeLogic(req.logic);
+
+            matter_conflicts store = matter_conflicts.defaultStore();
+            conflicts_scan_service scanner = conflicts_scan_service.defaultService();
+
+            for (matters.MatterRec matter : activeMatters) {
+                processed++;
+                String matterUuid = safe(matter == null ? "" : matter.uuid).trim();
+                if (matterUuid.isBlank()) {
+                    ctx.progress(processed, total, "Scanning conflicts...");
+                    continue;
+                }
+
+                try {
+                    scanner.scanMatter(req.tenantUuid, matterUuid, true);
+                } catch (Exception ex) {
+                    scanWarnings++;
+                    if (scanWarnings <= 5) {
+                        LOG.log(Level.FINE,
+                                "Conflict scan warning matter=" + matterUuid + ": " + safe(ex.getMessage()),
+                                ex);
+                    }
+                }
+
+                matter_conflicts.FileRec file;
+                try {
+                    file = store.read(req.tenantUuid, matterUuid);
+                } catch (Exception ex) {
+                    scanWarnings++;
+                    if (scanWarnings <= 5) {
+                        LOG.log(Level.FINE,
+                                "Unable to read conflicts.xml for matter=" + matterUuid + ": " + safe(ex.getMessage()),
+                                ex);
+                    }
+                    ctx.progress(processed, total, "Scanning conflicts...");
+                    continue;
+                }
+
+                ArrayList<matter_conflicts.ConflictEntry> entries = file == null
+                        ? new ArrayList<matter_conflicts.ConflictEntry>()
+                        : new ArrayList<matter_conflicts.ConflictEntry>(file.entries);
+                for (matter_conflicts.ConflictEntry entry : entries) {
+                    if (entry == null) continue;
+                    String metadataText = req.includeMetadata ? metadataBlob(matter, entry) : "";
+                    String ocrText = req.includeOcr ? ocrBlob(entry) : "";
+
+                    CriteriaEval eval = evaluateCriteria(
+                            criteria,
+                            logic,
+                            metadataText,
+                            ocrText,
+                            req.includeMetadata,
+                            req.includeOcr,
+                            req.caseSensitive
+                    );
+                    if (!eval.matches) continue;
+
+                    SearchResultRec hit = new SearchResultRec();
+                    hit.matterUuid = matterUuid;
+                    hit.matterLabel = safe(matter.label);
+                    hit.documentUuid = "";
+                    hit.documentTitle = safe(entry.displayName);
+                    hit.partUuid = "";
+                    hit.partLabel = safe(entry.entityType);
+                    hit.versionUuid = safe(entry.uuid);
+                    hit.versionLabel = safe(entry.sourceTags);
+                    hit.source = "conflicts.xml";
+                    hit.mimeType = "application/xml";
+                    hit.createdAt = safe(entry.lastSeenAt);
+                    hit.createdBy = "";
+                    hit.matchedIn = safe(eval.matchedIn);
+                    hit.snippet = safe(eval.snippet);
+                    out.results.add(hit);
+                    if (out.results.size() >= req.maxResults) {
+                        out.truncated = true;
+                        break;
+                    }
+                }
+
+                if (out.truncated) break;
+                if (processed == 1 || processed % 3 == 0 || processed == total) {
+                    ctx.progress(processed, total, "Scanning conflicts...");
+                }
+            }
+
+            if (out.truncated) {
+                out.message = "Completed with " + out.results.size() + " conflict result(s). Results truncated.";
+            } else if (scanWarnings > 0) {
+                out.message = "Completed with " + out.results.size() + " conflict result(s). Warnings: " + scanWarnings + ".";
+            } else {
+                out.message = "Completed with " + out.results.size() + " conflict result(s).";
+            }
+            ctx.progress(processed, total, out.message);
+            return out;
+        }
+
+        private static final class CriteriaEval {
+            boolean matches = false;
+            String matchedIn = "";
+            String snippet = "";
+        }
+
+        private static CriteriaEval evaluateCriteria(List<SearchCriterion> criteria,
+                                                     String logic,
+                                                     String metadataText,
+                                                     String ocrText,
+                                                     boolean includeMetadata,
+                                                     boolean includeOcr,
+                                                     boolean caseSensitive) {
+            CriteriaEval out = new CriteriaEval();
+            List<SearchCriterion> rows = criteria == null ? List.of() : criteria;
+            if (rows.isEmpty()) return out;
+
+            boolean andMode = "and".equals(normalizeLogic(logic));
+            boolean aggregate = andMode;
+            boolean seen = false;
+
+            for (SearchCriterion row : rows) {
+                SearchCriterion c = copyCriterion(row);
+                if (c == null) continue;
+                seen = true;
+
+                search_query_operator operator = search_query_operator.fromKey(c.operator);
+                String scope = normalizeScope(c.scope);
+                String query = safe(c.query).trim();
+
+                boolean allowMetadata = includeMetadata && ("any".equals(scope) || "metadata".equals(scope));
+                boolean allowOcr = includeOcr && ("any".equals(scope) || "ocr".equals(scope));
+                boolean metadataMatch = allowMetadata && operator.matches(metadataText, query, caseSensitive);
+                boolean ocrMatch = allowOcr && operator.matches(ocrText, query, caseSensitive);
+                boolean criterionMatch = metadataMatch || ocrMatch;
+
+                if (andMode) {
+                    aggregate = aggregate && criterionMatch;
+                    if (!criterionMatch) {
+                        out.matches = false;
+                        out.matchedIn = "";
+                        out.snippet = "";
+                        return out;
+                    }
+                } else {
+                    aggregate = aggregate || criterionMatch;
+                }
+
+                if (criterionMatch && out.snippet.isBlank()) {
+                    if (ocrMatch) out.snippet = snippet(ocrText, query, caseSensitive);
+                    else out.snippet = snippet(metadataText, query, caseSensitive);
+                }
+                if (criterionMatch) {
+                    if (metadataMatch && ocrMatch) out.matchedIn = mergeMatchedIn(out.matchedIn, "metadata+ocr");
+                    else if (metadataMatch) out.matchedIn = mergeMatchedIn(out.matchedIn, "metadata");
+                    else if (ocrMatch) out.matchedIn = mergeMatchedIn(out.matchedIn, "ocr");
+                }
+            }
+
+            out.matches = seen && aggregate;
+            if (out.matches && out.matchedIn.isBlank()) out.matchedIn = "metadata";
+            return out;
+        }
+
+        private static String metadataBlob(matters.MatterRec matter, matter_conflicts.ConflictEntry entry) {
+            StringBuilder sb = new StringBuilder(512);
+            appendField(sb, safe(matter == null ? "" : matter.label));
+            appendField(sb, safe(entry == null ? "" : entry.entityType));
+            appendField(sb, safe(entry == null ? "" : entry.displayName));
+            appendField(sb, safe(entry == null ? "" : entry.normalizedName));
+            appendField(sb, safe(entry == null ? "" : entry.sourceTags));
+            appendField(sb, safe(entry == null ? "" : entry.sourceRefs));
+            appendField(sb, safe(entry == null ? "" : entry.linkedContactUuids));
+            appendField(sb, safe(entry == null ? "" : entry.notes));
+            return sb.toString();
+        }
+
+        private static String ocrBlob(matter_conflicts.ConflictEntry entry) {
+            StringBuilder sb = new StringBuilder(256);
+            appendField(sb, safe(entry == null ? "" : entry.displayName));
+            appendField(sb, safe(entry == null ? "" : entry.normalizedName));
+            appendField(sb, safe(entry == null ? "" : entry.notes));
+            return sb.toString();
+        }
+
+        private static void appendField(StringBuilder sb, String value) {
+            String v = safe(value).trim();
+            if (v.isBlank()) return;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(v);
+        }
+
+        private static String mergeMatchedIn(String existing, String next) {
+            String a = safe(existing).trim().toLowerCase(Locale.ROOT);
+            String b = safe(next).trim().toLowerCase(Locale.ROOT);
+            if (a.isBlank()) return b;
+            if (b.isBlank()) return a;
+            if (a.equals(b)) return a;
+            if ("metadata+ocr".equals(a) || "metadata+ocr".equals(b)) return "metadata+ocr";
+            if ((a.contains("metadata") && b.contains("ocr")) || (a.contains("ocr") && b.contains("metadata"))) {
+                return "metadata+ocr";
+            }
+            return b;
         }
 
         private static String snippet(String haystack, String query, boolean caseSensitive) {

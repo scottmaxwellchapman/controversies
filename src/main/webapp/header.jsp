@@ -76,7 +76,7 @@
 
         // Path-first mapping keeps menu and page heading icons consistent.
         if ("/index.jsp".equals(h)) return "home";
-        if ("/cases.jsp".equals(h) || "/case_lists.jsp".equals(h) || "/case_focus.jsp".equals(h)) return "cases";
+        if ("/cases.jsp".equals(h) || "/case_lists.jsp".equals(h) || "/case_focus.jsp".equals(h) || "/case_conflicts.jsp".equals(h)) return "cases";
         if ("/contacts.jsp".equals(h)) return "contacts";
         if ("/documents.jsp".equals(h) || "/parts.jsp".equals(h) || "/versions.jsp".equals(h) || "/pdf_redact.jsp".equals(h) || "/search.jsp".equals(h)) return "documents";
         if ("/facts.jsp".equals(h)) return "facts";
@@ -235,6 +235,7 @@
         MenuGroup g = new MenuGroup("");
         g.items.add(new MenuNode("Home", "/index.jsp"));
         g.items.add(new MenuNode("Cases", "/cases.jsp"));
+        g.items.add(new MenuNode("Case Conflicts", "/case_conflicts.jsp"));
         g.items.add(new MenuNode("Contacts", "/contacts.jsp"));
         g.items.add(new MenuNode("Search", "/search.jsp"));
         g.items.add(new MenuNode("Facts Case Plan", "/facts.jsp"));
@@ -261,6 +262,7 @@
         help.children.add(new MenuNode("Help Center", "/help_browser.jsp?topic=help_center"));
         help.children.add(new MenuNode("Getting Started (Legal Team)", "/help_browser.jsp?topic=getting_started"));
         help.children.add(new MenuNode("Case Workflow Guide", "/help_browser.jsp?topic=case_workflow"));
+        help.children.add(new MenuNode("Conflict Checks Guide", "/help_browser.jsp?topic=conflict_checks"));
         help.children.add(new MenuNode("Form Assembly Guide", "/help_browser.jsp?topic=form_assembly"));
         help.children.add(new MenuNode("Facts Guide (Novice)", "/help_browser.jsp?topic=facts_novice"));
         help.children.add(new MenuNode("Facts Guide (Expert)", "/help_browser.jsp?topic=facts_expert"));
@@ -284,6 +286,7 @@
 
         if ("/index.jsp".equals(h)) return "home.access";
         if ("/cases.jsp".equals(h) || "/case_lists.jsp".equals(h) || "/case_focus.jsp".equals(h)) return "cases.access";
+        if ("/case_conflicts.jsp".equals(h)) return "conflicts.access";
         if ("/case_fields.jsp".equals(h)) return "case_fields.access";
         if ("/contacts.jsp".equals(h)) return "contacts.access";
         if ("/documents.jsp".equals(h)

@@ -1221,6 +1221,8 @@ public final class permission_layers {
         out.add(def("home.access", "Home", "Open the index dashboard and workflow cards.", "Core", false));
         out.add(def("cases.access", "Cases", "Create and manage matters in the Cases screen.", "Core", false));
         out.add(def("case_fields.access", "Case Fields", "Edit case-level key/value fields and case metadata helpers.", "Core", false));
+        out.add(def("conflicts.access", "Case Conflicts", "View and search per-case conflicts XML records.", "Core", false));
+        out.add(def("conflicts.manage", "Case Conflicts Manage", "Scan/update/delete per-case conflicts XML records.", "Core", false));
         out.add(def("contacts.access", "Contacts", "Use tenant contacts and matter contact links.", "Core", false));
         out.add(def("documents.access", "Documents", "Access document storage, versions, parts, preview, and redaction pages.", "Core", false));
         out.add(def("facts.access", "Facts Case Plan", "Use claims/elements/facts workflows and related actions.", "Core", false));
@@ -1274,6 +1276,8 @@ public final class permission_layers {
         legacy.put("home.access", "true");
         legacy.put("cases.access", "true");
         legacy.put("case_fields.access", "true");
+        legacy.put("conflicts.access", "true");
+        legacy.put("conflicts.manage", "true");
         legacy.put("contacts.access", "true");
         legacy.put("documents.access", "true");
         legacy.put("facts.access", "true");
@@ -1315,6 +1319,7 @@ public final class permission_layers {
         LinkedHashMap<String, String> review = new LinkedHashMap<String, String>();
         review.put("home.access", "true");
         review.put("cases.access", "true");
+        review.put("conflicts.access", "true");
         review.put("documents.access", "true");
         review.put("forms.access", "true");
         review.put("help.access", "true");
@@ -1332,6 +1337,8 @@ public final class permission_layers {
         sec.put("home.access", "true");
         sec.put("help.access", "true");
         sec.put("user_settings.access", "true");
+        sec.put("conflicts.access", "true");
+        sec.put("conflicts.manage", "true");
         sec.put("security.manage", "true");
         sec.put("permissions.manage", "true");
         sec.put("logs.view", "true");
@@ -1348,6 +1355,8 @@ public final class permission_layers {
         platform.put("home.access", "true");
         platform.put("help.access", "true");
         platform.put("user_settings.access", "true");
+        platform.put("conflicts.access", "true");
+        platform.put("conflicts.manage", "true");
         platform.put("tenant_fields.manage", "true");
         platform.put("attributes.manage", "true");
         platform.put("custom_objects.manage", "true");

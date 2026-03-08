@@ -39,6 +39,7 @@ public final class matters {
 
     private static final ConcurrentHashMap<String, ReentrantReadWriteLock> LOCKS = new ConcurrentHashMap<>();
     private static final String CLIO_READ_ONLY_MESSAGE = "This case is synced from Clio and cannot be edited here. Edit it in Clio.";
+    private static final String CONFLICTS_SEEDED_MARKER = ".conflicts_seeded";
 
     public static matters defaultStore() { return new matters(); }
 
@@ -98,6 +99,7 @@ public MatterRec(String uuid,
             Files.createDirectories(file.getParent());
             Files.createDirectories(mattersDir(tu));
             if (!Files.exists(file)) writeAtomic(file, emptyMattersXml());
+            ensureConflictsSeededForExistingMatters(tu);
         } finally {
             lock.writeLock().unlock();
         }
@@ -173,6 +175,7 @@ public MatterRec(String uuid,
 
             // Create matter folder
             Files.createDirectories(matterFolder(tu, uuid));
+            matter_conflicts.defaultStore().ensure(tu, uuid);
 
             List<MatterRec> all = readAllLocked(tu);
             MatterRec rec = new MatterRec(
@@ -387,6 +390,36 @@ public MatterRec(String uuid,
         return tenantDir(tenantUuid).resolve("matters");
     }
 
+    private static Path conflictsSeedMarkerPath(String tenantUuid) {
+        return mattersDir(tenantUuid).resolve(CONFLICTS_SEEDED_MARKER);
+    }
+
+    private void ensureConflictsSeededForExistingMatters(String tenantUuid) throws Exception {
+        Path marker = conflictsSeedMarkerPath(tenantUuid);
+        if (Files.exists(marker)) return;
+
+        List<MatterRec> all = readAllLocked(tenantUuid);
+        for (MatterRec row : all) {
+            if (row == null) continue;
+            String mu = safe(row.uuid).trim();
+            if (mu.isBlank()) continue;
+            try {
+                Files.createDirectories(matterFolder(tenantUuid, mu));
+                matter_conflicts.defaultStore().ensure(tenantUuid, mu);
+            } catch (Exception ignored) {
+            }
+        }
+
+        Files.createDirectories(marker.getParent());
+        Files.writeString(
+                marker,
+                Instant.now().toString(),
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING
+        );
+    }
+
     private static Path matterFolder(String tenantUuid, String matterUuid) {
         return mattersDir(tenantUuid).resolve(matterUuid);
     }
@@ -515,6 +548,7 @@ public MatterRec(String uuid,
 
             String uuid = UUID.randomUUID().toString();
             Files.createDirectories(matterFolder(tu, uuid));
+            matter_conflicts.defaultStore().ensure(tu, uuid);
 
             List<MatterRec> all = readAllLocked(tu);
             MatterRec rec = new MatterRec(

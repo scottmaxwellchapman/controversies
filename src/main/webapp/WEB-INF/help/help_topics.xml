@@ -10,6 +10,7 @@
   <li><a href="{{ctx}}/help_browser.jsp?topic=getting_started">Getting Started (Legal Team)</a>: first-day setup for legal teams.</li>
   <li><a href="{{ctx}}/help_browser.jsp?topic=case_workflow">Case Workflow Guide</a>: intake-to-output sequence.</li>
   <li><a href="{{ctx}}/help_browser.jsp?topic=form_assembly">Form Assembly Guide</a>: template and quality-control standards.</li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=conflict_checks">Conflict Checks Guide</a>: conflicts.xml scanning, review, and management.</li>
   <li><a href="{{ctx}}/help_browser.jsp?topic=facts_novice">Facts Guide (Novice)</a> and <a href="{{ctx}}/help_browser.jsp?topic=facts_expert">Facts Guide (Expert)</a>.</li>
   <li><a href="{{ctx}}/help_browser.jsp?topic=tasks_novice">Tasks Guide (Novice)</a> and <a href="{{ctx}}/help_browser.jsp?topic=tasks_expert">Tasks Guide (Expert)</a>.</li>
   <li><a href="{{ctx}}/help_browser.jsp?topic=business_processes_expert">Business Processes (Expert)</a> for shared legal BPM actions.</li>
@@ -195,6 +196,34 @@
 </ul>
 
 <p><a class="btn" href="{{ctx}}/help_browser.jsp?topic=form_assembly">Next: Form Assembly Guide</a></p>
+    ]]></content>
+  </topic>
+
+  <topic id="conflict_checks" title="Conflict Checks Guide" category="Case Workflows" audience="All" order="35">
+    <summary>How to generate, review, and maintain per-case conflicts.xml entries.</summary>
+    <keywords>conflicts conflict checks case_conflicts scan nlp ocr tesseract contacts</keywords>
+    <content><![CDATA[
+<h3>Where Conflict Data Lives</h3>
+<p>Each case stores a dedicated <code>conflicts.xml</code> file under the case folder. Open <a href="{{ctx}}/case_conflicts.jsp">Case Conflicts</a> to review and manage entries.</p>
+
+<h3>What The Scan Uses</h3>
+<ul>
+  <li>Document version text and metadata.</li>
+  <li>OCR companion text (including Tesseract output when OCR is used).</li>
+  <li>Linked contacts for the selected case.</li>
+</ul>
+
+<h3>Suggested Workflow</h3>
+<ol>
+  <li>Open <a href="{{ctx}}/case_conflicts.jsp">Case Conflicts</a> and select your case.</li>
+  <li>Run <strong>Scan Selected Case</strong> to refresh entities.</li>
+  <li>Search/filter entries by name, type, or source tag.</li>
+  <li>Add any manual entries required by firm policy.</li>
+  <li>Remove false positives before final conflict review.</li>
+</ol>
+
+<h3>Search Integration</h3>
+<p>The <a href="{{ctx}}/search.jsp">Search</a> page includes a built-in <strong>Case Conflicts</strong> search type. Use it to query conflicts across all active cases.</p>
     ]]></content>
   </topic>
 

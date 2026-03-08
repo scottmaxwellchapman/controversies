@@ -2,6 +2,7 @@
 <menu>
   <item label="Home" href="/index.jsp" />
   <item label="Cases" href="/cases.jsp" />
+  <item label="Case Conflicts" href="/case_conflicts.jsp" />
   <item label="Contacts" href="/contacts.jsp" />
   <item label="Documents" href="/documents.jsp" />
   <item label="Search" href="/search.jsp" />
@@ -42,6 +43,7 @@
     <item label="Help Center" href="/help_browser.jsp?topic=help_center" />
     <item label="Getting Started (Legal Team)" href="/help_browser.jsp?topic=getting_started" />
     <item label="Case Workflow Guide" href="/help_browser.jsp?topic=case_workflow" />
+    <item label="Conflict Checks Guide" href="/help_browser.jsp?topic=conflict_checks" />
     <item label="Form Assembly Guide" href="/help_browser.jsp?topic=form_assembly" />
     <item label="Facts Guide (Novice)" href="/help_browser.jsp?topic=facts_novice" />
     <item label="Facts Guide (Expert)" href="/help_browser.jsp?topic=facts_expert" />

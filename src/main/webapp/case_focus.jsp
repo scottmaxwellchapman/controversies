@@ -453,6 +453,11 @@
         <a class="btn btn-ghost" href="<%= ctx %>/documents.jsp?case_uuid=<%= enc(selectedCase.uuid) %>">Open Documents</a>
       </article>
       <article class="card" style="padding:12px; margin:0;">
+        <h3 style="margin-top:0;">Conflicts</h3>
+        <p class="muted">Review and manage conflicts.xml entries for this case.</p>
+        <a class="btn btn-ghost" href="<%= ctx %>/case_conflicts.jsp?matter_uuid=<%= enc(selectedCase.uuid) %>">Open Conflicts</a>
+      </article>
+      <article class="card" style="padding:12px; margin:0;">
         <h3 style="margin-top:0;">Facts</h3>
         <p class="muted">Capture evidence-linked factual records.</p>
         <a class="btn btn-ghost" href="<%= ctx %>/facts.jsp?case_uuid=<%= enc(selectedCase.uuid) %>">Open Facts</a>

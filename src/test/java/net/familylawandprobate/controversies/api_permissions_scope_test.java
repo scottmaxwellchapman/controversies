@@ -19,6 +19,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -158,6 +159,95 @@ public class api_permissions_scope_test {
                         new LinkedHashMap<String, Object>(Map.of("operation", "facts.tree.get"))
                 )
         );
+    }
+
+    @Test
+    void conflicts_operations_require_conflict_permissions() throws Exception {
+        String tenant = "tenant-api-conflicts-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+        matters.MatterRec matter = matters.defaultStore().create(tenant, "Conflict API Matter", "", "", "", "", "");
+
+        assertThrows(SecurityException.class, () -> invokeApiWithScope(
+                "conflicts.list",
+                Map.of("matter_uuid", matter.uuid),
+                tenant,
+                "permissions:cases.access"
+        ));
+
+        LinkedHashMap<String, Object> listed = invokeApiWithScope(
+                "conflicts.list",
+                Map.of("matter_uuid", matter.uuid),
+                tenant,
+                "permissions:conflicts.access"
+        );
+        assertTrue(listed.containsKey("count"));
+
+        assertThrows(SecurityException.class, () -> invokeApiWithScope(
+                "conflicts.list",
+                Map.of(
+                        "matter_uuid", matter.uuid,
+                        "refresh", true
+                ),
+                tenant,
+                "permissions:conflicts.access"
+        ));
+
+        assertThrows(SecurityException.class, () -> invokeApiWithScope(
+                "conflicts.upsert",
+                Map.of(
+                        "matter_uuid", matter.uuid,
+                        "entity_type", "person",
+                        "display_name", "Manual Conflict Name"
+                ),
+                tenant,
+                "permissions:conflicts.access"
+        ));
+
+        LinkedHashMap<String, Object> upserted = invokeApiWithScope(
+                "conflicts.upsert",
+                Map.of(
+                        "matter_uuid", matter.uuid,
+                        "entity_type", "person",
+                        "display_name", "Manual Conflict Name"
+                ),
+                tenant,
+                "permissions:conflicts.manage"
+        );
+        assertFalse(nestedString(upserted, "entry", "entry_uuid").isBlank());
+    }
+
+    @Test
+    void search_enqueue_enforces_selected_search_type_permission() throws Exception {
+        String tenant = "tenant-api-search-type-scope-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        assertThrows(SecurityException.class, () -> invokeApiWithScope(
+                "search.jobs.enqueue",
+                Map.of(
+                        "search_type", "case_conflicts",
+                        "query", "acme",
+                        "operator", "contains",
+                        "include_metadata", true,
+                        "include_ocr", true
+                ),
+                tenant,
+                "permissions:documents.access"
+        ));
+
+        LinkedHashMap<String, Object> queued = invokeApiWithScope(
+                "search.jobs.enqueue",
+                Map.of(
+                        "search_type", "case_conflicts",
+                        "query", "acme",
+                        "operator", "contains",
+                        "include_metadata", true,
+                        "include_ocr", true
+                ),
+                tenant,
+                "permissions:conflicts.access"
+        );
+        assertNotNull(queued.get("job_id"));
+        assertFalse(safe(String.valueOf(queued.get("job_id"))).isBlank());
     }
 
     @SuppressWarnings("unchecked")

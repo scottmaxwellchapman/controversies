@@ -950,6 +950,105 @@ public final class api_servlet extends HttpServlet {
                 return out;
             }
 
+            case "conflicts.list": {
+                String matterUuid = str(params, "matter_uuid");
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                requireMatterExists(tenantUuid, matterUuid);
+                boolean refresh = boolVal(params, "refresh", false);
+                if (refresh) {
+                    requireCredentialPermission(credentialScope, "conflicts.manage", operation);
+                    conflicts_scan_service.defaultService().scanMatter(tenantUuid, matterUuid, true);
+                } else {
+                    matter_conflicts.defaultStore().ensure(tenantUuid, matterUuid);
+                }
+
+                matter_conflicts.FileRec file = matter_conflicts.defaultStore().read(tenantUuid, matterUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (matter_conflicts.ConflictEntry row : file.entries) {
+                    if (row == null) continue;
+                    items.add(conflictEntryMap(row));
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("matter_uuid", matterUuid);
+                out.put("items", items);
+                out.put("count", items.size());
+                out.put("updated_at", safe(file.updatedAt));
+                out.put("last_scanned_at", safe(file.lastScannedAt));
+                out.put("scan_state_count", file.versionScanState == null ? 0 : file.versionScanState.size());
+                return out;
+            }
+
+            case "conflicts.get": {
+                String matterUuid = str(params, "matter_uuid");
+                String entryUuid = str(params, "entry_uuid");
+                if (matterUuid.isBlank() || entryUuid.isBlank()) {
+                    throw new IllegalArgumentException("matter_uuid and entry_uuid are required.");
+                }
+                requireMatterExists(tenantUuid, matterUuid);
+                matter_conflicts.FileRec file = matter_conflicts.defaultStore().read(tenantUuid, matterUuid);
+                matter_conflicts.ConflictEntry found = null;
+                for (matter_conflicts.ConflictEntry row : file.entries) {
+                    if (row == null) continue;
+                    if (entryUuid.equals(safe(row.uuid).trim())) {
+                        found = row;
+                        break;
+                    }
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("entry", conflictEntryMap(found));
+                return out;
+            }
+
+            case "conflicts.upsert": {
+                String matterUuid = str(params, "matter_uuid");
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                requireMatterExists(tenantUuid, matterUuid);
+                matter_conflicts.ConflictEntry entry = conflictEntryFromParams(params);
+                entry = matter_conflicts.defaultStore().upsertEntry(tenantUuid, matterUuid, entry);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("matter_uuid", matterUuid);
+                out.put("entry", conflictEntryMap(entry));
+                return out;
+            }
+
+            case "conflicts.delete": {
+                String matterUuid = str(params, "matter_uuid");
+                String entryUuid = str(params, "entry_uuid");
+                if (matterUuid.isBlank() || entryUuid.isBlank()) {
+                    throw new IllegalArgumentException("matter_uuid and entry_uuid are required.");
+                }
+                requireMatterExists(tenantUuid, matterUuid);
+                boolean changed = matter_conflicts.defaultStore().deleteEntry(tenantUuid, matterUuid, entryUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("matter_uuid", matterUuid);
+                out.put("deleted", changed);
+                return out;
+            }
+
+            case "conflicts.scan": {
+                String matterUuid = str(params, "matter_uuid");
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                if (!matterUuid.isBlank()) {
+                    requireMatterExists(tenantUuid, matterUuid);
+                    conflicts_scan_service.ScanSummary row = conflicts_scan_service.defaultService()
+                            .scanMatter(tenantUuid, matterUuid, true);
+                    out.put("scan", conflictScanSummaryMap(row));
+                    return out;
+                }
+
+                ArrayList<conflicts_scan_service.ScanSummary> rows = conflicts_scan_service.defaultService()
+                        .scanAllMatters(tenantUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (conflicts_scan_service.ScanSummary row : rows) {
+                    if (row == null) continue;
+                    items.add(conflictScanSummaryMap(row));
+                }
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
             case "document.taxonomy.get": {
                 document_taxonomy.Taxonomy tx = document_taxonomy.defaultStore().read(tenantUuid);
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
@@ -2220,6 +2319,10 @@ public final class api_servlet extends HttpServlet {
                 in.includeOcr = boolVal(params, "include_ocr", true);
                 in.maxResults = clampInt(intVal(params, "max_results", 200), 1, 500);
                 in.criteria = searchCriteriaList(params);
+
+                search_jobs_service.SearchTypeInfo type = search_jobs_service.defaultService().getSearchType(in.searchType);
+                if (type == null) throw new IllegalArgumentException("Unknown search type.");
+                requireCredentialPermission(credentialScope, safe(type.permissionKey), operation);
 
                 String jobId = search_jobs_service.defaultService().enqueue(in);
                 search_jobs_service.SearchJobSnapshot snapshot = search_jobs_service.defaultService().getJob(
@@ -3855,6 +3958,11 @@ public final class api_servlet extends HttpServlet {
         ops.put("case.fields.update", "Update case fields");
         ops.put("case.list_items.get", "Read case list/grid XML datasets");
         ops.put("case.list_items.update", "Update case list/grid XML datasets");
+        ops.put("conflicts.list", "List conflicts.xml entries for a case");
+        ops.put("conflicts.get", "Get one conflicts.xml entry");
+        ops.put("conflicts.upsert", "Create/update one conflicts.xml entry");
+        ops.put("conflicts.delete", "Delete one conflicts.xml entry");
+        ops.put("conflicts.scan", "Scan case versions + linked contacts into conflicts.xml");
 
         ops.put("document.taxonomy.get", "Read document taxonomy values");
         ops.put("document.taxonomy.add", "Add document taxonomy values");
@@ -3975,6 +4083,21 @@ public final class api_servlet extends HttpServlet {
         );
     }
 
+    private static void requireCredentialPermission(String credentialScope,
+                                                    String permissionKey,
+                                                    String operation) {
+        String key = safe(permissionKey).trim().toLowerCase(Locale.ROOT);
+        if (key.isBlank()) return;
+        CredentialScope resolved = resolveCredentialScopePermissions(credentialScope);
+        if (resolved.fullAccess) return;
+        if (resolved.permissionKeys.contains("tenant_admin")) return;
+        if (resolved.permissionKeys.contains(key)) return;
+        throw new SecurityException(
+                "Credential scope does not allow operation '" + safe(operation).trim().toLowerCase(Locale.ROOT)
+                        + "'. Required permission: " + key
+        );
+    }
+
     private static List<String> requiredPermissionKeys(String operation) {
         String op = safe(operation).trim().toLowerCase(Locale.ROOT);
         if (op.isBlank()) return List.of();
@@ -4000,6 +4123,10 @@ public final class api_servlet extends HttpServlet {
 
         if (op.startsWith("case.attributes.")) return List.of("attributes.manage");
         if (op.startsWith("case.fields.") || op.startsWith("case.list_items.")) return List.of("case_fields.access");
+        if ("conflicts.list".equals(op) || "conflicts.get".equals(op)) return List.of("conflicts.access");
+        if ("conflicts.scan".equals(op) || "conflicts.upsert".equals(op) || "conflicts.delete".equals(op)) {
+            return List.of("conflicts.manage");
+        }
 
         if (op.startsWith("document.taxonomy.")) return List.of("tenant_settings.manage");
         if (op.startsWith("document.attributes.")) return List.of("attributes.manage");
@@ -4007,7 +4134,7 @@ public final class api_servlet extends HttpServlet {
                 || op.startsWith("document.fields.")
                 || op.startsWith("document.parts.")
                 || op.startsWith("document.versions.")) return List.of("documents.access");
-        if (op.startsWith("search.")) return List.of("documents.access");
+        if (op.startsWith("search.")) return List.of("documents.access", "conflicts.access");
 
         if (op.startsWith("templates.")
                 || op.startsWith("template.tools.")
@@ -4174,6 +4301,7 @@ curl -k -X POST "%s/execute" \\
 - Tenant settings/fields
 - Users, roles, permissions
 - Matters/cases + fields + list datasets
+- Case conflicts XML scan/list/search management
 - Facts case plans (Claims->Elements->Facts), source document linkage, landscape report refresh
 - Tasks (custom attributes/fields, subtasks, associations, notes, assignments, round-robin, task report refresh)
 - Document taxonomy, attributes, documents, parts, versions
@@ -4343,6 +4471,68 @@ When features are added or changed in the application, matching API operations s
         }
         out.put("matter_links", linkRows);
         return out;
+    }
+
+    private static matter_conflicts.ConflictEntry conflictEntryFromParams(Map<String, Object> params) {
+        matter_conflicts.ConflictEntry out = new matter_conflicts.ConflictEntry();
+        if (params == null) return out;
+        Map<String, Object> nested = mapFrom(params.get("entry"), params);
+        out.uuid = str(nested, "entry_uuid");
+        if (out.uuid.isBlank()) out.uuid = str(nested, "uuid");
+        out.entityType = str(nested, "entity_type");
+        out.displayName = str(nested, "display_name");
+        out.normalizedName = str(nested, "normalized_name");
+        out.sourceTags = str(nested, "source_tags");
+        out.sourceRefs = str(nested, "source_refs");
+        out.linkedContactUuids = str(nested, "linked_contact_uuids");
+        out.notes = str(nested, "notes");
+        out.occurrenceCount = intVal(nested, "occurrence_count", 1);
+        out.firstSeenAt = str(nested, "first_seen_at");
+        out.lastSeenAt = str(nested, "last_seen_at");
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> conflictEntryMap(matter_conflicts.ConflictEntry row) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (row == null) return out;
+        out.put("entry_uuid", safe(row.uuid));
+        out.put("entity_type", safe(row.entityType));
+        out.put("display_name", safe(row.displayName));
+        out.put("normalized_name", safe(row.normalizedName));
+        out.put("source_tags", safe(row.sourceTags));
+        out.put("source_refs", safe(row.sourceRefs));
+        out.put("linked_contact_uuids", safe(row.linkedContactUuids));
+        out.put("occurrence_count", row.occurrenceCount);
+        out.put("first_seen_at", safe(row.firstSeenAt));
+        out.put("last_seen_at", safe(row.lastSeenAt));
+        out.put("notes", safe(row.notes));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> conflictScanSummaryMap(conflicts_scan_service.ScanSummary row) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (row == null) return out;
+        out.put("tenant_uuid", safe(row.tenantUuid));
+        out.put("matter_uuid", safe(row.matterUuid));
+        out.put("started_at", safe(row.startedAt));
+        out.put("completed_at", safe(row.completedAt));
+        out.put("versions_total", row.versionsTotal);
+        out.put("versions_scanned", row.versionsScanned);
+        out.put("versions_skipped", row.versionsSkipped);
+        out.put("nlp_entities", row.nlpEntities);
+        out.put("linked_contact_entities", row.linkedContactEntities);
+        out.put("entries_changed", row.entriesChanged);
+        out.put("ocr_warnings", row.ocrWarnings);
+        out.put("message", safe(row.message));
+        return out;
+    }
+
+    private static matters.MatterRec requireMatterExists(String tenantUuid, String matterUuid) throws Exception {
+        String mu = safe(matterUuid).trim();
+        if (mu.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+        matters.MatterRec matter = matters.defaultStore().getByUuid(tenantUuid, mu);
+        if (matter == null) throw new IllegalArgumentException("Matter not found.");
+        return matter;
     }
 
     private static LinkedHashMap<String, Object> documentMap(documents.DocumentRec r) {

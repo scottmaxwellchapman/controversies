@@ -46,7 +46,11 @@ public final class search_jobs_servlet extends HttpServlet {
             HttpSession sess = req.getSession(false);
             security.sec_bind(req, resp, null, sess);
             if (!security.require_login()) return;
-            if (!security.require_permission("documents.access")) return;
+            boolean canDocuments = users_roles.hasPermissionTrue(sess, "documents.access");
+            boolean canConflicts = users_roles.hasPermissionTrue(sess, "conflicts.access");
+            if (!canDocuments && !canConflicts) {
+                if (!security.require_permission("documents.access")) return;
+            }
 
             sess = req.getSession(false);
             String tenantUuid = safe(sess == null ? "" : (String) sess.getAttribute(S_TENANT_UUID)).trim();
@@ -67,7 +71,7 @@ public final class search_jobs_servlet extends HttpServlet {
                 return;
             }
             if ("types".equals(action)) {
-                handleTypes(resp, requestId);
+                handleTypes(resp, requestId, sess);
                 return;
             }
             if ("enqueue".equals(action)) {
@@ -89,11 +93,15 @@ public final class search_jobs_servlet extends HttpServlet {
         }
     }
 
-    private void handleTypes(HttpServletResponse resp, String requestId) throws IOException {
+    private void handleTypes(HttpServletResponse resp, String requestId, HttpSession sess) throws IOException {
         ArrayList<search_jobs_service.SearchTypeInfo> types = service.listSearchTypes();
         ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
         for (search_jobs_service.SearchTypeInfo type : types) {
             if (type == null) continue;
+            String permission = safe(type.permissionKey).trim();
+            if (!permission.isBlank() && (sess == null || !users_roles.hasPermissionTrue(sess, permission))) {
+                continue;
+            }
             items.add(typeMap(type));
         }
         LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();

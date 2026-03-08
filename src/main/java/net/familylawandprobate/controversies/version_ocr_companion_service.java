@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -37,6 +38,11 @@ public final class version_ocr_companion_service {
     private static final int OCR_TIMEOUT_SECONDS = 90;
     private static final int EMBEDDED_TEXT_MIN_CHARS = 40;
     private static final int MAX_CAPTURED_STDOUT_BYTES = 4 * 1024 * 1024;
+
+    private static final class DocumentTextExtraction {
+        String engine = "document_assembler";
+        String text = "";
+    }
 
     private static final class Holder {
         private static final version_ocr_companion_service INSTANCE = new version_ocr_companion_service();
@@ -232,6 +238,12 @@ public final class version_ocr_companion_service {
             fullText = text;
             engine = "tesseract";
             usedTesseract = true;
+        } else if (isStructuredDocumentExtension(ext) || isStructuredDocumentMime(mime)) {
+            DocumentTextExtraction rec = extractStructuredDocumentText(sourcePath);
+            fullText = safe(rec == null ? "" : rec.text);
+            pages.add(new PageTextRec(0, safe(rec == null ? "document_assembler" : rec.engine), fullText));
+            engine = safe(rec == null ? "document_assembler" : rec.engine);
+            usedTesseract = false;
         } else if (isLikelyTextExtension(ext) || mime.startsWith("text/")) {
             fullText = safe(Files.readString(sourcePath, StandardCharsets.UTF_8));
             pages.add(new PageTextRec(0, "plain_text", fullText));
@@ -270,6 +282,17 @@ public final class version_ocr_companion_service {
         out.sourceChecksum = sourceChecksum;
         out.sourceBytes = sourceBytes;
         out.sourceMtimeMs = sourceMtimeMs;
+        return out;
+    }
+
+    private static DocumentTextExtraction extractStructuredDocumentText(Path sourcePath) throws Exception {
+        DocumentTextExtraction out = new DocumentTextExtraction();
+        if (sourcePath == null || !Files.isRegularFile(sourcePath)) return out;
+        byte[] bytes = Files.readAllBytes(sourcePath);
+        String extOrName = sourcePath.getFileName() == null ? "" : sourcePath.getFileName().toString();
+        document_assembler.PreviewResult preview = new document_assembler().preview(bytes, extOrName, Map.of());
+        out.engine = "document_assembler";
+        out.text = safe(preview == null ? "" : preview.sourceText);
         return out;
     }
 
@@ -522,6 +545,25 @@ public final class version_ocr_companion_service {
                 || "log".equals(e)
                 || "yaml".equals(e)
                 || "yml".equals(e);
+    }
+
+    private static boolean isStructuredDocumentExtension(String ext) {
+        String e = safe(ext).trim().toLowerCase(Locale.ROOT);
+        return "docx".equals(e)
+                || "doc".equals(e)
+                || "rtf".equals(e)
+                || "odf".equals(e)
+                || "odt".equals(e);
+    }
+
+    private static boolean isStructuredDocumentMime(String mime) {
+        String m = safe(mime).trim().toLowerCase(Locale.ROOT);
+        return m.contains("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                || m.contains("application/msword")
+                || m.contains("application/rtf")
+                || m.contains("text/rtf")
+                || m.contains("application/vnd.oasis.opendocument")
+                || m.contains("application/vnd.oasis.opendocument.text");
     }
 
     private static String extension(Path p) {
