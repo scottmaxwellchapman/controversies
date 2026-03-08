@@ -64,6 +64,8 @@
     __requiredPerm = "facts.access";
   } else if (__path.endsWith("/tasks.jsp") || __path.endsWith("tasks.jsp")) {
     __requiredPerm = "tasks.access";
+  } else if (__path.endsWith("/deadline_calculator.jsp") || __path.endsWith("deadline_calculator.jsp")) {
+    __requiredPerm = "tasks.access";
   } else if (__path.endsWith("/omnichannel.jsp") || __path.endsWith("omnichannel.jsp")
           || __path.endsWith("/omnichannel_manifest.jsp") || __path.endsWith("omnichannel_manifest.jsp")) {
     __requiredPerm = "threads.access";

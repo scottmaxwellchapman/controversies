@@ -619,6 +619,19 @@ input, select, textarea{
   gap: var(--s-5);
   margin-bottom: var(--s-5);
 }
+.login-head{
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--s-4);
+}
+.login-app-icon{
+  width: clamp(2.8rem, 5vw, 3.8rem);
+  height: clamp(2.8rem, 5vw, 3.8rem);
+  border-radius: 0.9rem;
+  object-fit: cover;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px var(--border), 0 12px 28px rgba(2, 6, 23, 0.16);
+}
 .section-head .meta{
   color: var(--muted);
   font-size: 0.92rem;

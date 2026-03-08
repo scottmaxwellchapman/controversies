@@ -245,7 +245,9 @@
   boolean includeContentSearch = "content".equals(searchMode) || "both".equals(searchMode);
   String extFilter = safe(request.getParameter("ext_filter")).trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
   String pathFilter = safe(request.getParameter("path_filter")).trim();
+  String navQ = safe(request.getParameter("nav_q")).trim();
   String searchQs = "&q=" + enc(q) + "&search_mode=" + enc(searchMode) + "&ext_filter=" + enc(extFilter) + "&path_filter=" + enc(pathFilter);
+  String viewerQs = searchQs + "&nav_q=" + enc(navQ);
 
   String downloadRel = normalizeRelativePath(request.getParameter("download"));
   if (!downloadRel.isBlank()) {
@@ -384,6 +386,9 @@
   .tx-law-hidden-text { position:absolute; left:-9999px; width:1px; height:1px; opacity:0; pointer-events:none; }
   .tx-law-nav { margin-top:8px; border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:6px 8px; }
   .tx-law-nav summary { cursor:pointer; font-weight:600; color:var(--text); }
+  .tx-law-nav-search { margin-top:8px; display:grid; gap:8px; grid-template-columns:minmax(0, 1fr) auto auto; align-items:end; }
+  .tx-law-nav-search input[type="search"] { margin:0; }
+  .tx-law-nav-search-meta { color:var(--muted); font-size:11px; }
   .tx-law-nav-list { margin-top:8px; display:grid; gap:6px; }
   .tx-law-nav-row { display:grid; gap:8px; grid-template-columns:minmax(0, 1fr) auto; align-items:center; border:1px solid var(--border); border-radius:8px; background:var(--surface-2); padding:6px 8px; }
   .tx-law-nav-kind { display:inline-block; margin-right:6px; padding:1px 6px; border:1px solid var(--border); border-radius:999px; font-size:11px; color:var(--muted); background:var(--surface); text-transform:capitalize; }
@@ -391,11 +396,13 @@
   .tx-law-nav-target { color:var(--muted); font-size:11px; word-break:break-word; margin-top:3px; }
   .tx-law-nav-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .tx-law-nav-page { color:var(--muted); font-size:11px; }
+  .tx-law-nav-search-no-match { display:none; }
   @media (max-width: 700px) {
     .tx-law-search-main { grid-template-columns:minmax(0,1fr); }
     .tx-law-search-tools { grid-template-columns:1fr; }
     .tx-law-row { grid-template-columns:minmax(0,1fr); align-items:start; }
     .tx-law-view-page-jump input[type="number"] { width:70px; }
+    .tx-law-nav-search { grid-template-columns:minmax(0,1fr); align-items:start; }
     .tx-law-nav-row { grid-template-columns:minmax(0,1fr); }
   }
 </style>
@@ -516,10 +523,10 @@
       </div>
       <div class="tx-law-view-nav">
         <% if (viewedPage.hasPrev) { %>
-          <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&view=<%= enc(viewedRel) %>&page=<%= viewedPage.pageIndex - 1 %><%= searchQs %>">Previous</a>
+          <a class="btn btn-ghost" data-navq-link="1" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&view=<%= enc(viewedRel) %>&page=<%= viewedPage.pageIndex - 1 %><%= viewerQs %>">Previous</a>
         <% } %>
         <% if (viewedPage.hasNext) { %>
-          <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&view=<%= enc(viewedRel) %>&page=<%= viewedPage.pageIndex + 1 %><%= searchQs %>">Next</a>
+          <a class="btn btn-ghost" data-navq-link="1" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&view=<%= enc(viewedRel) %>&page=<%= viewedPage.pageIndex + 1 %><%= viewerQs %>">Next</a>
         <% } %>
         <form method="get" action="<%= ctx %>/texas_law.jsp" class="tx-law-view-page-jump">
           <input type="hidden" name="library" value="<%= esc(library) %>" />
@@ -529,6 +536,7 @@
           <input type="hidden" name="search_mode" value="<%= esc(searchMode) %>" />
           <input type="hidden" name="ext_filter" value="<%= esc(extFilter) %>" />
           <input type="hidden" name="path_filter" value="<%= esc(pathFilter) %>" />
+          <input type="hidden" name="nav_q" id="txLawNavQField" value="<%= esc(navQ) %>" />
           <label style="margin:0;">
             <span class="tx-law-view-meta">Page</span>
             <input type="number" name="goto_page" min="1" <%= gotoMaxAttr %> value="<%= viewedPageOne %>" />
@@ -550,6 +558,14 @@
     <% } %>
     <details class="tx-law-nav">
       <summary>Document Navigation (<%= navEntries.size() %>)</summary>
+      <div class="tx-law-nav-search">
+        <label style="margin:0;">
+          <span>Find Navigation</span>
+          <input type="search" id="txLawNavSearch" placeholder="Search headings, bookmarks, and links" value="<%= esc(navQ) %>" autocomplete="off" />
+        </label>
+        <button type="button" class="btn btn-ghost" id="txLawNavSearchClear">Clear</button>
+        <span class="tx-law-nav-search-meta" id="txLawNavSearchMeta" aria-live="polite"></span>
+      </div>
       <div class="tx-law-nav-list">
         <% if (navEntries.isEmpty()) { %>
           <div class="tx-law-empty">No built-in headings, bookmarks, or links were detected for this file.</div>
@@ -562,8 +578,9 @@
                int nPageOne = n.pageIndex >= 0 ? (n.pageIndex + 1) : -1;
                String nTarget = safe(n.target);
                String externalHref = n.external ? safeExternalHref(nTarget) : "";
+               String navSearchIndex = (nType + " " + nLabel + " " + nTarget).toLowerCase(Locale.ROOT);
           %>
-            <div class="tx-law-nav-row">
+            <div class="tx-law-nav-row" data-nav-search="<%= esc(navSearchIndex) %>">
               <div>
                 <div class="tx-law-nav-label">
                   <span class="tx-law-nav-kind"><%= esc(nType.isBlank() ? "entry" : nType) %></span>
@@ -575,7 +592,7 @@
               </div>
               <div class="tx-law-nav-actions">
                 <% if (nPageOne > 0) { %>
-                  <a class="btn btn-ghost" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&view=<%= enc(viewedRel) %>&page=<%= n.pageIndex %><%= searchQs %>">Go</a>
+                  <a class="btn btn-ghost" data-navq-link="1" href="<%= ctx %>/texas_law.jsp?library=<%= enc(library) %>&path=<%= enc(relPath) %>&view=<%= enc(viewedRel) %>&page=<%= n.pageIndex %><%= viewerQs %>">Go</a>
                   <span class="tx-law-nav-page">P.<%= nPageOne %></span>
                 <% } %>
                 <% if (!externalHref.isBlank()) { %>
@@ -587,6 +604,7 @@
           <% if (navEntries.size() > navDisplayLimit) { %>
             <div class="tx-law-view-meta">Showing first <%= navDisplayLimit %> entries.</div>
           <% } %>
+          <div class="tx-law-empty tx-law-nav-search-no-match" id="txLawNavNoMatches">No navigation entries match this search.</div>
         <% } %>
       </div>
     </details>
@@ -684,7 +702,6 @@
 <script>
 (() => {
   const copyBtn = document.getElementById("btnCopyPageText");
-  if (!copyBtn) return;
   const textEl = document.getElementById("txLawHiddenPageText");
   const statusEl = document.getElementById("txLawCopyStatus");
 
@@ -721,7 +738,85 @@
     }
   }
 
-  copyBtn.addEventListener("click", () => { void copyPageText(); });
+  if (copyBtn) {
+    copyBtn.addEventListener("click", () => { void copyPageText(); });
+  }
+
+  const navSearchInput = document.getElementById("txLawNavSearch");
+  const navSearchClear = document.getElementById("txLawNavSearchClear");
+  const navSearchMeta = document.getElementById("txLawNavSearchMeta");
+  const navNoMatches = document.getElementById("txLawNavNoMatches");
+  const navQField = document.getElementById("txLawNavQField");
+  const navQLinks = Array.from(document.querySelectorAll("a[data-navq-link=\"1\"]"));
+  if (!navSearchInput) return;
+
+  const navContainer = navSearchInput.closest(".tx-law-nav");
+  const navRows = Array.from(document.querySelectorAll(".tx-law-nav-row[data-nav-search]"));
+  const navTotal = navRows.length;
+
+  function setNavMeta(visible, total, query) {
+    if (!navSearchMeta) return;
+    if (!query) {
+      navSearchMeta.textContent = total + " entries";
+      return;
+    }
+    navSearchMeta.textContent = visible + " of " + total + " entries";
+  }
+
+  function syncNavQueryState(query) {
+    const value = (query || "").trim();
+    if (navQField) navQField.value = value;
+    navQLinks.forEach((link) => {
+      const href = link.getAttribute("href");
+      if (!href) return;
+      try {
+        const parsed = new URL(href, window.location.href);
+        if (value) parsed.searchParams.set("nav_q", value);
+        else parsed.searchParams.delete("nav_q");
+        link.setAttribute("href", parsed.pathname + parsed.search + parsed.hash);
+      } catch (err) {
+      }
+    });
+  }
+
+  function applyNavSearch(rawQuery) {
+    const queryRaw = (rawQuery || "").trim();
+    const query = queryRaw.toLowerCase();
+    let visible = 0;
+
+    navRows.forEach((row) => {
+      const haystack = (row.getAttribute("data-nav-search") || "").toLowerCase();
+      const show = !query || haystack.includes(query);
+      row.style.display = show ? "" : "none";
+      if (show) visible += 1;
+    });
+
+    if (navNoMatches) navNoMatches.style.display = queryRaw && visible === 0 ? "" : "none";
+    if (navSearchClear) navSearchClear.disabled = !queryRaw;
+    if (navContainer && queryRaw) navContainer.open = true;
+    syncNavQueryState(queryRaw);
+    setNavMeta(visible, navTotal, queryRaw);
+  }
+
+  navSearchInput.addEventListener("input", () => {
+    applyNavSearch(navSearchInput.value);
+  });
+
+  if (navSearchClear) {
+    navSearchClear.addEventListener("click", () => {
+      navSearchInput.value = "";
+      applyNavSearch("");
+      navSearchInput.focus();
+    });
+  }
+
+  if (navTotal <= 0) {
+    navSearchInput.disabled = true;
+    if (navSearchClear) navSearchClear.disabled = true;
+    setNavMeta(0, 0, "");
+    return;
+  }
+  applyNavSearch(navSearchInput.value);
 })();
 </script>
 

@@ -8,6 +8,7 @@
   <item label="Search" href="/search.jsp" />
   <item label="Facts Case Plan" href="/facts.jsp" />
   <item label="Tasks" href="/tasks.jsp" />
+  <item label="Deadline Calculator" href="/deadline_calculator.jsp" />
   <item label="Omnichannel Threads" href="/omnichannel.jsp" />
   <item label="Knowledge Wiki" href="/wiki.jsp" />
   <item label="Texas Law" href="/texas_law.jsp" />

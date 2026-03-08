@@ -903,7 +903,13 @@
 
 <div class="container main">
   <section class="card narrow">
-    <div class="section-head">
+    <div class="section-head login-head">
+      <img class="login-app-icon"
+           src="<%= ctx %>/branding/icon_full_res.png"
+           alt="Controversies app icon"
+           width="72"
+           height="72"
+           decoding="async" />
       <div>
         <h1>Sign in</h1>
         <div class="meta">Select your tenant, then sign in with your email and password.</div>

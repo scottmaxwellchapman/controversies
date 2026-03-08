@@ -81,6 +81,7 @@
         if ("/documents.jsp".equals(h) || "/parts.jsp".equals(h) || "/versions.jsp".equals(h) || "/pdf_redact.jsp".equals(h) || "/search.jsp".equals(h)) return "documents";
         if ("/facts.jsp".equals(h)) return "facts";
         if ("/tasks.jsp".equals(h)) return "tasks";
+        if ("/deadline_calculator.jsp".equals(h)) return "tasks";
         if ("/omnichannel.jsp".equals(h) || "/omnichannel_manifest.jsp".equals(h)) return "threads";
         if ("/wiki.jsp".equals(h)) return "wiki";
         if ("/texas_law.jsp".equals(h)) return "texas-law";
@@ -240,6 +241,7 @@
         g.items.add(new MenuNode("Search", "/search.jsp"));
         g.items.add(new MenuNode("Facts Case Plan", "/facts.jsp"));
         g.items.add(new MenuNode("Tasks", "/tasks.jsp"));
+        g.items.add(new MenuNode("Deadline Calculator", "/deadline_calculator.jsp"));
         g.items.add(new MenuNode("Omnichannel Threads", "/omnichannel.jsp"));
         g.items.add(new MenuNode("Knowledge Wiki", "/wiki.jsp"));
         g.items.add(new MenuNode("Texas Law", "/texas_law.jsp"));
@@ -297,6 +299,7 @@
                 || "/search.jsp".equals(h)) return "documents.access";
         if ("/facts.jsp".equals(h)) return "facts.access";
         if ("/tasks.jsp".equals(h)) return "tasks.access";
+        if ("/deadline_calculator.jsp".equals(h)) return "tasks.access";
         if ("/omnichannel.jsp".equals(h) || "/omnichannel_manifest.jsp".equals(h)) return "threads.access";
         if ("/wiki.jsp".equals(h)) return "wiki.access";
         if ("/texas_law.jsp".equals(h)) return "texas_law.access";

@@ -5,17 +5,22 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
+import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -45,6 +50,21 @@ import java.util.Set;
  * Note: the class name intentionally matches the requested name: class_dealine_calculator.
  */
 public class class_dealine_calculator {
+
+    private static final String DEFAULT_DEADLINE_XML =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+            "<deadlineSet id=\"default\" label=\"Tenant Deadline Rules\">\n" +
+            "  <triggers>\n" +
+            "    <trigger id=\"serviceDate\" label=\"Service Date\" date=\"2026-03-10\"/>\n" +
+            "    <trigger id=\"complaintFiled\" label=\"Complaint Filed\" date=\"2026-11-30\"/>\n" +
+            "  </triggers>\n" +
+            "  <actions>\n" +
+            "    <action uuid=\"a1\" label=\"Texas Answer Due\" operator=\"TEXAS_MONDAY_NEXT_AFTER_EXPIRATION\" baseRef=\"serviceDate\" offsetDays=\"20\" adjust=\"NEXT_BUSINESS_DAY\" timeOfDay=\"10:00\"/>\n" +
+            "    <action uuid=\"a2\" label=\"Federal Service Deadline\" operator=\"OFFSET\" baseRef=\"complaintFiled\" offsetDays=\"90\" countMethod=\"CALENDAR_DAYS\" adjust=\"NEXT_BUSINESS_DAY\"/>\n" +
+            "    <action uuid=\"a3\" label=\"Internal Reminder\" imaginary=\"true\" operator=\"OFFSET\" baseRef=\"a1\" offsetDays=\"-5\" countMethod=\"BUSINESS_DAYS\" adjust=\"PREVIOUS_BUSINESS_DAY\"/>\n" +
+            "    <action uuid=\"a4\" label=\"Controlling Date\" operator=\"EARLIER_OF\" leftRef=\"a1\" rightRef=\"a2\" adjust=\"NONE\"/>\n" +
+            "  </actions>\n" +
+            "</deadlineSet>\n";
 
     public enum Jurisdiction {
         TEXAS_CIVIL,
@@ -96,14 +116,21 @@ public class class_dealine_calculator {
         private final LocalTime electronicFilingCutoff;
         private final Set<LocalDate> courtClosureDates;
         private final boolean includeImaginaryDates;
+        private final String holidayTenantUuid;
 
         public EngineOptions(Jurisdiction jurisdiction, ZoneId zoneId, LocalTime electronicFilingCutoff,
                              Set<LocalDate> courtClosureDates, boolean includeImaginaryDates) {
+            this(jurisdiction, zoneId, electronicFilingCutoff, courtClosureDates, includeImaginaryDates, "");
+        }
+
+        public EngineOptions(Jurisdiction jurisdiction, ZoneId zoneId, LocalTime electronicFilingCutoff,
+                             Set<LocalDate> courtClosureDates, boolean includeImaginaryDates, String holidayTenantUuid) {
             this.jurisdiction = jurisdiction == null ? Jurisdiction.GENERIC : jurisdiction;
             this.zoneId = zoneId == null ? ZoneId.of("America/Chicago") : zoneId;
             this.electronicFilingCutoff = electronicFilingCutoff == null ? LocalTime.of(23, 59, 59) : electronicFilingCutoff;
             this.courtClosureDates = courtClosureDates == null ? new HashSet<>() : new HashSet<>(courtClosureDates);
             this.includeImaginaryDates = includeImaginaryDates;
+            this.holidayTenantUuid = holidayTenantUuid == null ? "" : holidayTenantUuid.trim();
         }
 
         public static EngineOptions defaults() {
@@ -129,6 +156,21 @@ public class class_dealine_calculator {
 
         public boolean isIncludeImaginaryDates() {
             return includeImaginaryDates;
+        }
+
+        public String getHolidayTenantUuid() {
+            return holidayTenantUuid;
+        }
+
+        public EngineOptions withHolidayTenantUuid(String tenantUuid) {
+            return new EngineOptions(
+                    jurisdiction,
+                    zoneId,
+                    electronicFilingCutoff,
+                    courtClosureDates,
+                    includeImaginaryDates,
+                    tenantUuid
+            );
         }
     }
 
@@ -278,6 +320,69 @@ public class class_dealine_calculator {
                 ids.add(action.uuid);
             }
             return ids;
+        }
+    }
+
+    public static Path tenantDeadlineXmlPath(String tenantUuid) {
+        String tu = safeFileToken(tenantUuid);
+        if (tu.isBlank()) return null;
+        return Paths.get("data", "tenants", tu, "settings", "deadline_rules.xml").toAbsolutePath();
+    }
+
+    public static Path ensureTenantDeadlineXml(String tenantUuid) throws Exception {
+        Path p = tenantDeadlineXmlPath(tenantUuid);
+        if (p == null) return null;
+        Files.createDirectories(p.getParent());
+        if (!Files.exists(p)) {
+            Files.writeString(
+                    p,
+                    DEFAULT_DEADLINE_XML,
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE_NEW
+            );
+        }
+        return p;
+    }
+
+    public static String readTenantDeadlineXml(String tenantUuid) throws Exception {
+        Path p = ensureTenantDeadlineXml(tenantUuid);
+        if (p == null) return DEFAULT_DEADLINE_XML;
+        return Files.readString(p, StandardCharsets.UTF_8);
+    }
+
+    public static void writeTenantDeadlineXml(String tenantUuid, String xml) throws Exception {
+        Path p = tenantDeadlineXmlPath(tenantUuid);
+        if (p == null) throw new IllegalArgumentException("tenantUuid required");
+        String text = safe(xml);
+        if (text.trim().isEmpty()) throw new IllegalArgumentException("Deadline XML cannot be empty.");
+        try (InputStream in = new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))) {
+            parseDefinition(in);
+        }
+        Files.createDirectories(p.getParent());
+        Files.writeString(
+                p,
+                text,
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING
+        );
+    }
+
+    public static ActionDateInfo[] calculateDeadlinesForTenant(String tenantUuid) throws Exception {
+        return calculateDeadlinesForTenant(tenantUuid, EngineOptions.defaults());
+    }
+
+    public static ActionDateInfo[] calculateDeadlinesForTenant(String tenantUuid, EngineOptions options) throws Exception {
+        EngineOptions effective = options == null ? EngineOptions.defaults() : options;
+        EngineOptions tenantAware = effective.withHolidayTenantUuid(tenantUuid);
+        Path p = ensureTenantDeadlineXml(tenantUuid);
+        if (p == null) {
+            try (InputStream in = new ByteArrayInputStream(DEFAULT_DEADLINE_XML.getBytes(StandardCharsets.UTF_8))) {
+                return calculateDeadlines(in, tenantAware);
+            }
+        }
+        try (InputStream in = Files.newInputStream(p)) {
+            return calculateDeadlines(in, tenantAware);
         }
     }
 
@@ -581,7 +686,7 @@ public class class_dealine_calculator {
         if (date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY) {
             return false;
         }
-        if (class_holiday_calculator.isHoliday(date)) {
+        if (class_holiday_calculator.isHoliday(options.getHolidayTenantUuid(), date)) {
             return false;
         }
         return !includeCourtClosures || !options.getCourtClosureDates().contains(date);
@@ -657,10 +762,20 @@ public class class_dealine_calculator {
     }
 
     public static DeadlineDefinition parseDefinition(InputStream xmlInputStream) throws Exception {
+        if (xmlInputStream == null) {
+            throw new IllegalArgumentException("xmlInputStream is required.");
+        }
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setNamespaceAware(false);
         factory.setIgnoringComments(true);
         factory.setIgnoringElementContentWhitespace(true);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+        factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
         DocumentBuilder builder = factory.newDocumentBuilder();
         Document document = builder.parse(xmlInputStream);
         document.getDocumentElement().normalize();
@@ -897,6 +1012,16 @@ public class class_dealine_calculator {
             out = out.replace("{" + entry.getKey() + "}", entry.getValue());
         }
         return out;
+    }
+
+    private static String safe(String s) {
+        return s == null ? "" : s;
+    }
+
+    private static String safeFileToken(String s) {
+        String t = safe(s).trim();
+        if (t.isBlank()) return "";
+        return t.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
     public static void main(String[] args) throws Exception {
