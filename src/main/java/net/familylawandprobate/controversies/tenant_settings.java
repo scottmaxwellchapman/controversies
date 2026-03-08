@@ -72,6 +72,16 @@ public final class tenant_settings {
             "office365_contacts_last_sync_at",
             "office365_contacts_last_sync_status",
             "office365_contacts_last_sync_error",
+            "self_upgrade_enabled",
+            "self_upgrade_day_of_week",
+            "self_upgrade_time_local",
+            "self_upgrade_schedule_zone",
+            "self_upgrade_git_remote",
+            "self_upgrade_git_branch",
+            "self_upgrade_build_command",
+            "self_upgrade_restart_command",
+            "self_upgrade_allow_dirty_worktree",
+            "self_upgrade_command_timeout_minutes",
             "feature_advanced_assembly",
             "feature_async_sync",
             "theme_mode_default",
@@ -411,6 +421,16 @@ public final class tenant_settings {
         d.put("office365_contacts_last_sync_at", "");
         d.put("office365_contacts_last_sync_status", "never");
         d.put("office365_contacts_last_sync_error", "");
+        d.put("self_upgrade_enabled", "true");
+        d.put("self_upgrade_day_of_week", "SATURDAY");
+        d.put("self_upgrade_time_local", "04:00");
+        d.put("self_upgrade_schedule_zone", "");
+        d.put("self_upgrade_git_remote", "origin");
+        d.put("self_upgrade_git_branch", "");
+        d.put("self_upgrade_build_command", "mvn -q -DskipTests package");
+        d.put("self_upgrade_restart_command", "");
+        d.put("self_upgrade_allow_dirty_worktree", "false");
+        d.put("self_upgrade_command_timeout_minutes", "30");
         d.put("feature_advanced_assembly", "false");
         d.put("feature_async_sync", "false");
         d.put("bpm_aging_alarm_enabled", "false");
@@ -499,7 +519,9 @@ public final class tenant_settings {
                 || "password_policy_require_uppercase".equals(key)
                 || "password_policy_require_lowercase".equals(key)
                 || "password_policy_require_number".equals(key)
-                || "password_policy_require_symbol".equals(key)) {
+                || "password_policy_require_symbol".equals(key)
+                || "self_upgrade_enabled".equals(key)
+                || "self_upgrade_allow_dirty_worktree".equals(key)) {
             return truthy(v) ? "true" : "false";
         }
 
@@ -630,9 +652,61 @@ public final class tenant_settings {
             return s;
         }
 
+        if ("self_upgrade_day_of_week".equals(key)) {
+            String day = v.toUpperCase(Locale.ROOT);
+            if (!"MONDAY".equals(day) && !"TUESDAY".equals(day) && !"WEDNESDAY".equals(day)
+                    && !"THURSDAY".equals(day) && !"FRIDAY".equals(day)
+                    && !"SATURDAY".equals(day) && !"SUNDAY".equals(day)) {
+                return "SATURDAY";
+            }
+            return day;
+        }
+
+        if ("self_upgrade_time_local".equals(key)) {
+            if (v.isBlank()) return "04:00";
+            try {
+                java.time.LocalTime t = java.time.LocalTime.parse(v);
+                return t.withSecond(0).withNano(0).toString();
+            } catch (Exception ignored) {
+                return "04:00";
+            }
+        }
+
+        if ("self_upgrade_schedule_zone".equals(key)) {
+            if (v.isBlank()) return "";
+            try {
+                java.time.ZoneId.of(v);
+                return v;
+            } catch (Exception ignored) {
+                return "";
+            }
+        }
+
+        if ("self_upgrade_command_timeout_minutes".equals(key)) {
+            int n = parseInt(v, 30);
+            if (n < 1 || n > 240) return "30";
+            return String.valueOf(n);
+        }
+
         if ("office365_contacts_sync_sources_json".equals(key)) {
             if (v.isBlank()) return "[]";
             if (v.length() > 200000) v = v.substring(0, 200000);
+            return v;
+        }
+
+        if ("self_upgrade_git_remote".equals(key)) {
+            if (v.isBlank()) return "origin";
+            if (v.length() > 120) v = v.substring(0, 120);
+            return v;
+        }
+
+        if ("self_upgrade_git_branch".equals(key)) {
+            if (v.length() > 160) v = v.substring(0, 160);
+            return v;
+        }
+
+        if ("self_upgrade_build_command".equals(key) || "self_upgrade_restart_command".equals(key)) {
+            if (v.length() > 1024) v = v.substring(0, 1024);
             return v;
         }
 

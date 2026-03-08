@@ -129,6 +129,54 @@ public class tenant_settings_test {
         assertEquals("never", out.get("office365_contacts_last_sync_status"));
     }
 
+    @Test
+    void sanitize_supports_self_upgrade_settings() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("self_upgrade_enabled", "yes");
+        in.put("self_upgrade_day_of_week", "sunday");
+        in.put("self_upgrade_time_local", "03:15");
+        in.put("self_upgrade_schedule_zone", "America/Chicago");
+        in.put("self_upgrade_git_remote", "origin");
+        in.put("self_upgrade_git_branch", "main");
+        in.put("self_upgrade_build_command", "mvn -q -DskipTests package");
+        in.put("self_upgrade_restart_command", "java -jar app.jar");
+        in.put("self_upgrade_allow_dirty_worktree", "false");
+        in.put("self_upgrade_command_timeout_minutes", "45");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("true", out.get("self_upgrade_enabled"));
+        assertEquals("SUNDAY", out.get("self_upgrade_day_of_week"));
+        assertEquals("03:15", out.get("self_upgrade_time_local"));
+        assertEquals("America/Chicago", out.get("self_upgrade_schedule_zone"));
+        assertEquals("origin", out.get("self_upgrade_git_remote"));
+        assertEquals("main", out.get("self_upgrade_git_branch"));
+        assertEquals("mvn -q -DskipTests package", out.get("self_upgrade_build_command"));
+        assertEquals("java -jar app.jar", out.get("self_upgrade_restart_command"));
+        assertEquals("false", out.get("self_upgrade_allow_dirty_worktree"));
+        assertEquals("45", out.get("self_upgrade_command_timeout_minutes"));
+    }
+
+    @Test
+    void sanitize_defaults_invalid_self_upgrade_schedule_fields() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("self_upgrade_day_of_week", "noday");
+        in.put("self_upgrade_time_local", "25:99");
+        in.put("self_upgrade_schedule_zone", "Mars/Olympus");
+        in.put("self_upgrade_git_remote", "");
+        in.put("self_upgrade_command_timeout_minutes", "0");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("SATURDAY", out.get("self_upgrade_day_of_week"));
+        assertEquals("04:00", out.get("self_upgrade_time_local"));
+        assertEquals("", out.get("self_upgrade_schedule_zone"));
+        assertEquals("origin", out.get("self_upgrade_git_remote"));
+        assertEquals("30", out.get("self_upgrade_command_timeout_minutes"));
+    }
+
 
     @Test
     void sanitize_supports_storage_encryption_and_s3_sse_modes() {

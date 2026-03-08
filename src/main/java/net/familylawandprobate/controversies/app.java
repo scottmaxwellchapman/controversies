@@ -28,6 +28,7 @@ public class app {
         office365_contact_sync_scheduler.defaultService().startIfNeeded();
         external_storage_data_sync_scheduler.defaultService().startIfNeeded();
         bpm_aging_alarm_scheduler.defaultService().startIfNeeded();
+        self_upgrade_scheduler.defaultService().startIfNeeded();
         texas_law_sync texasLawSync = texas_law_sync.defaultService();
         texasLawSync.triggerStartupRunIfIdle();
 

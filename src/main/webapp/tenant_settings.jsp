@@ -100,6 +100,40 @@
     }
   }
 
+  private static String tsDayOfWeek(String raw, String fallback) {
+    String v = tsSafe(raw).trim().toUpperCase(Locale.ROOT);
+    if ("MONDAY".equals(v) || "TUESDAY".equals(v) || "WEDNESDAY".equals(v)
+            || "THURSDAY".equals(v) || "FRIDAY".equals(v)
+            || "SATURDAY".equals(v) || "SUNDAY".equals(v)) {
+      return v;
+    }
+    String fb = tsSafe(fallback).trim().toUpperCase(Locale.ROOT);
+    return fb.isBlank() ? "SATURDAY" : fb;
+  }
+
+  private static String tsLocalTime(String raw, String fallback) {
+    String v = tsSafe(raw).trim();
+    if (v.isBlank()) v = tsSafe(fallback).trim();
+    if (v.isBlank()) v = "04:00";
+    try {
+      java.time.LocalTime t = java.time.LocalTime.parse(v);
+      return t.withSecond(0).withNano(0).toString();
+    } catch (Exception ignored) {
+      return "04:00";
+    }
+  }
+
+  private static String tsZoneIdOrBlank(String raw) {
+    String v = tsSafe(raw).trim();
+    if (v.isBlank()) return "";
+    try {
+      java.time.ZoneId.of(v);
+      return v;
+    } catch (Exception ignored) {
+      return "";
+    }
+  }
+
   private static String tsLatitude(String raw) {
     String v = tsSafe(raw).trim();
     if (v.isBlank()) return "";
@@ -468,6 +502,18 @@
     String flowrouteSmsSecretKey = tsSafe(request.getParameter("flowroute_sms_secret_key")).trim();
     String flowrouteSmsApiBaseUrl = tsSafe(request.getParameter("flowroute_sms_api_base_url")).trim();
     if (flowrouteSmsApiBaseUrl.isBlank()) flowrouteSmsApiBaseUrl = "https://api.flowroute.com/v2.2/messages";
+    boolean selfUpgradeEnabled = tsChecked(request.getParameter("self_upgrade_enabled"));
+    String selfUpgradeDayOfWeek = tsDayOfWeek(request.getParameter("self_upgrade_day_of_week"), "SATURDAY");
+    String selfUpgradeTimeLocal = tsLocalTime(request.getParameter("self_upgrade_time_local"), "04:00");
+    String selfUpgradeScheduleZone = tsZoneIdOrBlank(request.getParameter("self_upgrade_schedule_zone"));
+    String selfUpgradeGitRemote = tsSafe(request.getParameter("self_upgrade_git_remote")).trim();
+    if (selfUpgradeGitRemote.isBlank()) selfUpgradeGitRemote = "origin";
+    String selfUpgradeGitBranch = tsSafe(request.getParameter("self_upgrade_git_branch")).trim();
+    String selfUpgradeBuildCommand = tsSafe(request.getParameter("self_upgrade_build_command")).trim();
+    if (selfUpgradeBuildCommand.isBlank()) selfUpgradeBuildCommand = "mvn -q -DskipTests package";
+    String selfUpgradeRestartCommand = tsSafe(request.getParameter("self_upgrade_restart_command")).trim();
+    boolean selfUpgradeAllowDirtyWorktree = tsChecked(request.getParameter("self_upgrade_allow_dirty_worktree"));
+    String selfUpgradeCommandTimeoutMinutes = tsIntRange(request.getParameter("self_upgrade_command_timeout_minutes"), 30, 1, 240);
 
     boolean saveStorageSecret = tsChecked(request.getParameter("save_storage_secret"));
     boolean saveStorageEncryptionKey = tsChecked(request.getParameter("save_storage_encryption_key"));
@@ -552,6 +598,16 @@
     settings.put("two_factor_default_engine", twoFactorDefaultEngine);
     settings.put("flowroute_sms_from_number", flowrouteSmsFromNumber);
     settings.put("flowroute_sms_api_base_url", flowrouteSmsApiBaseUrl);
+    settings.put("self_upgrade_enabled", selfUpgradeEnabled ? "true" : "false");
+    settings.put("self_upgrade_day_of_week", selfUpgradeDayOfWeek);
+    settings.put("self_upgrade_time_local", selfUpgradeTimeLocal);
+    settings.put("self_upgrade_schedule_zone", selfUpgradeScheduleZone);
+    settings.put("self_upgrade_git_remote", selfUpgradeGitRemote);
+    settings.put("self_upgrade_git_branch", selfUpgradeGitBranch);
+    settings.put("self_upgrade_build_command", selfUpgradeBuildCommand);
+    settings.put("self_upgrade_restart_command", selfUpgradeRestartCommand);
+    settings.put("self_upgrade_allow_dirty_worktree", selfUpgradeAllowDirtyWorktree ? "true" : "false");
+    settings.put("self_upgrade_command_timeout_minutes", selfUpgradeCommandTimeoutMinutes);
 
     if (saveStorageSecret && !storageSecret.isBlank()) settings.put("storage_secret", storageSecret);
     if (saveStorageEncryptionKey && !storageEncryptionKey.isBlank()) settings.put("storage_encryption_key", storageEncryptionKey);
@@ -910,6 +966,14 @@
           details.put("email_queue_max_attempts", tsSafe(settings.get("email_queue_max_attempts")));
           details.put("two_factor_policy", tsSafe(settings.get("two_factor_policy")));
           details.put("two_factor_default_engine", tsSafe(settings.get("two_factor_default_engine")));
+          details.put("self_upgrade_enabled", tsSafe(settings.get("self_upgrade_enabled")));
+          details.put("self_upgrade_day_of_week", tsSafe(settings.get("self_upgrade_day_of_week")));
+          details.put("self_upgrade_time_local", tsSafe(settings.get("self_upgrade_time_local")));
+          details.put("self_upgrade_schedule_zone", tsSafe(settings.get("self_upgrade_schedule_zone")));
+          details.put("self_upgrade_git_remote", tsSafe(settings.get("self_upgrade_git_remote")));
+          details.put("self_upgrade_git_branch", tsSafe(settings.get("self_upgrade_git_branch")));
+          details.put("self_upgrade_allow_dirty_worktree", tsSafe(settings.get("self_upgrade_allow_dirty_worktree")));
+          details.put("self_upgrade_command_timeout_minutes", tsSafe(settings.get("self_upgrade_command_timeout_minutes")));
           details.put("flowroute_sms_from_number_set", tsSafe(settings.get("flowroute_sms_from_number")).isBlank() ? "no" : "yes");
           details.put("storage_secret_saved", tsSafe(settings.get("storage_secret")).isBlank() ? "no" : "yes");
           details.put("storage_encryption_key_saved", tsSafe(settings.get("storage_encryption_key")).isBlank() ? "no" : "yes");
@@ -993,6 +1057,16 @@
   if (!"ok".equals(office365ContactsSyncStatusSaved) && !"failed".equals(office365ContactsSyncStatusSaved)) office365ContactsSyncStatusSaved = "never";
   String office365ContactsSyncErrorSaved = tsSafe(settings.get("office365_contacts_last_sync_error")).trim();
   String office365SourcesJsonSaved = tsSafe(settings.get("office365_contacts_sync_sources_json"));
+  String selfUpgradeDayOfWeekSaved = tsDayOfWeek(settings.get("self_upgrade_day_of_week"), "SATURDAY");
+  String selfUpgradeTimeLocalSaved = tsLocalTime(settings.get("self_upgrade_time_local"), "04:00");
+  String selfUpgradeScheduleZoneSaved = tsZoneIdOrBlank(settings.get("self_upgrade_schedule_zone"));
+  String selfUpgradeGitRemoteSaved = tsSafe(settings.get("self_upgrade_git_remote")).trim();
+  if (selfUpgradeGitRemoteSaved.isBlank()) selfUpgradeGitRemoteSaved = "origin";
+  String selfUpgradeGitBranchSaved = tsSafe(settings.get("self_upgrade_git_branch")).trim();
+  String selfUpgradeBuildCommandSaved = tsSafe(settings.get("self_upgrade_build_command")).trim();
+  if (selfUpgradeBuildCommandSaved.isBlank()) selfUpgradeBuildCommandSaved = "mvn -q -DskipTests package";
+  String selfUpgradeRestartCommandSaved = tsSafe(settings.get("self_upgrade_restart_command")).trim();
+  String selfUpgradeTimeoutSaved = tsIntRange(settings.get("self_upgrade_command_timeout_minutes"), 30, 1, 240);
   String themeMode = tsThemeMode(settings.get("theme_mode_default"));
   String themeTextSize = tsTextSize(settings.get("theme_text_size_default"));
   String themeLatitudeSaved = tsSafe(settings.get("theme_latitude")).trim();
@@ -1556,6 +1630,52 @@
   </section>
 
   <section class="card" style="margin-top:12px;" data-ts-panel="operations">
+    <h2 style="margin-top:0;">Automatic Self-Upgrade</h2>
+    <div class="meta" style="margin-bottom:10px;">
+      Shared-instance maintenance: fetch from GitHub, compile, and restart on schedule. Pull runs only when remote has a newer commit than local.
+    </div>
+    <div class="grid grid-2">
+      <label><input type="checkbox" name="self_upgrade_enabled" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("self_upgrade_enabled"))) ? "checked" : "" %> /> Enable automatic self-upgrade</label>
+      <label><input type="checkbox" name="self_upgrade_allow_dirty_worktree" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("self_upgrade_allow_dirty_worktree"))) ? "checked" : "" %> /> Allow updates when working tree is dirty (not recommended)</label>
+      <label>Day of Week
+        <select name="self_upgrade_day_of_week">
+          <option value="MONDAY" <%= "MONDAY".equals(selfUpgradeDayOfWeekSaved) ? "selected" : "" %>>Monday</option>
+          <option value="TUESDAY" <%= "TUESDAY".equals(selfUpgradeDayOfWeekSaved) ? "selected" : "" %>>Tuesday</option>
+          <option value="WEDNESDAY" <%= "WEDNESDAY".equals(selfUpgradeDayOfWeekSaved) ? "selected" : "" %>>Wednesday</option>
+          <option value="THURSDAY" <%= "THURSDAY".equals(selfUpgradeDayOfWeekSaved) ? "selected" : "" %>>Thursday</option>
+          <option value="FRIDAY" <%= "FRIDAY".equals(selfUpgradeDayOfWeekSaved) ? "selected" : "" %>>Friday</option>
+          <option value="SATURDAY" <%= "SATURDAY".equals(selfUpgradeDayOfWeekSaved) ? "selected" : "" %>>Saturday</option>
+          <option value="SUNDAY" <%= "SUNDAY".equals(selfUpgradeDayOfWeekSaved) ? "selected" : "" %>>Sunday</option>
+        </select>
+      </label>
+      <label>Local Time (HH:mm)
+        <input type="time" name="self_upgrade_time_local" value="<%= tsEsc(selfUpgradeTimeLocalSaved) %>" />
+      </label>
+      <label>Schedule Zone ID (optional)
+        <input type="text" name="self_upgrade_schedule_zone" value="<%= tsEsc(selfUpgradeScheduleZoneSaved) %>" placeholder="America/Chicago" />
+      </label>
+      <label>Git Remote
+        <input type="text" name="self_upgrade_git_remote" value="<%= tsEsc(selfUpgradeGitRemoteSaved) %>" placeholder="origin" />
+      </label>
+      <label>Git Branch (optional)
+        <input type="text" name="self_upgrade_git_branch" value="<%= tsEsc(selfUpgradeGitBranchSaved) %>" placeholder="main (blank = current branch)" />
+      </label>
+      <label>Build Command
+        <input type="text" name="self_upgrade_build_command" value="<%= tsEsc(selfUpgradeBuildCommandSaved) %>" placeholder="mvn -q -DskipTests package" />
+      </label>
+      <label>Restart Command (optional)
+        <input type="text" name="self_upgrade_restart_command" value="<%= tsEsc(selfUpgradeRestartCommandSaved) %>" placeholder="java -jar target/controversies-1.0-SNAPSHOT-all.jar" />
+      </label>
+      <label>Command Timeout (minutes)
+        <input type="number" min="1" max="240" name="self_upgrade_command_timeout_minutes" value="<%= tsEsc(selfUpgradeTimeoutSaved) %>" />
+      </label>
+    </div>
+    <div class="meta" style="margin-top:8px;">
+      Activity and run state are logged in JVM logs and <code>data/shared/self_upgrade/self_upgrade_status.properties</code>.
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px;" data-ts-panel="operations">
     <h2 style="margin-top:0;">API Credentials</h2>
     <div class="meta" style="margin-bottom:10px;">
       Tenant-scoped automation credentials for n8n/OpenClaw. Use headers <code>X-Tenant-UUID</code>, <code>X-API-Key</code>, and <code>X-API-Secret</code>.
@@ -1635,6 +1755,10 @@
       <div>Office 365 sync interval (minutes): <strong><%= tsEsc(office365ContactsSyncIntervalMinutesSaved) %></strong></div>
       <div>Last Office 365 contact sync: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("office365_contacts_last_sync_at")))) %></strong></div>
       <div>Office 365 contact sync status: <strong><%= tsEsc(tsStatusLabel(office365ContactsSyncStatusSaved)) %></strong></div>
+      <div>Self-upgrade enabled: <strong><%= "true".equalsIgnoreCase(tsSafe(settings.get("self_upgrade_enabled"))) ? "Yes" : "No" %></strong></div>
+      <div>Self-upgrade schedule: <strong><%= tsEsc(selfUpgradeDayOfWeekSaved) %></strong> at <strong><%= tsEsc(selfUpgradeTimeLocalSaved) %></strong> <%= selfUpgradeScheduleZoneSaved.isBlank() ? "(system zone)" : ("(" + tsEsc(selfUpgradeScheduleZoneSaved) + ")") %></div>
+      <div>Self-upgrade git remote/branch: <strong><%= tsEsc(selfUpgradeGitRemoteSaved) %></strong> / <strong><%= tsEsc(selfUpgradeGitBranchSaved.isBlank() ? "(current)" : selfUpgradeGitBranchSaved) %></strong></div>
+      <div>Self-upgrade timeout: <strong><%= tsEsc(selfUpgradeTimeoutSaved) %> min</strong> • allow dirty worktree: <strong><%= "true".equalsIgnoreCase(tsSafe(settings.get("self_upgrade_allow_dirty_worktree"))) ? "Yes" : "No" %></strong></div>
       <div>Email provider: <strong><%= tsEsc(tsSafe(settings.get("email_provider"))) %></strong></div>
       <div>Email connection: <strong><%= tsEsc(tsStatusLabel(tsSafe(settings.get("email_connection_status")))) %></strong> (<%= tsEsc(tsRotationLabel(tsSafe(settings.get("email_connection_checked_at")))) %>)</div>
       <div>Two-factor policy: <strong><%= tsEsc(tsSafe(settings.get("two_factor_policy"))) %></strong></div>

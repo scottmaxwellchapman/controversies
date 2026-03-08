@@ -102,6 +102,36 @@
     return "none";
   }
 
+  private static String normalizeDayOfWeek(String raw) {
+    String s = safe(raw).trim().toUpperCase(Locale.ROOT);
+    if ("MONDAY".equals(s) || "TUESDAY".equals(s) || "WEDNESDAY".equals(s)
+            || "THURSDAY".equals(s) || "FRIDAY".equals(s)
+            || "SATURDAY".equals(s) || "SUNDAY".equals(s)) return s;
+    return "SATURDAY";
+  }
+
+  private static String normalizeLocalTime(String raw) {
+    String s = safe(raw).trim();
+    if (s.isBlank()) s = "04:00";
+    try {
+      java.time.LocalTime t = java.time.LocalTime.parse(s);
+      return t.withSecond(0).withNano(0).toString();
+    } catch (Exception ignored) {
+      return "04:00";
+    }
+  }
+
+  private static String normalizeZoneIdOrBlank(String raw) {
+    String s = safe(raw).trim();
+    if (s.isBlank()) return "";
+    try {
+      java.time.ZoneId.of(s);
+      return s;
+    } catch (Exception ignored) {
+      return "";
+    }
+  }
+
   private static String normalizeEmailProvider(String raw) {
     String s = safe(raw).trim().toLowerCase(Locale.ROOT);
     if ("smtp".equals(s) || "microsoft_graph".equals(s)) return s;
@@ -257,6 +287,17 @@
   String emailGraphClientSecret = "";
   String emailGraphSenderUser = "";
 
+  boolean selfUpgradeEnabled = true;
+  String selfUpgradeDayOfWeek = "SATURDAY";
+  String selfUpgradeTimeLocal = "04:00";
+  String selfUpgradeScheduleZone = "";
+  String selfUpgradeGitRemote = "origin";
+  String selfUpgradeGitBranch = "";
+  String selfUpgradeBuildCommand = "mvn -q -DskipTests package";
+  String selfUpgradeRestartCommand = "";
+  boolean selfUpgradeAllowDirtyWorktree = false;
+  int selfUpgradeCommandTimeoutMinutes = 30;
+
   if (!installCompleted) {
     try {
       tenantStore.ensure();
@@ -335,6 +376,18 @@
     emailGraphClientId = safe(settings.get("email_graph_client_id")).trim();
     emailGraphClientSecret = safe(settings.get("email_graph_client_secret")).trim();
     emailGraphSenderUser = safe(settings.get("email_graph_sender_user")).trim();
+    selfUpgradeEnabled = truthy(settings.get("self_upgrade_enabled"));
+    selfUpgradeDayOfWeek = normalizeDayOfWeek(settings.get("self_upgrade_day_of_week"));
+    selfUpgradeTimeLocal = normalizeLocalTime(settings.get("self_upgrade_time_local"));
+    selfUpgradeScheduleZone = normalizeZoneIdOrBlank(settings.get("self_upgrade_schedule_zone"));
+    selfUpgradeGitRemote = safe(settings.get("self_upgrade_git_remote")).trim();
+    if (selfUpgradeGitRemote.isBlank()) selfUpgradeGitRemote = "origin";
+    selfUpgradeGitBranch = safe(settings.get("self_upgrade_git_branch")).trim();
+    selfUpgradeBuildCommand = safe(settings.get("self_upgrade_build_command")).trim();
+    if (selfUpgradeBuildCommand.isBlank()) selfUpgradeBuildCommand = "mvn -q -DskipTests package";
+    selfUpgradeRestartCommand = safe(settings.get("self_upgrade_restart_command")).trim();
+    selfUpgradeAllowDirtyWorktree = truthy(settings.get("self_upgrade_allow_dirty_worktree"));
+    selfUpgradeCommandTimeoutMinutes = parseIntBounded(settings.get("self_upgrade_command_timeout_minutes"), 30, 1, 240);
 
     if ("POST".equalsIgnoreCase(request.getMethod())) {
       if ("step3_save".equalsIgnoreCase(action)) {
@@ -383,6 +436,18 @@
         emailGraphClientId = safe(request.getParameter("emailGraphClientId")).trim();
         emailGraphClientSecret = safe(request.getParameter("emailGraphClientSecret")).trim();
         emailGraphSenderUser = normalizeEmail(request.getParameter("emailGraphSenderUser"));
+        selfUpgradeEnabled = truthy(request.getParameter("selfUpgradeEnabled"));
+        selfUpgradeDayOfWeek = normalizeDayOfWeek(request.getParameter("selfUpgradeDayOfWeek"));
+        selfUpgradeTimeLocal = normalizeLocalTime(request.getParameter("selfUpgradeTimeLocal"));
+        selfUpgradeScheduleZone = normalizeZoneIdOrBlank(request.getParameter("selfUpgradeScheduleZone"));
+        selfUpgradeGitRemote = safe(request.getParameter("selfUpgradeGitRemote")).trim();
+        if (selfUpgradeGitRemote.isBlank()) selfUpgradeGitRemote = "origin";
+        selfUpgradeGitBranch = safe(request.getParameter("selfUpgradeGitBranch")).trim();
+        selfUpgradeBuildCommand = safe(request.getParameter("selfUpgradeBuildCommand")).trim();
+        if (selfUpgradeBuildCommand.isBlank()) selfUpgradeBuildCommand = "mvn -q -DskipTests package";
+        selfUpgradeRestartCommand = safe(request.getParameter("selfUpgradeRestartCommand")).trim();
+        selfUpgradeAllowDirtyWorktree = truthy(request.getParameter("selfUpgradeAllowDirtyWorktree"));
+        selfUpgradeCommandTimeoutMinutes = parseIntBounded(request.getParameter("selfUpgradeCommandTimeoutMinutes"), 30, 1, 240);
       }
     }
 
@@ -585,6 +650,16 @@
             toSave.put("email_graph_client_id", "microsoft_graph".equals(emailProvider) ? emailGraphClientId : "");
             toSave.put("email_graph_client_secret", "microsoft_graph".equals(emailProvider) ? emailGraphClientSecret : "");
             toSave.put("email_graph_sender_user", "microsoft_graph".equals(emailProvider) ? emailGraphSenderUser : "");
+            toSave.put("self_upgrade_enabled", selfUpgradeEnabled ? "true" : "false");
+            toSave.put("self_upgrade_day_of_week", selfUpgradeDayOfWeek);
+            toSave.put("self_upgrade_time_local", selfUpgradeTimeLocal);
+            toSave.put("self_upgrade_schedule_zone", selfUpgradeScheduleZone);
+            toSave.put("self_upgrade_git_remote", selfUpgradeGitRemote);
+            toSave.put("self_upgrade_git_branch", selfUpgradeGitBranch);
+            toSave.put("self_upgrade_build_command", selfUpgradeBuildCommand);
+            toSave.put("self_upgrade_restart_command", selfUpgradeRestartCommand);
+            toSave.put("self_upgrade_allow_dirty_worktree", selfUpgradeAllowDirtyWorktree ? "true" : "false");
+            toSave.put("self_upgrade_command_timeout_minutes", String.valueOf(selfUpgradeCommandTimeoutMinutes));
 
             if ("restore_latest".equals(externalDataAction)) {
               external_storage_data_sync.RestoreResult restoreResult = syncService.restoreLatestForConfig(
@@ -1036,6 +1111,60 @@
             <span>Graph Sender User</span>
             <input type="email" name="emailGraphSenderUser" value="<%= esc(emailGraphSenderUser) %>" />
           </label>
+
+          <h2 style="margin:12px 0 0 0;">Automatic Self-Upgrade</h2>
+          <label class="inline">
+            <input type="checkbox" name="selfUpgradeEnabled" value="1" <%= selfUpgradeEnabled ? "checked" : "" %> />
+            <span>Enable weekly GitHub update, rebuild, and restart (default on)</span>
+          </label>
+          <label>
+            <span>Day of Week</span>
+            <select name="selfUpgradeDayOfWeek">
+              <option value="MONDAY" <%= "MONDAY".equals(selfUpgradeDayOfWeek) ? "selected" : "" %>>Monday</option>
+              <option value="TUESDAY" <%= "TUESDAY".equals(selfUpgradeDayOfWeek) ? "selected" : "" %>>Tuesday</option>
+              <option value="WEDNESDAY" <%= "WEDNESDAY".equals(selfUpgradeDayOfWeek) ? "selected" : "" %>>Wednesday</option>
+              <option value="THURSDAY" <%= "THURSDAY".equals(selfUpgradeDayOfWeek) ? "selected" : "" %>>Thursday</option>
+              <option value="FRIDAY" <%= "FRIDAY".equals(selfUpgradeDayOfWeek) ? "selected" : "" %>>Friday</option>
+              <option value="SATURDAY" <%= "SATURDAY".equals(selfUpgradeDayOfWeek) ? "selected" : "" %>>Saturday</option>
+              <option value="SUNDAY" <%= "SUNDAY".equals(selfUpgradeDayOfWeek) ? "selected" : "" %>>Sunday</option>
+            </select>
+          </label>
+          <label>
+            <span>Local Time (HH:mm)</span>
+            <input type="time" name="selfUpgradeTimeLocal" value="<%= esc(selfUpgradeTimeLocal) %>" />
+          </label>
+          <label>
+            <span>Schedule Zone ID (optional)</span>
+            <input type="text" name="selfUpgradeScheduleZone" value="<%= esc(selfUpgradeScheduleZone) %>" placeholder="America/Chicago" />
+          </label>
+          <label>
+            <span>Git Remote</span>
+            <input type="text" name="selfUpgradeGitRemote" value="<%= esc(selfUpgradeGitRemote) %>" placeholder="origin" />
+          </label>
+          <label>
+            <span>Git Branch (optional)</span>
+            <input type="text" name="selfUpgradeGitBranch" value="<%= esc(selfUpgradeGitBranch) %>" placeholder="blank uses current branch" />
+          </label>
+          <label>
+            <span>Build Command</span>
+            <input type="text" name="selfUpgradeBuildCommand" value="<%= esc(selfUpgradeBuildCommand) %>" placeholder="mvn -q -DskipTests package" />
+          </label>
+          <label>
+            <span>Restart Command (optional)</span>
+            <input type="text" name="selfUpgradeRestartCommand" value="<%= esc(selfUpgradeRestartCommand) %>" placeholder="java -jar target/controversies-1.0-SNAPSHOT-all.jar" />
+          </label>
+          <label class="inline">
+            <input type="checkbox" name="selfUpgradeAllowDirtyWorktree" value="1" <%= selfUpgradeAllowDirtyWorktree ? "checked" : "" %> />
+            <span>Allow update when working tree has local changes (not recommended)</span>
+          </label>
+          <label>
+            <span>Command Timeout (minutes)</span>
+            <input type="number" min="1" max="240" name="selfUpgradeCommandTimeoutMinutes" value="<%= selfUpgradeCommandTimeoutMinutes %>" />
+          </label>
+          <div class="help">
+            Self-upgrade checks Git remote first and only pulls when a newer commit exists. Run state is logged in
+            <code>data/shared/self_upgrade/self_upgrade_status.properties</code>.
+          </div>
 
           <div class="actions">
             <button class="btn" type="submit" name="action" value="step4_save">Save and Continue</button>
