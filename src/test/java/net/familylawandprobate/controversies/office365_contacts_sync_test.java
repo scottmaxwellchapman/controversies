@@ -3,9 +3,11 @@ package net.familylawandprobate.controversies;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import net.familylawandprobate.controversies.integrations.office365.Office365ContactsSyncService;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +28,7 @@ public class office365_contacts_sync_test {
 
     @Test
     void syncs_multiple_office365_sources_and_marks_contacts_read_only() throws Exception {
+        Assumptions.assumeTrue(canBindLoopbackSocket(), "Loopback socket binding is not permitted in this environment.");
         String tenantUuid = "office365-sync-test-" + UUID.randomUUID();
         HttpServer server = null;
         try {
@@ -144,6 +147,15 @@ public class office365_contacts_sync_test {
                 try { Files.deleteIfExists(path); } catch (Exception ignored) {}
             });
         } catch (Exception ignored) {
+        }
+    }
+
+    private static boolean canBindLoopbackSocket() {
+        try (ServerSocket socket = new ServerSocket()) {
+            socket.bind(new InetSocketAddress("127.0.0.1", 0));
+            return true;
+        } catch (Exception ignored) {
+            return false;
         }
     }
 }
