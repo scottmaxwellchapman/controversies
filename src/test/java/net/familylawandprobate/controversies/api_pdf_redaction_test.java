@@ -108,6 +108,9 @@ public class api_pdf_redaction_test {
         assertEquals(1, asInt(renderResult.get("page_number")));
         assertEquals(2, asInt(renderResult.get("total_pages")));
         assertFalse(String.valueOf(renderResult.get("image_png_base64")).isBlank());
+        assertFalse(String.valueOf(renderResult.get("image_hash_sha256_rgb")).isBlank());
+        assertFalse(String.valueOf(renderResult.get("image_hash_ahash64")).isBlank());
+        assertFalse(String.valueOf(renderResult.get("image_hash_dhash64")).isBlank());
 
         LinkedHashMap<String, Object> redactParams = new LinkedHashMap<String, Object>();
         redactParams.put("matter_uuid", matter);

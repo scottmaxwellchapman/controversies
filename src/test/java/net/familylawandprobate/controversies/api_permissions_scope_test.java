@@ -250,6 +250,168 @@ public class api_permissions_scope_test {
         assertFalse(safe(String.valueOf(queued.get("job_id"))).isBlank());
     }
 
+    @Test
+    void search_requested_by_override_requires_security_manage_permission() throws Exception {
+        String tenant = "tenant-api-search-requested-by-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        assertThrows(SecurityException.class, () -> invokeApiWithScope(
+                "search.jobs.enqueue",
+                Map.of(
+                        "requested_by", "other-api-client",
+                        "search_type", "document_part_versions",
+                        "query", "acme",
+                        "operator", "contains",
+                        "include_metadata", true,
+                        "include_ocr", false
+                ),
+                tenant,
+                "permissions:documents.access"
+        ));
+
+        LinkedHashMap<String, Object> queued = invokeApiWithScope(
+                "search.jobs.enqueue",
+                Map.of(
+                        "requested_by", "other-api-client",
+                        "search_type", "document_part_versions",
+                        "query", "acme",
+                        "operator", "contains",
+                        "include_metadata", true,
+                        "include_ocr", false
+                ),
+                tenant,
+                "permissions:documents.access,security.manage"
+        );
+        assertNotNull(queued.get("job_id"));
+        assertFalse(safe(String.valueOf(queued.get("job_id"))).isBlank());
+    }
+
+    @Test
+    void search_job_reads_enforce_job_type_permission() throws Exception {
+        String tenant = "tenant-api-search-read-scope-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        LinkedHashMap<String, Object> queued = invokeApiWithScope(
+                "search.jobs.enqueue",
+                Map.of(
+                        "search_type", "case_conflicts",
+                        "query", "acme",
+                        "operator", "contains",
+                        "include_metadata", true,
+                        "include_ocr", true
+                ),
+                tenant,
+                "permissions:conflicts.access"
+        );
+        String jobId = safe(String.valueOf(queued.get("job_id")));
+        assertFalse(jobId.isBlank());
+
+        assertThrows(SecurityException.class, () -> invokeApiWithScope(
+                "search.jobs.get",
+                Map.of(
+                        "job_id", jobId,
+                        "include_results", false
+                ),
+                tenant,
+                "permissions:documents.access"
+        ));
+
+        LinkedHashMap<String, Object> deniedList = invokeApiWithScope(
+                "search.jobs.list",
+                Map.of("include_results", false),
+                tenant,
+                "permissions:documents.access"
+        );
+        assertEquals(0, asInt(deniedList.get("count")));
+
+        LinkedHashMap<String, Object> allowedList = invokeApiWithScope(
+                "search.jobs.list",
+                Map.of("include_results", false),
+                tenant,
+                "permissions:conflicts.access"
+        );
+        assertTrue(asInt(allowedList.get("count")) >= 1);
+    }
+
+    @Test
+    void search_types_only_include_types_allowed_by_scope() throws Exception {
+        String tenant = "tenant-api-search-types-scope-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        LinkedHashMap<String, Object> docsOnly = invokeApiWithScope(
+                "search.types",
+                Map.of(),
+                tenant,
+                "permissions:documents.access"
+        );
+        boolean hasDocumentType = false;
+        boolean hasConflictType = false;
+        for (Object row : asList(docsOnly.get("items"))) {
+            if (!(row instanceof Map<?, ?> map)) continue;
+            String key = safe(String.valueOf(map.get("key")));
+            if ("document_part_versions".equals(key)) hasDocumentType = true;
+            if ("case_conflicts".equals(key)) hasConflictType = true;
+        }
+        assertTrue(hasDocumentType);
+        assertFalse(hasConflictType);
+    }
+
+    @Test
+    void mail_operations_require_mail_access_permission() throws Exception {
+        String tenant = "tenant-api-mail-scope-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+        matters.MatterRec matter = matters.defaultStore().create(tenant, "Mail Scope Matter", "", "", "", "", "", "", "");
+
+        assertThrows(SecurityException.class, () -> invokeApiWithScope(
+                "mail.items.list",
+                Map.of(),
+                tenant,
+                "permissions:cases.access"
+        ));
+
+        LinkedHashMap<String, Object> created = invokeApiWithScope(
+                "mail.items.create",
+                Map.of(
+                        "matter_uuid", matter.uuid,
+                        "direction", "outbound",
+                        "workflow", "dhl_api",
+                        "service", "dhl_express",
+                        "status", "label_created",
+                        "subject", "Serve documents"
+                ),
+                tenant,
+                "permissions:mail.access"
+        );
+        String mailUuid = nestedString(created, "mail", "mail_uuid");
+        assertFalse(mailUuid.isBlank());
+        assertEquals("dhl_api", nestedString(created, "mail", "workflow"));
+        assertEquals("dhl_express", nestedString(created, "mail", "service"));
+        assertEquals("label_created", nestedString(created, "mail", "status"));
+
+        LinkedHashMap<String, Object> validated = invokeApiWithScope(
+                "mail.addresses.validate",
+                Map.of(
+                        "display_name", "Recipient",
+                        "address_line_1", "123 Main St",
+                        "city", "Dallas",
+                        "state", "TX",
+                        "postal_code", "75001",
+                        "country", "US"
+                ),
+                tenant,
+                "permissions:mail.access"
+        );
+        assertTrue(Boolean.parseBoolean(String.valueOf(validated.get("valid"))));
+
+        LinkedHashMap<String, Object> listed = invokeApiWithScope(
+                "mail.items.list",
+                Map.of("matter_uuid", matter.uuid),
+                tenant,
+                "permissions:mail.access"
+        );
+        assertTrue(asInt(listed.get("count")) >= 1);
+    }
+
     @SuppressWarnings("unchecked")
     private static LinkedHashMap<String, Object> invokeApiWithScope(String operation,
                                                                      Map<String, Object> params,

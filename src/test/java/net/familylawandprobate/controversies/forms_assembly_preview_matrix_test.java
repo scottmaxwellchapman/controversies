@@ -39,6 +39,9 @@ public class forms_assembly_preview_matrix_test {
                 + "Rows:\n"
                 + "{{#each case.service_rows}}- {{this}}\n{{/each}}"
                 + "Hearing: {{format.date case.next_hearing \"MM/dd/yyyy\"}}\n"
+                + "Comma Hearing: {{format.date case.next_hearing, \"MM/dd/yyyy\"}}\n"
+                + "County Fallback: {{default case.county \"County Pending\"}}\n"
+                + "Nested If: {{#if case.has_children}}A{{#if case.nope}}B{{else}}C{{/if}}{{else}}Z{{/if}}\n"
                 + "Missing: {{case.missing_field}}\n";
 
         Map<String, String> values = baseValues();
@@ -55,6 +58,9 @@ public class forms_assembly_preview_matrix_test {
         assertTrue(preview.assembledText.contains("- Row One"));
         assertTrue(preview.assembledText.contains("- Row Two"));
         assertTrue(preview.assembledText.contains("Hearing: 03/21/2026"));
+        assertTrue(preview.assembledText.contains("Comma Hearing: 03/21/2026"));
+        assertTrue(preview.assembledText.contains("County Fallback: County Pending"));
+        assertTrue(preview.assembledText.contains("Nested If: AC"));
         assertTrue(preview.missingTokens.contains("case.missing_field"));
 
         document_assembler.AssembledFile assembled = assembler.assemble(templateBytes, "txt", values);

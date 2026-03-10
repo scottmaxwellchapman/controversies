@@ -2,6 +2,7 @@
 
 <%@ page import="java.util.*" %>
 
+<%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.tenants" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
@@ -82,6 +83,19 @@
     if ("email_pin".equals(engine)) return "On (Email PIN)";
     return "On (Inherit tenant engine)";
   }
+
+  private static void u_audit(activity_log logs,
+                              String level,
+                              String action,
+                              String tenantUuid,
+                              String userUuid,
+                              Map<String, String> details) {
+    if (logs == null) return;
+    String lvl = u_safe(level).trim().toLowerCase(Locale.ROOT);
+    if ("error".equals(lvl)) logs.logError(action, tenantUuid, userUuid, "", "", details);
+    else if ("warning".equals(lvl)) logs.logWarning(action, tenantUuid, userUuid, "", "", details);
+    else logs.logVerbose(action, tenantUuid, userUuid, "", "", details);
+  }
 %>
 
 <%@ include file="security.jspf" %>
@@ -94,6 +108,10 @@
   // Session tenant (who you are logged into)
   String sessionTenantUuid  = u_safe((String) session.getAttribute("tenant.uuid")).trim();
   String sessionTenantLabel = u_safe((String) session.getAttribute("tenant.label")).trim();
+  String sessionUserUuid = u_safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim();
+  String sessionUserEmail = u_safe((String) session.getAttribute(users_roles.S_USER_EMAIL)).trim();
+  String auditActor = sessionUserUuid.isBlank() ? sessionUserEmail : sessionUserUuid;
+  activity_log logs = activity_log.defaultStore();
 
   String csrfToken = csrfForRender(request);
 
@@ -143,6 +161,8 @@
   // Handle POST actions (all operate on targetTenantUuid)
   if (error == null && "POST".equalsIgnoreCase(request.getMethod())) {
     String action = u_safe(request.getParameter("action")).trim();
+    LinkedHashMap<String, String> auditDetails = new LinkedHashMap<String, String>();
+    auditDetails.put("action", action);
 
     try {
       if ("createRole".equalsIgnoreCase(action)) {
@@ -154,6 +174,9 @@
           RoleRec r = store.createRole(targetTenantUuid, label, enabled);
           message = "Role created.";
           if (r != null) selectedRoleUuid = u_safe(r.uuid);
+          auditDetails.put("role_uuid", selectedRoleUuid);
+          auditDetails.put("role_label", label);
+          auditDetails.put("enabled", enabled ? "true" : "false");
         }
 
       } else if ("updateRole".equalsIgnoreCase(action)) {
@@ -168,6 +191,9 @@
           c2 = store.updateRoleEnabled(targetTenantUuid, roleUuid, enabled);
           message = (c1 || c2) ? "Role updated." : "No changes.";
           selectedRoleUuid = roleUuid;
+          auditDetails.put("role_uuid", roleUuid);
+          auditDetails.put("role_label", label);
+          auditDetails.put("enabled", enabled ? "true" : "false");
         }
 
       } else if ("setRolePerm".equalsIgnoreCase(action)) {
@@ -181,6 +207,9 @@
           boolean changed = store.setRolePermission(targetTenantUuid, roleUuid, key, value);
           message = changed ? "Permission saved." : "No changes.";
           selectedRoleUuid = roleUuid;
+          auditDetails.put("role_uuid", roleUuid);
+          auditDetails.put("permission_key", key);
+          auditDetails.put("permission_value", value);
         }
 
       } else if ("removeRolePerm".equalsIgnoreCase(action)) {
@@ -193,6 +222,8 @@
           boolean changed = store.removeRolePermission(targetTenantUuid, roleUuid, key);
           message = changed ? "Permission removed." : "No changes.";
           selectedRoleUuid = roleUuid;
+          auditDetails.put("role_uuid", roleUuid);
+          auditDetails.put("permission_key", key);
         }
 
       } else if ("createUser".equalsIgnoreCase(action)) {
@@ -209,6 +240,11 @@
           UserRec u = store.createUser(targetTenantUuid, email, roleUuid, enabled, pw.toCharArray(), bypassPasswordPolicy);
           message = "User created.";
           if (u != null) selectedUserUuid = u_safe(u.uuid);
+          auditDetails.put("user_uuid", selectedUserUuid);
+          auditDetails.put("email", email);
+          auditDetails.put("role_uuid", roleUuid);
+          auditDetails.put("enabled", enabled ? "true" : "false");
+          auditDetails.put("bypass_password_policy", bypassPasswordPolicy ? "true" : "false");
         }
 
       } else if ("updateUser".equalsIgnoreCase(action)) {
@@ -230,6 +266,12 @@
 
           message = (c1 || c2 || c3 || c4) ? "User updated." : "No changes.";
           selectedUserUuid = userUuid;
+          auditDetails.put("user_uuid", userUuid);
+          auditDetails.put("email", email);
+          auditDetails.put("role_uuid", roleUuid);
+          auditDetails.put("enabled", enabled ? "true" : "false");
+          auditDetails.put("two_factor_enabled", twoFactorEnabled ? "true" : "false");
+          auditDetails.put("two_factor_engine", twoFactorEngine);
         }
 
       } else if ("resetUserPassword".equalsIgnoreCase(action)) {
@@ -243,15 +285,28 @@
           boolean changed = store.updateUserPassword(targetTenantUuid, userUuid, pw.toCharArray(), bypassPasswordPolicy);
           message = changed ? "Password updated." : "No changes.";
           selectedUserUuid = userUuid;
+          auditDetails.put("user_uuid", userUuid);
+          auditDetails.put("bypass_password_policy", bypassPasswordPolicy ? "true" : "false");
         }
       }
 
       // Re-ensure after edits (re-assert bootstrap defaults)
       try { store.ensure(targetTenantUuid); } catch (Exception ignored) {}
+      if (error == null || error.isBlank()) {
+        if (message != null && !message.isBlank()) {
+          auditDetails.put("result", message);
+          u_audit(logs, "verbose", "security.users_roles.action_completed", targetTenantUuid, auditActor, auditDetails);
+        }
+      } else {
+        auditDetails.put("reason", error);
+        u_audit(logs, "warning", "security.users_roles.action_failed", targetTenantUuid, auditActor, auditDetails);
+      }
 
     } catch (Exception e) {
       error = u_safe(e.getMessage());
       if (error.isBlank()) error = "Operation failed.";
+      auditDetails.put("reason", error);
+      u_audit(logs, "error", "security.users_roles.action_failed", targetTenantUuid, auditActor, auditDetails);
     }
   }
 

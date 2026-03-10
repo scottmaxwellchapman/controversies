@@ -682,6 +682,9 @@
     font-weight: 700;
     font-size: 1.2rem;
   }
+  .facts-subheading {
+    margin: 12px 0 8px 0;
+  }
   @media (max-width: 980px) {
     .facts-shell {
       grid-template-columns: 1fr;
@@ -700,25 +703,25 @@
 </style>
 
 <section class="card">
-  <h1 style="margin:0;">Facts Case Plan</h1>
-  <div class="meta" style="margin-top:6px;">
+  <h1 class="u-m-0">Facts Case Plan</h1>
+  <div class="meta u-mt-6">
     Visual case-plan manager using a side-tree structure: <strong>Claims</strong> -> <strong>Elements</strong> -> <strong>Facts</strong>.
     Updates automatically regenerate a landscape PDF report and store it in the matter's documents.
   </div>
 </section>
 
 <% if (message != null) { %>
-  <div class="alert alert-ok" style="margin-top:12px;"><%= esc(message) %></div>
+  <div class="alert alert-ok u-mt-12"><%= esc(message) %></div>
 <% } %>
 <% if (error != null) { %>
-  <div class="alert alert-error" style="margin-top:12px;"><%= esc(error) %></div>
+  <div class="alert alert-error u-mt-12"><%= esc(error) %></div>
 <% } %>
 
-<section class="facts-shell" style="margin-top:12px;">
+<section class="facts-shell section-gap-12">
   <section class="card facts-tree-pane">
     <div class="facts-tree-header">
       <div>
-        <h2 style="margin:0;">Case Plan Tree</h2>
+        <h2 class="u-m-0">Case Plan Tree</h2>
         <div class="meta">Primary workspace for Claims, Elements, and Facts.</div>
       </div>
       <div class="facts-tree-stats">
@@ -729,9 +732,9 @@
     </div>
 
     <% if (claims.isEmpty()) { %>
-      <div class="muted" style="margin-top:10px;">No claims yet. Create one in the panel to the right.</div>
+      <div class="muted u-mt-10">No claims yet. Create one in the panel to the right.</div>
     <% } else { %>
-      <ul class="facts-tree-root" style="margin-top:10px;">
+      <ul class="facts-tree-root u-mt-10">
         <% for (int ci = 0; ci < claims.size(); ci++) {
              matter_facts.ClaimRec c = claims.get(ci);
              if (c == null) continue;
@@ -847,7 +850,7 @@
           </div>
         </div>
 
-        <div class="meta" style="margin-top:10px;">
+        <div class="meta u-mt-10">
           Report Document: <code><%= esc(linkedLabel(reportRefs.reportDocumentUuid, docLabelByUuid, "document")) %></code>
           |
           Report Part: <code><%= esc(linkedLabel(reportRefs.reportPartUuid, partLabelByUuid, "part")) %></code>
@@ -857,7 +860,7 @@
           Generated: <code><%= esc(safe(reportRefs.reportGeneratedAt)) %></code>
         </div>
 
-        <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:10px;">
+        <form method="post" action="<%= ctx %>/facts.jsp" class="u-mt-10">
           <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
           <input type="hidden" name="action" value="refresh_report" />
           <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
@@ -910,11 +913,11 @@
               <label><span>Status</span><input type="text" value="<%= selectedClaim.trashed ? "Archived" : "Active" %>" disabled /></label>
             </div>
             <label><span>Summary</span><textarea name="claim_summary" rows="3"><%= esc(safe(selectedClaim.summary)) %></textarea></label>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            <div class="entity-action-bar">
               <button class="btn" type="submit">Save Claim</button>
             </div>
           </form>
-          <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:8px;">
+          <form method="post" action="<%= ctx %>/facts.jsp" class="u-mt-8">
             <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
             <input type="hidden" name="action" value="<%= selectedClaim.trashed ? "restore_claim" : "archive_claim" %>" />
             <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
@@ -993,7 +996,7 @@
             <label><span>Notes</span><textarea name="element_notes" rows="3"><%= esc(safe(selectedElement.notes)) %></textarea></label>
             <button class="btn" type="submit">Save Element</button>
           </form>
-          <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:8px;">
+          <form method="post" action="<%= ctx %>/facts.jsp" class="u-mt-8">
             <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
             <input type="hidden" name="action" value="<%= selectedElement.trashed ? "restore_element" : "archive_element" %>" />
             <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
@@ -1080,7 +1083,7 @@
             </label>
           </div>
 
-          <h4 style="margin:12px 0 8px 0;">Document Association</h4>
+          <h4 class="facts-subheading">Document Association</h4>
           <div class="grid grid-3">
             <label>
               <span>Document</span>
@@ -1123,7 +1126,7 @@
             </label>
           </div>
 
-          <button class="btn" type="submit" style="margin-top:10px;">Add Fact</button>
+          <button class="btn u-mt-10" type="submit">Add Fact</button>
         </form>
       </div>
     </details>
@@ -1195,7 +1198,7 @@
               <label><span>Page Number</span><input type="number" name="page_number" min="0" value="<%= selectedFact.pageNumber %>" /></label>
             </div>
 
-            <h4 style="margin:12px 0 8px 0;">Document Association</h4>
+            <h4 class="facts-subheading">Document Association</h4>
             <div class="grid grid-3">
               <label>
                 <span>Document</span>
@@ -1238,11 +1241,11 @@
               </label>
             </div>
 
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            <div class="entity-action-bar">
               <button class="btn" type="submit">Save Fact</button>
             </div>
           </form>
-          <form method="post" action="<%= ctx %>/facts.jsp" style="margin-top:8px;">
+          <form method="post" action="<%= ctx %>/facts.jsp" class="u-mt-8">
             <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
             <input type="hidden" name="action" value="<%= selectedFact.trashed ? "restore_fact" : "archive_fact" %>" />
             <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
@@ -1265,7 +1268,7 @@
       </summary>
       <div class="facts-pane-body">
         <div class="meta">Use this list to quickly choose valid document -> part -> version links for facts.</div>
-        <div class="table-wrap" style="margin-top:10px;">
+        <div class="table-wrap table-wrap-tight">
           <table class="table">
             <thead>
               <tr>

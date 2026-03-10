@@ -35,6 +35,7 @@ import org.xml.sax.InputSource;
 public final class matter_contacts {
 
     private static final ConcurrentHashMap<String, ReentrantReadWriteLock> LOCKS = new ConcurrentHashMap<String, ReentrantReadWriteLock>();
+    private static final activity_log ACTIVITY_LOGS = activity_log.defaultStore();
 
     public static matter_contacts defaultStore() {
         return new matter_contacts();
@@ -142,14 +143,28 @@ public final class matter_contacts {
                 out.add(row);
             }
             String now = Instant.now().toString();
+            int requestedCount = 0;
             if (matterUuids != null) {
                 for (String mu : matterUuids) {
                     String matterId = safe(mu).trim();
                     if (matterId.isBlank()) continue;
                     out.add(new LinkRec(matterId, cu, "native", "", "", now));
+                    requestedCount++;
                 }
             }
-            writeAllLocked(tu, dedupe(out));
+            List<LinkRec> deduped = dedupe(out);
+            writeAllLocked(tu, deduped);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("contact_uuid", cu);
+            details.put("source", "native");
+            details.put("requested_matter_count", String.valueOf(requestedCount));
+            int linked = 0;
+            for (LinkRec row : deduped) {
+                if (row == null) continue;
+                if ("native".equalsIgnoreCase(safe(row.source)) && cu.equals(safe(row.contactUuid))) linked++;
+            }
+            details.put("linked_matter_count", String.valueOf(linked));
+            ACTIVITY_LOGS.logVerbose("contacts.links.replaced_for_contact", tu, "", "", "", details);
         } finally {
             lock.writeLock().unlock();
         }
@@ -181,6 +196,7 @@ public final class matter_contacts {
                 out.add(row);
             }
             String now = Instant.now().toString();
+            int requestedCount = 0;
             if (nextLinks != null) {
                 for (LinkRec row : nextLinks) {
                     if (row == null) continue;
@@ -194,9 +210,23 @@ public final class matter_contacts {
                             safe(row.sourceContactId).trim(),
                             now
                     ));
+                    requestedCount++;
                 }
             }
-            writeAllLocked(tu, dedupe(out));
+            List<LinkRec> deduped = dedupe(out);
+            writeAllLocked(tu, deduped);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("matter_uuid", mu);
+            details.put("source", src);
+            details.put("source_matter_id", safe(sourceMatterId).trim());
+            details.put("requested_contact_count", String.valueOf(requestedCount));
+            int linked = 0;
+            for (LinkRec row : deduped) {
+                if (row == null) continue;
+                if (mu.equals(safe(row.matterUuid)) && src.equalsIgnoreCase(safe(row.source))) linked++;
+            }
+            details.put("linked_contact_count", String.valueOf(linked));
+            ACTIVITY_LOGS.logVerbose("contacts.links.replaced_for_matter", tu, "", mu, "", details);
         } finally {
             lock.writeLock().unlock();
         }

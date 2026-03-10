@@ -1084,25 +1084,68 @@
 
 <jsp:include page="header.jsp" />
 
+<style>
+  .ts-list-tight {
+    margin: 0;
+    padding-left: 20px;
+  }
+  .ts-inline-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .ts-api-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .ts-minw-260 {
+    min-width: 260px;
+  }
+  .ts-credential-list {
+    display: grid;
+    gap: 8px;
+  }
+  .ts-credential-row {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    background: var(--surface);
+  }
+  .ts-revoked {
+    color: #9b2c2c;
+  }
+  .ts-span-full {
+    grid-column: 1 / -1;
+  }
+</style>
+
 <section class="card">
   <div class="section-head">
     <div>
-      <h1 style="margin:0;">Tenant Settings</h1>
+      <h1 class="u-m-0">Tenant Settings</h1>
       <div class="meta">Tenant-scoped platform configuration and integration controls.</div>
       <% if (!tenantLabel.isBlank()) { %>
-        <div class="meta" style="margin-top:4px;">Tenant: <strong><%= tsEsc(tenantLabel) %></strong></div>
+        <div class="meta u-mt-4">Tenant: <strong><%= tsEsc(tenantLabel) %></strong></div>
       <% } %>
     </div>
   </div>
 
   <% if (message != null) { %>
-    <div class="alert alert-ok" style="margin-top:12px;"><%= tsEsc(message) %></div>
+    <div class="alert alert-ok u-mt-12"><%= tsEsc(message) %></div>
   <% } %>
   <% if (error != null) { %>
-    <div class="alert alert-error" style="margin-top:12px;"><%= tsEsc(error) %></div>
+    <div class="alert alert-error u-mt-12"><%= tsEsc(error) %></div>
   <% } %>
   <% if (!newApiSecret.isBlank()) { %>
-    <div class="alert alert-ok" style="margin-top:12px;">
+    <div class="alert alert-ok u-mt-12">
       <strong>Store this API secret now.</strong><br />
       Credential: <code><%= tsEsc(newApiLabel.isBlank() ? "Automation Key" : newApiLabel) %></code><br />
       Key: <code><%= tsEsc(newApiKey) %></code><br />
@@ -1111,7 +1154,7 @@
   <% } %>
 </section>
 
-<section class="card" style="margin-top:12px;">
+<section class="card section-gap-12">
   <div class="tabs" id="tenantSettingsTabs" data-default-tab="<%= tsEsc(activeTab) %>" role="tablist" aria-label="Tenant settings sections">
     <button type="button" class="tab" data-ts-tab-btn="integrations">Integrations</button>
     <button type="button" class="tab" data-ts-tab-btn="experience">Experience</button>
@@ -1120,9 +1163,9 @@
   </div>
 </section>
 
-<section class="card" style="margin-top:12px;" id="document-taxonomy" data-ts-panel="operations">
-  <h2 style="margin-top:0;">Manage Document Taxonomy</h2>
-  <div class="meta" style="margin-bottom:10px;">These values drive Category/Subcategory/Status options on the Documents page.</div>
+<section class="card section-gap-12" id="document-taxonomy" data-ts-panel="operations">
+  <h2 class="u-mt-0">Manage Document Taxonomy</h2>
+  <div class="meta u-mb-12">These values drive Category/Subcategory/Status options on the Documents page.</div>
   <form class="form" method="post" action="<%= ctx %>/tenant_settings.jsp">
     <input type="hidden" name="csrfToken" value="<%= tsEsc(csrfToken) %>" />
     <input type="hidden" name="action" value="add_taxonomy" />
@@ -1140,16 +1183,16 @@
     </div>
     <button type="submit" class="btn btn-ghost">Save Taxonomy Values</button>
   </form>
-  <div class="meta" style="margin-top:10px;">
+  <div class="meta u-mt-10">
     Categories: <%= tx.categories == null || tx.categories.isEmpty() ? "None" : tsEsc(String.join(", ", tx.categories)) %><br />
     Subcategories: <%= tx.subcategories == null || tx.subcategories.isEmpty() ? "None" : tsEsc(String.join(", ", tx.subcategories)) %><br />
     Statuses: <%= tx.statuses == null || tx.statuses.isEmpty() ? "None" : tsEsc(String.join(", ", tx.statuses)) %>
   </div>
 </section>
 
-<section class="card" style="margin-top:12px;" data-ts-panel="operations">
-  <h2 style="margin-top:0;">TLS / SSL Runtime</h2>
-  <div class="meta" style="margin-bottom:10px;">
+<section class="card section-gap-12" data-ts-panel="operations">
+  <h2 class="u-mt-0">TLS / SSL Runtime</h2>
+  <div class="meta u-mb-12">
     Configure runtime TLS source selection for startup. These settings are stored in
     <code><%= tsEsc(tsRuntimeSslConfigPath().toString()) %></code>.
   </div>
@@ -1185,11 +1228,11 @@
       <label><input type="checkbox" name="ssl_certbot_force_rebuild" value="1" <%= sslCertbotForceRebuildSaved ? "checked" : "" %> /> Force certbot PKCS12 rebuild at startup</label>
     </div>
 
-    <div class="meta" style="margin-top:8px;">
+    <div class="meta u-mt-8">
       Keep keystore password management in environment/JVM options only:
       <code>CONTROVERSIES_SSL_KEYSTORE_PASSWORD</code>. Restart the application after saving TLS runtime settings.
     </div>
-    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+    <div class="entity-action-bar">
       <button type="submit" class="btn btn-ghost">Save TLS Runtime Settings</button>
     </div>
   </form>
@@ -1200,16 +1243,16 @@
   <input type="hidden" name="api_credential_id" value="" />
   <input type="hidden" name="tab" id="tenantSettingsTabFieldMain" value="<%= tsEsc(activeTab) %>" />
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
-    <h2 style="margin-top:0;">Setup Guide (Quick + Advanced)</h2>
-    <div class="meta" style="margin-bottom:8px;">For first-time setup: complete Storage, Clio (if used), and Notification Email (if used), then run each test and Save Settings. Experienced admins can update only the fields they need and run targeted tests.</div>
+  <section class="card section-gap-12" data-ts-panel="integrations">
+    <h2 class="u-mt-0">Setup Guide (Quick + Advanced)</h2>
+    <div class="meta u-mb-8">For first-time setup: complete Storage, Clio (if used), and Notification Email (if used), then run each test and Save Settings. Experienced admins can update only the fields they need and run targeted tests.</div>
     <div class="grid grid-2">
       <div>
-        <h3 style="margin:0 0 6px 0;">First-time checklist</h3>
+        <h3 class="u-m-0 u-mb-8">First-time checklist</h3>
         <% if (setupChecklist.isEmpty()) { %>
           <div class="alert alert-ok">Great news: baseline setup checks look complete.</div>
         <% } else { %>
-          <ul style="margin:0; padding-left:20px;">
+          <ul class="ts-list-tight">
             <% for (String item : setupChecklist) { %>
               <li><%= tsEsc(item) %></li>
             <% } %>
@@ -1217,8 +1260,8 @@
         <% } %>
       </div>
       <div>
-        <h3 style="margin:0 0 6px 0;">Experienced-user tips</h3>
-        <ul style="margin:0; padding-left:20px;">
+        <h3 class="u-m-0 u-mb-8">Experienced-user tips</h3>
+        <ul class="ts-list-tight">
           <li>Use <strong>Test</strong> actions before Save to validate targeted updates.</li>
           <li>Leave password fields blank to keep current secrets unchanged.</li>
           <li>Use rotation buttons to timestamp key changes for audit trail visibility.</li>
@@ -1227,9 +1270,9 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
-    <h2 style="margin-top:0;">Storage Backend</h2>
-    <div class="meta" style="margin-bottom:10px;">Configure where assembled documents are stored. Keep secret fields blank to retain currently saved values.</div>
+  <section class="card section-gap-12" data-ts-panel="integrations">
+    <h2 class="u-mt-0">Storage Backend</h2>
+    <div class="meta u-mb-12">Configure where assembled documents are stored. Keep secret fields blank to retain currently saved values.</div>
 
     <div class="grid grid-2">
       <label>Backend
@@ -1313,9 +1356,9 @@
       </label>
     </div>
 
-    <div class="meta" style="margin-top:8px;">Each external source keeps a bounded local cache to reduce bandwidth costs. Set a source to <code>0</code> to disable that cache. Default is 1024 MB (1 GB) per source. Path/filename limits apply only to external object keys, and collisions are stored under unique non-destructive keys. OneDrive for Business defaults to 400-path / 255-filename limits if tenant limits are unset and supports app-credentials-only, public callback, or private relay auth profiles.</div>
+    <div class="meta u-mt-8">Each external source keeps a bounded local cache to reduce bandwidth costs. Set a source to <code>0</code> to disable that cache. Default is 1024 MB (1 GB) per source. Path/filename limits apply only to external object keys, and collisions are stored under unique non-destructive keys. OneDrive for Business defaults to 400-path / 255-filename limits if tenant limits are unset and supports app-credentials-only, public callback, or private relay auth profiles.</div>
 
-    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+    <div class="entity-action-bar">
       <button type="submit" class="btn btn-ghost" name="action" value="test_storage_connection">Test Storage Connection</button>
       <button type="submit" class="btn btn-ghost" name="action" value="rotate_storage_secret">Rotate Storage Secret</button>
       <label><input type="checkbox" name="save_storage_secret" value="1" /> Persist entered storage secret on Save</label>
@@ -1323,9 +1366,9 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
-    <h2 style="margin-top:0;">Clio Connection</h2>
-    <div class="meta" style="margin-bottom:10px;">One-way sync imports Clio matters, documents, and contacts into Controversies, links contacts to matters, and keeps Clio-synced documents read-only here.</div>
+  <section class="card section-gap-12" data-ts-panel="integrations">
+    <h2 class="u-mt-0">Clio Connection</h2>
+    <div class="meta u-mb-12">One-way sync imports Clio matters, documents, and contacts into Controversies, links contacts to matters, and keeps Clio-synced documents read-only here.</div>
 
     <label><input type="checkbox" name="clio_enabled" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("clio_enabled"))) ? "checked" : "" %> /> Enable one-way Clio matter sync</label>
 
@@ -1337,9 +1380,9 @@
     </label>
 
     <% if ("public".equals(clioMode)) { %>
-      <div class="alert alert-ok" style="margin-top:8px;">Public mode requires this app to expose a Clio OAuth callback URL reachable by Clio.</div>
+      <div class="alert alert-ok u-mt-8">Public mode requires this app to expose a Clio OAuth callback URL reachable by Clio.</div>
     <% } else { %>
-      <div class="alert alert-error" style="margin-top:8px;">Private mode is for VPN/firewalled deployments. Complete OAuth externally via relay/admin flow and store only resulting token material locally.</div>
+      <div class="alert alert-error u-mt-8">Private mode is for VPN/firewalled deployments. Complete OAuth externally via relay/admin flow and store only resulting token material locally.</div>
     <% } %>
 
     <div class="grid grid-2">
@@ -1384,7 +1427,7 @@
       </label>
     </div>
 
-    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+    <div class="entity-action-bar">
       <button type="submit" class="btn btn-ghost" name="action" value="test_clio_connection">Test Clio Connection</button>
       <button type="submit" class="btn btn-ghost" name="action" value="sync_clio_matters_now">Sync Clio Matters + Documents Now</button>
       <button type="submit" class="btn btn-ghost" name="action" value="sync_clio_contacts_now">Sync Clio Contacts Now</button>
@@ -1393,9 +1436,9 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
-    <h2 style="margin-top:0;">Office 365 Contact Sync</h2>
-    <div class="meta" style="margin-bottom:10px;">One-way sync imports contacts from one or more Microsoft Graph sources (mailboxes/folders) into Controversies as read-only external contacts.</div>
+  <section class="card section-gap-12" data-ts-panel="integrations">
+    <h2 class="u-mt-0">Office 365 Contact Sync</h2>
+    <div class="meta u-mb-12">One-way sync imports contacts from one or more Microsoft Graph sources (mailboxes/folders) into Controversies as read-only external contacts.</div>
 
     <label><input type="checkbox" name="office365_contacts_sync_enabled" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("office365_contacts_sync_enabled"))) ? "checked" : "" %> /> Enable one-way Office 365 contact sync</label>
 
@@ -1417,16 +1460,16 @@
     <label>Sources JSON
       <textarea name="office365_contacts_sync_sources_json" rows="10" spellcheck="false" placeholder='[{"source_id":"corp_directory","tenant_id":"00000000-0000-0000-0000-000000000000","client_id":"app-client-id","client_secret":"app-client-secret","user_principal":"contacts@yourfirm.com","contact_folder_id":"","enabled":true}]'><%= tsEsc(office365SourcesJsonSaved) %></textarea>
     </label>
-    <div class="meta" style="margin-top:6px;">Each source supports keys: <code>source_id</code>, <code>tenant_id</code>, <code>client_id</code>, <code>client_secret</code>, <code>user_principal</code>, optional <code>contact_folder_id</code>, optional <code>scope</code>, and <code>enabled</code>.</div>
+    <div class="meta u-mt-6">Each source supports keys: <code>source_id</code>, <code>tenant_id</code>, <code>client_id</code>, <code>client_secret</code>, <code>user_principal</code>, optional <code>contact_folder_id</code>, optional <code>scope</code>, and <code>enabled</code>.</div>
 
-    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+    <div class="entity-action-bar">
       <button type="submit" class="btn btn-ghost" name="action" value="sync_office365_contacts_now">Sync Office 365 Contacts Now</button>
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="integrations">
-    <h2 style="margin-top:0;">Notification Email (Queue + Transport)</h2>
-    <div class="meta" style="margin-bottom:10px;">Configure tenant-level notification email delivery with SMTP or Microsoft Graph. Technical queue/timeout settings are tenant-admin tunable.</div>
+  <section class="card section-gap-12" data-ts-panel="integrations">
+    <h2 class="u-mt-0">Notification Email (Queue + Transport)</h2>
+    <div class="meta u-mb-12">Configure tenant-level notification email delivery with SMTP or Microsoft Graph. Technical queue/timeout settings are tenant-admin tunable.</div>
 
     <div class="grid grid-2">
       <label>Provider
@@ -1469,7 +1512,7 @@
       <div></div>
     </div>
 
-    <h3 style="margin-top:14px;">SMTP Settings</h3>
+    <h3 class="u-mt-14">SMTP Settings</h3>
     <div class="grid grid-2">
       <label>SMTP Host
         <input type="text" name="email_smtp_host" value="<%= tsEsc(tsSafe(settings.get("email_smtp_host"))) %>" placeholder="smtp.example.com" />
@@ -1486,14 +1529,14 @@
       <label>SMTP HELO Domain (optional)
         <input type="text" name="email_smtp_helo_domain" value="<%= tsEsc(tsSafe(settings.get("email_smtp_helo_domain"))) %>" />
       </label>
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <div class="ts-inline-actions">
         <label><input type="checkbox" name="email_smtp_auth" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("email_smtp_auth"))) ? "checked" : "" %> /> SMTP Auth</label>
         <label><input type="checkbox" name="email_smtp_starttls" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("email_smtp_starttls"))) ? "checked" : "" %> /> STARTTLS</label>
         <label><input type="checkbox" name="email_smtp_ssl" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("email_smtp_ssl"))) ? "checked" : "" %> /> SSL</label>
       </div>
     </div>
 
-    <h3 style="margin-top:14px;">Microsoft Graph Settings</h3>
+    <h3 class="u-mt-14">Microsoft Graph Settings</h3>
     <div class="grid grid-2">
       <label>Tenant ID
         <input type="text" name="email_graph_tenant_id" value="<%= tsEsc(tsSafe(settings.get("email_graph_tenant_id"))) %>" />
@@ -1513,16 +1556,16 @@
       <div></div>
     </div>
 
-    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+    <div class="entity-action-bar">
       <button type="submit" class="btn btn-ghost" name="action" value="test_email_connection">Test Email Connection</button>
       <label><input type="checkbox" name="save_email_smtp_password" value="1" /> Persist entered SMTP password on Save</label>
       <label><input type="checkbox" name="save_email_graph_client_secret" value="1" /> Persist entered Graph client secret on Save</label>
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="experience">
-    <h2 style="margin-top:0;">Appearance & Theme</h2>
-    <div class="meta" style="margin-bottom:10px;">
+  <section class="card section-gap-12" data-ts-panel="experience">
+    <h2 class="u-mt-0">Appearance & Theme</h2>
+    <div class="meta u-mb-12">
       Default tenant theme behavior for all pages. End users can still manually override in the navigation bar.
     </div>
     <div class="grid grid-2">
@@ -1557,17 +1600,17 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="experience">
-    <h2 style="margin-top:0;">Feature Flags</h2>
+  <section class="card section-gap-12" data-ts-panel="experience">
+    <h2 class="u-mt-0">Feature Flags</h2>
     <div class="grid grid-2">
       <label><input type="checkbox" name="feature_advanced_assembly" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("feature_advanced_assembly"))) ? "checked" : "" %> /> Enable advanced assembly</label>
       <label><input type="checkbox" name="feature_async_sync" value="1" <%= "true".equalsIgnoreCase(tsSafe(settings.get("feature_async_sync"))) ? "checked" : "" %> /> Enable async sync</label>
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="security">
-    <h2 style="margin-top:0;">Password Policy (Optional)</h2>
-    <div class="meta" style="margin-bottom:10px;">
+  <section class="card section-gap-12" data-ts-panel="security">
+    <h2 class="u-mt-0">Password Policy (Optional)</h2>
+    <div class="meta u-mb-12">
       Applies to user-created and user-updated passwords by default. Tenant admins can explicitly override policy when setting passwords.
     </div>
     <div class="grid grid-2">
@@ -1582,9 +1625,9 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="security">
-    <h2 style="margin-top:0;">Two-Factor Authentication</h2>
-    <div class="meta" style="margin-bottom:10px;">
+  <section class="card section-gap-12" data-ts-panel="security">
+    <h2 class="u-mt-0">Two-Factor Authentication</h2>
+    <div class="meta u-mb-12">
       Tenant policy can force two-factor for everyone, or allow users to opt in individually in Users &amp; Roles.
     </div>
 
@@ -1602,12 +1645,12 @@
           <option value="flowroute_sms" <%= "flowroute_sms".equals(twoFactorDefaultEngineMode) ? "selected" : "" %>>Flowroute SMS</option>
         </select>
       </label>
-      <div class="meta" style="grid-column:1 / -1;">
+      <div class="meta ts-span-full">
         Email PIN uses the Notification Email provider configured above. Flowroute SMS requires the tenant credentials below and per-user phone numbers.
       </div>
     </div>
 
-    <h3 style="margin-top:14px;">Flowroute SMS</h3>
+    <h3 class="u-mt-14">Flowroute SMS</h3>
     <div class="grid grid-2">
       <label>Access Key
         <input type="password" name="flowroute_sms_access_key" value="" placeholder="<%= tsEsc(maskedFlowrouteSmsAccessKey) %>" />
@@ -1623,15 +1666,15 @@
       </label>
     </div>
 
-    <div class="actions" style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+    <div class="entity-action-bar">
       <label><input type="checkbox" name="save_flowroute_sms_access_key" value="1" /> Persist entered Flowroute access key on Save</label>
       <label><input type="checkbox" name="save_flowroute_sms_secret_key" value="1" /> Persist entered Flowroute secret key on Save</label>
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="operations">
-    <h2 style="margin-top:0;">Automatic Self-Upgrade</h2>
-    <div class="meta" style="margin-bottom:10px;">
+  <section class="card section-gap-12" data-ts-panel="operations">
+    <h2 class="u-mt-0">Automatic Self-Upgrade</h2>
+    <div class="meta u-mb-12">
       Shared-instance maintenance: fetch from GitHub, compile, and restart on schedule. Pull runs only when remote has a newer commit than local.
     </div>
     <div class="grid grid-2">
@@ -1670,38 +1713,38 @@
         <input type="number" min="1" max="240" name="self_upgrade_command_timeout_minutes" value="<%= tsEsc(selfUpgradeTimeoutSaved) %>" />
       </label>
     </div>
-    <div class="meta" style="margin-top:8px;">
+    <div class="meta u-mt-8">
       Activity and run state are logged in JVM logs and <code>data/shared/self_upgrade/self_upgrade_status.properties</code>.
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="operations">
-    <h2 style="margin-top:0;">API Credentials</h2>
-    <div class="meta" style="margin-bottom:10px;">
+  <section class="card section-gap-12" data-ts-panel="operations">
+    <h2 class="u-mt-0">API Credentials</h2>
+    <div class="meta u-mb-12">
       Tenant-scoped automation credentials for n8n/OpenClaw. Use headers <code>X-Tenant-UUID</code>, <code>X-API-Key</code>, and <code>X-API-Secret</code>.
     </div>
     <% if (!canManageApiCredentials) { %>
       <div class="meta">This section requires <code>api.credentials.manage</code>.</div>
     <% } %>
     <% if (canManageApiCredentials) { %>
-      <div class="actions" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
-        <input type="text" name="api_credential_label" placeholder="Credential label (optional)" style="min-width:260px;" />
+      <div class="actions ts-api-actions">
+        <input type="text" name="api_credential_label" placeholder="Credential label (optional)" class="ts-minw-260" />
         <button type="submit" class="btn btn-ghost" name="action" value="generate_api_credential">Generate API Credential</button>
       </div>
       <% if (apiCredentials == null || apiCredentials.isEmpty()) { %>
         <div class="meta">No API credentials created yet.</div>
       <% } else { %>
-        <div style="display:grid; gap:8px;">
+        <div class="ts-credential-list">
           <% for (api_credentials.CredentialRec cred : apiCredentials) { %>
             <% if (cred == null) continue; %>
-            <div style="display:grid; gap:8px; grid-template-columns:minmax(0,1fr) auto; align-items:center; border:1px solid var(--border); border-radius:10px; padding:8px 10px; background:var(--surface);">
+            <div class="ts-credential-row">
               <div>
                 <div><strong><%= tsEsc(tsSafe(cred.label).isBlank() ? "Automation Key" : cred.label) %></strong></div>
                 <div class="meta">ID: <code><%= tsEsc(cred.credentialId) %></code></div>
                 <div class="meta">Scope: <code><%= tsEsc(cred.scope) %></code> • Created: <%= tsEsc(tsRotationLabel(tsSafe(cred.createdAt))) %></div>
                 <div class="meta">Last used: <%= tsEsc(tsRotationLabel(tsSafe(cred.lastUsedAt))) %> <%= tsSafe(cred.lastUsedFromIp).isBlank() ? "" : ("from " + tsEsc(cred.lastUsedFromIp)) %></div>
                 <% if (cred.revoked) { %>
-                  <div class="meta" style="color:#9b2c2c;">Revoked</div>
+                  <div class="meta ts-revoked">Revoked</div>
                 <% } %>
               </div>
               <div>
@@ -1720,8 +1763,8 @@
     <% } %>
   </section>
 
-  <section class="card" style="margin-top:12px;" data-ts-panel="security">
-    <h2 style="margin-top:0;">Security Controls</h2>
+  <section class="card section-gap-12" data-ts-panel="security">
+    <h2 class="u-mt-0">Security Controls</h2>
     <div class="grid grid-2">
       <div>Storage secret last rotated: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("secret_rotation_storage_at")))) %></strong></div>
       <div>Clio secret last rotated: <strong><%= tsEsc(tsRotationLabel(tsSafe(settings.get("secret_rotation_clio_at")))) %></strong></div>
@@ -1772,7 +1815,7 @@
     </div>
   </section>
 
-  <section class="card" style="margin-top:12px;">
+  <section class="card section-gap-12">
     <button type="submit" class="btn" name="action" value="save_settings">Save Settings</button>
   </section>
 </form>
@@ -1788,31 +1831,96 @@
   var hiddenSsl = document.getElementById("tenantSettingsTabFieldSsl");
   if (!buttons.length || !panels.length) return;
 
-  function setTab(name) {
+  var cfg = document.getElementById("uiThemeConfig");
+  var scope = cfg ? String(cfg.getAttribute("data-pref-scope") || "public") : "public";
+  var STORAGE_KEY = "tenant_settings.active_tab." + scope;
+
+  function saveTab(key) {
+    try { localStorage.setItem(STORAGE_KEY, key); } catch (ignored) {}
+  }
+
+  function loadSavedTab() {
+    try { return String(localStorage.getItem(STORAGE_KEY) || "").trim().toLowerCase(); }
+    catch (ignored) { return ""; }
+  }
+
+  function keyFromHash() {
+    var hash = String(window.location.hash || "").trim().toLowerCase();
+    if (!hash.startsWith("#tab-")) return "";
+    return hash.substring(5);
+  }
+
+  function setTab(name, options) {
+    var opts = options || {};
     var key = String(name || "").trim().toLowerCase();
     if (!key) key = "integrations";
+
+    var found = false;
     buttons.forEach(function (btn) {
       var bKey = String(btn.getAttribute("data-ts-tab-btn") || "").toLowerCase();
       var isActive = bKey === key;
+      if (isActive) found = true;
       btn.classList.toggle("active", isActive);
+      btn.setAttribute("role", "tab");
       btn.setAttribute("aria-selected", isActive ? "true" : "false");
+      btn.setAttribute("tabindex", isActive ? "0" : "-1");
     });
+    if (!found) {
+      if (key !== "integrations") {
+        setTab("integrations", opts);
+      }
+      return;
+    }
+
     panels.forEach(function (panel) {
       var pKey = String(panel.getAttribute("data-ts-panel") || "").toLowerCase();
-      panel.style.display = (pKey === key) ? "" : "none";
+      var show = pKey === key;
+      panel.style.display = show ? "" : "none";
+      panel.setAttribute("aria-hidden", show ? "false" : "true");
     });
     if (hiddenMain) hiddenMain.value = key;
     if (hiddenTaxonomy) hiddenTaxonomy.value = key;
     if (hiddenSsl) hiddenSsl.value = key;
+
+    if (!opts.silent) saveTab(key);
+    if (!opts.skipHash) {
+      try { history.replaceState(null, "", "#tab-" + key); } catch (ignored) {}
+    }
   }
 
-  buttons.forEach(function (btn) {
+  buttons.forEach(function (btn, idx) {
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("tabindex", "-1");
     btn.addEventListener("click", function () {
       setTab(btn.getAttribute("data-ts-tab-btn"));
     });
+    btn.addEventListener("keydown", function (event) {
+      if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+        event.preventDefault();
+        var dir = event.key === "ArrowRight" ? 1 : -1;
+        var nextIndex = (idx + dir + buttons.length) % buttons.length;
+        var nextBtn = buttons[nextIndex];
+        if (!nextBtn) return;
+        nextBtn.focus();
+        setTab(nextBtn.getAttribute("data-ts-tab-btn"));
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        var first = buttons[0];
+        if (!first) return;
+        first.focus();
+        setTab(first.getAttribute("data-ts-tab-btn"));
+      } else if (event.key === "End") {
+        event.preventDefault();
+        var last = buttons[buttons.length - 1];
+        if (!last) return;
+        last.focus();
+        setTab(last.getAttribute("data-ts-tab-btn"));
+      }
+    });
   });
 
-  setTab(tabsHost.getAttribute("data-default-tab"));
+  var initial = keyFromHash() || loadSavedTab() || tabsHost.getAttribute("data-default-tab");
+  setTab(initial, { silent: true, skipHash: false });
 })();
 </script>
 

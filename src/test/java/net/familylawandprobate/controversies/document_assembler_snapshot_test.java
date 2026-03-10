@@ -131,6 +131,64 @@ public class document_assembler_snapshot_test {
     }
 
     @Test
+    void advanced_directives_support_else_default_and_loop_metadata() throws Exception {
+        document_assembler assembler = new document_assembler();
+        String template = ""
+                + "IfTrue: {{#if case.has_children}}YES{{else}}NO{{/if}}\n"
+                + "IfFalse: {{#if case.missing_flag}}YES{{else}}NO{{/if}}\n"
+                + "Rows: {{#each case.service_rows}}[#{{@number}}/{{@index}}/{{@first}}/{{@last}} {{item.name}}]{{else}}[none]{{/each}}\n"
+                + "EmptyRows: {{#each case.empty_rows}}X{{else}}NONE{{/each}}\n"
+                + "County: {{default case.county \"County Pending\"}}\n"
+                + "Unknown: {{default case.unknown_field \"Unknown\"}}";
+
+        Map<String, String> values = baseValues();
+        values.put("tenant.advanced_assembly_enabled", "true");
+        values.put("case.service_rows",
+                "<list>"
+                        + "<row><name>John Doe</name></row>"
+                        + "<row><name>Jane Roe</name></row>"
+                        + "</list>");
+        values.put("case.empty_rows", "");
+
+        document_assembler.PreviewResult preview = assembler.preview(template.getBytes(StandardCharsets.UTF_8), "txt", values);
+
+        String expected = ""
+                + "IfTrue: YES\n"
+                + "IfFalse: NO\n"
+                + "Rows: [#1/0/true/false John Doe][#2/1/false/true Jane Roe]\n"
+                + "EmptyRows: NONE\n"
+                + "County: County Pending\n"
+                + "Unknown: Unknown";
+        assertEquals(expected, preview.assembledText);
+    }
+
+    @Test
+    void nested_if_blocks_use_matching_else_boundaries() throws Exception {
+        document_assembler assembler = new document_assembler();
+        String template = "{{#if case.outer}}A{{#if case.inner}}B{{else}}C{{/if}}D{{else}}Z{{/if}}";
+
+        Map<String, String> values = baseValues();
+        values.put("tenant.advanced_assembly_enabled", "true");
+        values.put("case.outer", "true");
+        values.put("case.inner", "false");
+
+        document_assembler.PreviewResult preview = assembler.preview(template.getBytes(StandardCharsets.UTF_8), "txt", values);
+        assertEquals("ACD", preview.assembledText);
+    }
+
+    @Test
+    void format_date_accepts_optional_comma_syntax() throws Exception {
+        document_assembler assembler = new document_assembler();
+        String template = "Date: {{format.date case.next_hearing, \"MM/dd/yyyy\"}}";
+
+        Map<String, String> values = baseValues();
+        values.put("tenant.advanced_assembly_enabled", "true");
+
+        document_assembler.PreviewResult preview = assembler.preview(template.getBytes(StandardCharsets.UTF_8), "txt", values);
+        assertEquals("Date: 03/20/2025", preview.assembledText);
+    }
+
+    @Test
     void preview_detects_docx_payload_when_template_extension_is_txt() throws Exception {
         document_assembler assembler = new document_assembler();
         Map<String, String> values = new LinkedHashMap<String, String>();

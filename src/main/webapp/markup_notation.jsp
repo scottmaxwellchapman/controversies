@@ -24,6 +24,8 @@
     <li>Use explicit namespaces for clarity: <code>{{tenant.*}}</code>, <code>{{case.*}}</code>, <code>{{kv.*}}</code>.</li>
     <li>When a value can be blank, use switch notation with fallback: <code>[case.cause_docket_number/No Docket Number Yet]</code>.</li>
     <li>Repeatable list/table data may be stored as XML and used in loops: <code>{{#each case.service_rows}}&lt;row&gt;{{item.name}} | {{item.address}}&lt;/row&gt;{{/each}}</code>.</li>
+    <li>Conditional and fallback helpers are available in advanced mode: <code>{{#if case.has_children}}Yes{{else}}No{{/if}}</code>, <code>{{default case.county "County Pending"}}</code>.</li>
+    <li>Loop metadata for numbering and flow control: <code>{{@index}}</code>, <code>{{@number}}</code>, <code>{{@first}}</code>, <code>{{@last}}</code>.</li>
     <li>Manage case-specific list/grid datasets in <a href="<%= request.getContextPath() %>/case_lists.jsp">Case Lists/Grids</a>; focus the relevant token in Form Assembly before prompting for those values.</li>
     <li>Prefer one token per legal fact to support audit logging.</li>
   </ul>

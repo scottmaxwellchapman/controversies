@@ -704,6 +704,10 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .tasks-node-meta {
+    display: block;
+    font-size: .8rem;
+  }
   .tasks-node .tag {
     font-size: 0.72rem;
     border: 1px solid var(--border);
@@ -779,15 +783,15 @@
 </style>
 
 <section class="card">
-  <h1 style="margin:0;">Tasks</h1>
-  <div class="meta" style="margin-top:6px;">
+  <h1 class="u-m-0">Tasks</h1>
+  <div class="meta u-mt-6">
     Task workspace with sub-tasks, multi-user assignment/reassignment, due date/time, time estimate,
     internal notes, custom attributes, and visual associations to matters, facts, documents, and threads.
   </div>
 </section>
 
-<section class="card" style="margin-top:12px;">
-  <form method="get" action="<%= ctx %>/tasks.jsp" class="form">
+<section class="card section-gap-12">
+  <form method="get" action="<%= ctx %>/tasks.jsp" class="form" id="tasksFilterForm">
     <div class="grid grid-4">
       <label>
         <span>Matter</span>
@@ -826,14 +830,14 @@
       </label>
     </div>
     <input type="hidden" name="task_uuid" value="<%= esc(selectedTaskUuid) %>" />
-    <button type="submit" class="btn" style="margin-top:10px;">Apply Filters</button>
+    <button type="submit" class="btn u-mt-10">Apply Filters</button>
   </form>
 
   <% if (message != null) { %>
-    <div class="alert alert-ok" style="margin-top:12px;"><%= esc(message) %></div>
+    <div class="alert alert-ok u-mt-12"><%= esc(message) %></div>
   <% } %>
   <% if (error != null) { %>
-    <div class="alert alert-error" style="margin-top:12px;"><%= esc(error) %></div>
+    <div class="alert alert-error u-mt-12"><%= esc(error) %></div>
   <% } %>
 
   <div class="tasks-counts">
@@ -844,15 +848,15 @@
   </div>
 </section>
 
-<section class="tasks-shell" style="margin-top:12px;">
+<section class="tasks-shell section-gap-12">
   <section class="card tasks-tree-pane">
-    <h2 style="margin-top:0;">Task Tree</h2>
+    <h2 class="u-mt-0">Task Tree</h2>
     <div class="meta">Nested Tasks and Sub-tasks.</div>
 
     <% if (treeRows.isEmpty()) { %>
-      <div class="muted" style="margin-top:10px;">No tasks match your filters.</div>
+      <div class="muted u-mt-10">No tasks match your filters.</div>
     <% } else { %>
-      <ul class="tasks-tree" style="margin-top:10px;">
+      <ul class="tasks-tree u-mt-10">
         <% for (int i = 0; i < treeRows.size(); i++) {
              TaskTreeRow row = treeRows.get(i);
              tasks.TaskRec t = row == null ? null : row.task;
@@ -866,7 +870,7 @@
             <div class="tasks-node <%= tid.equals(selectedTaskUuid) ? "is-active" : "" %>">
               <a href="<%= ctx %>/tasks.jsp?task_uuid=<%= enc(tid) %>&matter_filter=<%= enc(matterFilter) %>&status_filter=<%= enc(statusFilter) %>&show=<%= enc(show) %>&q=<%= enc(q) %>">
                 <strong><%= esc(safe(t.title)) %></strong>
-                <span class="meta" style="display:block; font-size:.8rem;"><%= esc(safe(t.dueAt)) %> | <%= esc(safe(t.priority)) %></span>
+                <span class="meta tasks-node-meta"><%= esc(safe(t.dueAt)) %> | <%= esc(safe(t.priority)) %></span>
               </a>
               <span class="tag <%= tagClass %>"><%= esc(safe(t.status)) %></span>
               <% if (t.archived) { %><span class="tag archived">Archived</span><% } %>
@@ -879,7 +883,7 @@
 
   <section class="tasks-panels">
     <section class="card">
-      <h2 style="margin-top:0;">Create Task</h2>
+      <h2 class="u-mt-0">Create Task</h2>
       <form method="post" class="form" action="<%= ctx %>/tasks.jsp">
         <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
         <input type="hidden" name="action" value="create_task" />
@@ -986,7 +990,7 @@
         </label>
         <label><span>Assignment Reason</span><input type="text" name="assignment_reason" /></label>
 
-        <h4 style="margin:12px 0 8px 0;">Facts Associations (optional)</h4>
+        <h4 class="u-mt-12">Facts Associations (optional)</h4>
         <div class="tasks-meta-grid">
           <label>
             <span>Claim</span>
@@ -1026,7 +1030,7 @@
           </label>
         </div>
 
-        <h4 style="margin:12px 0 8px 0;">Document Associations (optional)</h4>
+        <h4 class="u-mt-12">Document Associations (optional)</h4>
         <div class="tasks-meta-grid">
           <label>
             <span>Document</span>
@@ -1071,7 +1075,7 @@
         <label><span>Page Number</span><input type="number" name="page_number" min="0" value="0" /></label>
 
         <% if (!enabledAttrs.isEmpty()) { %>
-          <h4 style="margin:12px 0 8px 0;">Custom Attributes</h4>
+          <h4 class="u-mt-12">Custom Attributes</h4>
           <div class="tasks-meta-grid">
             <% for (int i = 0; i < enabledAttrs.size(); i++) {
                  task_attributes.AttributeRec a = enabledAttrs.get(i);
@@ -1121,13 +1125,13 @@
           </div>
         <% } %>
 
-        <button type="submit" class="btn" style="margin-top:10px;">Create Task</button>
+        <button type="submit" class="btn u-mt-10">Create Task</button>
       </form>
     </section>
 
     <% if (selectedTask != null) { %>
       <section class="card">
-        <h2 style="margin-top:0;">Edit Selected Task</h2>
+        <h2 class="u-mt-0">Edit Selected Task</h2>
 
         <form method="post" class="form" action="<%= ctx %>/tasks.jsp">
           <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
@@ -1228,7 +1232,7 @@
           </label>
           <label><span>Assignment Reason</span><input type="text" name="assignment_reason" /></label>
 
-          <h4 style="margin:12px 0 8px 0;">Facts Associations</h4>
+          <h4 class="u-mt-12">Facts Associations</h4>
           <div class="tasks-meta-grid">
             <label>
               <span>Claim</span>
@@ -1268,7 +1272,7 @@
             </label>
           </div>
 
-          <h4 style="margin:12px 0 8px 0;">Document Associations</h4>
+          <h4 class="u-mt-12">Document Associations</h4>
           <div class="tasks-meta-grid">
             <label>
               <span>Document</span>
@@ -1313,7 +1317,7 @@
           <label><span>Page Number</span><input type="number" name="page_number" min="0" value="<%= selectedTask.pageNumber %>" /></label>
 
           <% if (!enabledAttrs.isEmpty()) { %>
-            <h4 style="margin:12px 0 8px 0;">Custom Attributes</h4>
+            <h4 class="u-mt-12">Custom Attributes</h4>
             <div class="tasks-meta-grid">
               <% for (int i = 0; i < enabledAttrs.size(); i++) {
                    task_attributes.AttributeRec a = enabledAttrs.get(i);
@@ -1364,10 +1368,10 @@
             </div>
           <% } %>
 
-          <button type="submit" class="btn" style="margin-top:10px;">Save Task</button>
+          <button type="submit" class="btn u-mt-10">Save Task</button>
         </form>
 
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+        <div class="entity-action-bar">
           <form method="post" action="<%= ctx %>/tasks.jsp" onsubmit="return confirm('<%= selectedTask.archived ? "Restore" : "Archive" %> this task?');">
             <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
             <input type="hidden" name="action" value="<%= selectedTask.archived ? "restore_task" : "archive_task" %>" />
@@ -1386,7 +1390,7 @@
       </section>
 
       <section class="card">
-        <h2 style="margin-top:0;">Internal Notes</h2>
+        <h2 class="u-mt-0">Internal Notes</h2>
         <% if (selectedTask == null) { %>
           <div class="muted">Select a task to manage notes.</div>
         <% } else { %>
@@ -1396,10 +1400,10 @@
             <input type="hidden" name="task_uuid" value="<%= esc(safe(selectedTask.uuid)) %>" />
             <input type="hidden" name="matter_filter" value="<%= esc(matterFilter) %>" />
             <textarea name="note_body" rows="3" placeholder="Internal note (not visible to non-users)" required></textarea>
-            <button type="submit" class="btn" style="margin-top:8px;">Add Internal Note</button>
+            <button type="submit" class="btn u-mt-8">Add Internal Note</button>
           </form>
 
-          <div style="margin-top:12px;">
+          <div class="u-mt-12">
             <% if (selectedNotes.isEmpty()) { %>
               <div class="muted">No notes yet.</div>
             <% } else { %>
@@ -1424,7 +1428,7 @@
       </section>
 
       <section class="card">
-        <h2 style="margin-top:0;">Assignment History</h2>
+        <h2 class="u-mt-0">Assignment History</h2>
         <% if (selectedTask == null) { %>
           <div class="muted">Select a task to view assignment history.</div>
         <% } else if (selectedAssignments.isEmpty()) { %>
@@ -1462,5 +1466,74 @@
     <% } %>
   </section>
 </section>
+
+<script>
+(() => {
+  var filterForm = document.getElementById("tasksFilterForm");
+  if (!filterForm) return;
+
+  var cfg = document.getElementById("uiThemeConfig");
+  var scope = cfg ? String(cfg.getAttribute("data-pref-scope") || "public") : "public";
+  var STORAGE_KEY = "tasks.filters." + scope;
+  var FIELD_NAMES = ["matter_filter", "status_filter", "show", "q"];
+
+  function readSaved() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      var data = JSON.parse(raw);
+      return data && typeof data === "object" ? data : null;
+    } catch (ignored) {
+      return null;
+    }
+  }
+
+  function writeSaved() {
+    var out = {};
+    for (var i = 0; i < FIELD_NAMES.length; i++) {
+      var name = FIELD_NAMES[i];
+      var el = filterForm.elements[name];
+      out[name] = el ? String(el.value || "") : "";
+    }
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(out)); } catch (ignored) {}
+  }
+
+  filterForm.addEventListener("submit", function () {
+    writeSaved();
+  });
+
+  var params = new URLSearchParams(window.location.search || "");
+  var hasExplicit = false;
+  for (var i = 0; i < FIELD_NAMES.length; i++) {
+    if (params.has(FIELD_NAMES[i])) {
+      hasExplicit = true;
+      break;
+    }
+  }
+  if (hasExplicit || params.has("pref_applied")) return;
+
+  var saved = readSaved();
+  if (!saved) return;
+
+  var shouldApply = false;
+  for (var j = 0; j < FIELD_NAMES.length; j++) {
+    var fname = FIELD_NAMES[j];
+    var next = String(saved[fname] == null ? "" : saved[fname]);
+    if (!next) continue;
+    var field = filterForm.elements[fname];
+    if (!field) continue;
+    field.value = next;
+    shouldApply = true;
+  }
+  if (!shouldApply) return;
+
+  var marker = document.createElement("input");
+  marker.type = "hidden";
+  marker.name = "pref_applied";
+  marker.value = "1";
+  filterForm.appendChild(marker);
+  filterForm.submit();
+})();
+</script>
 
 <jsp:include page="footer.jsp" />

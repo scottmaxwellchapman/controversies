@@ -1,30 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <help>
   <topic id="help_center" title="Help Center" category="Overview" audience="All" order="10">
-    <summary>Practical guidance for attorneys, paralegals, and legal staff using Controversies for daily case and document work.</summary>
-    <keywords>help center onboarding quick start guides workflows legal teams tasks facts threads permissions token markup</keywords>
+    <summary>Central, searchable guidance for legal teams using Controversies across intake, drafting, automation, research, and operations.</summary>
+    <keywords>help center onboarding workflows legal teams documents versions search templates settings integrations troubleshooting texas law deadlines permissions</keywords>
     <content><![CDATA[
 <h3>Start Here</h3>
-<p>Use the topic browser on the left to move between guides, or use search to filter by workflow, screen, or API term.</p>
+<p>Browse topics by category on the left, or search by workflow, screen name, or API term.</p>
 <ul>
-  <li><a href="{{ctx}}/help_browser.jsp?topic=getting_started">Getting Started (Legal Team)</a>: first-day setup for legal teams.</li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=getting_started">Getting Started (Legal Team)</a>: first-day setup and role responsibilities.</li>
   <li><a href="{{ctx}}/help_browser.jsp?topic=case_workflow">Case Workflow Guide</a>: intake-to-output sequence.</li>
-  <li><a href="{{ctx}}/help_browser.jsp?topic=form_assembly">Form Assembly Guide</a>: template and quality-control standards.</li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=form_assembly">Form Assembly Guide</a>: drafting and final-output quality control.</li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=documents_versions">Documents &amp; Versions Guide</a>: document records, parts, versions, preview, OCR, and redaction.</li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=search_guide">Search Guide</a>: asynchronous search jobs, criteria logic, and operator usage.</li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=template_authoring">Template Authoring Guide</a>: template import, editing, and release checklist.</li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=tenant_settings_integrations">Tenant Settings &amp; Integrations Guide</a>: security, storage, integrations, and API credentials.</li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=texas_law_deadlines">Texas Law &amp; Deadlines Guide</a>: authority research and deadline rule execution.</li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=operations_troubleshooting">Operations &amp; Troubleshooting Guide</a>: diagnostics, log triage, and recovery patterns.</li>
+</ul>
+
+<h3>Core Workflow Guides</h3>
+<ul>
   <li><a href="{{ctx}}/help_browser.jsp?topic=conflict_checks">Conflict Checks Guide</a>: conflicts.xml scanning, review, and management.</li>
   <li><a href="{{ctx}}/help_browser.jsp?topic=facts_novice">Facts Guide (Novice)</a> and <a href="{{ctx}}/help_browser.jsp?topic=facts_expert">Facts Guide (Expert)</a>.</li>
   <li><a href="{{ctx}}/help_browser.jsp?topic=tasks_novice">Tasks Guide (Novice)</a> and <a href="{{ctx}}/help_browser.jsp?topic=tasks_expert">Tasks Guide (Expert)</a>.</li>
-  <li><a href="{{ctx}}/help_browser.jsp?topic=business_processes_expert">Business Processes (Expert)</a> for shared legal BPM actions.</li>
   <li><a href="{{ctx}}/help_browser.jsp?topic=threads_novice">Threads Guide (Novice)</a> and <a href="{{ctx}}/help_browser.jsp?topic=threads_expert">Threads Guide (Expert)</a>.</li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=business_processes_expert">Business Processes Guide (Expert)</a> for shared legal BPM actions.</li>
   <li><a href="{{ctx}}/help_browser.jsp?topic=permissions_guide">Permissions Guide</a> for layered access controls.</li>
 </ul>
 
-<h3>Token + Markup Reference</h3>
-<ul>
-  <li><a href="{{ctx}}/token_guide.jsp">Token Guide</a></li>
-  <li><a href="{{ctx}}/markup_notation.jsp">Markup Notation</a></li>
-</ul>
-
-<h3>Common Legal Team Tasks</h3>
+<h3>High-Impact Screen Guide</h3>
 <table class="table">
   <thead>
     <tr>
@@ -47,37 +51,50 @@
     <tr>
       <td>Track work assignments and deadlines</td>
       <td><a href="{{ctx}}/tasks.jsp">Tasks</a></td>
-      <td>For due-date-driven work, sub-task planning, and assignment/reassignment history.</td>
+      <td>For due-date-driven work, sub-task planning, and assignment history.</td>
     </tr>
     <tr>
-      <td>Maintain reusable firm values</td>
-      <td><a href="{{ctx}}/tenant_fields.jsp">Tenant Fields</a></td>
-      <td>For values reused across many matters (firm, venue defaults, signature blocks).</td>
+      <td>Manage documents and evidence</td>
+      <td><a href="{{ctx}}/documents.jsp">Case Documents</a></td>
+      <td>For document metadata, part/version management, and evidence control.</td>
     </tr>
     <tr>
-      <td>Assemble a filing draft</td>
-      <td><a href="{{ctx}}/forms.jsp">Form Assembly</a></td>
-      <td>When generating a matter-specific document from a template.</td>
+      <td>Run cross-matter searches</td>
+      <td><a href="{{ctx}}/search.jsp">Search</a></td>
+      <td>When searching document versions or case conflicts across matters.</td>
     </tr>
     <tr>
-      <td>Review generated outputs</td>
-      <td><a href="{{ctx}}/assembled_forms.jsp">Assembled Forms</a></td>
-      <td>To download, verify, and manage completed assembled files.</td>
+      <td>Assemble and review filing drafts</td>
+      <td><a href="{{ctx}}/forms.jsp">Form Assembly</a> and <a href="{{ctx}}/assembled_forms.jsp">Assembled Forms</a></td>
+      <td>When generating final drafts and validating filing-ready outputs.</td>
+    </tr>
+    <tr>
+      <td>Research authorities and run rule-based deadlines</td>
+      <td><a href="{{ctx}}/texas_law.jsp">Texas Law</a> and <a href="{{ctx}}/deadline_calculator.jsp">Deadline Calculator</a></td>
+      <td>When validating authorities and computing date-sensitive obligations.</td>
     </tr>
     <tr>
       <td>Confirm audit history</td>
       <td><a href="{{ctx}}/log_viewer.jsp">Activity Logs</a></td>
-      <td>For internal review, troubleshooting, or compliance checks.</td>
+      <td>For compliance review, troubleshooting, and timeline reconstruction.</td>
     </tr>
   </tbody>
 </table>
 
-<h3>Quick Tips For New Users</h3>
+<h3>Token + Markup Reference</h3>
 <ul>
-  <li>Use consistent naming for cases and templates to make retrieval faster under deadline pressure.</li>
-  <li>Prefer explicit tokens such as <code>{{case.county}}</code> over free-text placeholders.</li>
-  <li>Save shared data in tenant fields and matter-specific data in case fields.</li>
-  <li>Before filing, perform one final assembled output review in the destination format.</li>
+  <li><a href="{{ctx}}/token_guide.jsp">Token Guide</a></li>
+  <li><a href="{{ctx}}/markup_notation.jsp">Markup Notation</a></li>
+  <li><a href="{{ctx}}/help_browser.jsp?topic=template_authoring">Template Authoring Guide</a></li>
+</ul>
+
+<h3>Quick Operating Rules</h3>
+<ul>
+  <li>Use consistent naming for cases, documents, and templates to improve retrieval under deadline pressure.</li>
+  <li>Keep reusable data in tenant fields and matter-specific data in case fields.</li>
+  <li>Correct source fields first, then regenerate outputs; avoid manual final-file edits when possible.</li>
+  <li>Use search jobs and logs for diagnostics before making production configuration changes.</li>
+  <li>Before filing, perform one final review of the assembled output in destination format.</li>
 </ul>
     ]]></content>
   </topic>
@@ -777,6 +794,408 @@
 </ul>
 
 <p><a class="btn" href="{{ctx}}/permissions_management.jsp">Open Permission Layers</a></p>
+    ]]></content>
+  </topic>
+
+  <topic id="documents_versions" title="Documents &amp; Versions Guide" category="Documents" audience="All" order="130">
+    <summary>Operational guide for document records, part/version lifecycle, preview, OCR, and PDF redaction workflows.</summary>
+    <keywords>documents parts versions evidence preview ocr flatten pdf redaction checkout clio read only</keywords>
+    <content><![CDATA[
+<h3>Document Hierarchy</h3>
+<table class="table">
+  <thead>
+    <tr><th>Layer</th><th>Purpose</th><th>Primary Screen</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Document</td>
+      <td>Matter-level document record with title, taxonomy, status, and ownership metadata.</td>
+      <td><a href="{{ctx}}/documents.jsp">Case Documents</a></td>
+    </tr>
+    <tr>
+      <td>Part</td>
+      <td>Logical subdivision of a document (for example, Lead pleading plus attachments).</td>
+      <td>Open a document, then use <strong>Parts</strong></td>
+    </tr>
+    <tr>
+      <td>Version</td>
+      <td>Immutable point-in-time file revision with checksum, source, and created-by metadata.</td>
+      <td>Open a part, then use <strong>Versions</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Recommended Workflow</h3>
+<ol>
+  <li>Create or select the matter document in <a href="{{ctx}}/documents.jsp">Case Documents</a>.</li>
+  <li>Add parts and keep one active <strong>Lead</strong> part for the primary filing body.</li>
+  <li>Upload version files in the part-level Versions workspace.</li>
+  <li>Use preview to validate text/pages before downstream filing or service actions.</li>
+  <li>Queue OCR or flatten jobs for PDF-heavy evidence workflows when needed.</li>
+  <li>Use <a href="{{ctx}}/pdf_redact.jsp">PDF Redaction Workspace</a> to create redacted outputs as new versions.</li>
+  <li>Use combined preview in <a href="{{ctx}}/document_preview.jsp">Document Combined Preview</a> when you need a cross-part reading pass.</li>
+</ol>
+
+<h3>Edit Safeguards</h3>
+<ul>
+  <li>Clio-synced/read-only documents cannot be edited locally.</li>
+  <li>Checkout locks prevent conflicting edits and expire after 72 hours unless renewed/updated.</li>
+  <li>Redaction writes a new version rather than overwriting source versions.</li>
+  <li>Texas PDF compatibility checks are available from the part versions workspace for PDF versions.</li>
+</ul>
+
+<h3>Quality Checklist</h3>
+<ul>
+  <li>Verify document title/category/status before uploading evidentiary versions.</li>
+  <li>Confirm part labeling reflects filing structure (lead vs attachment).</li>
+  <li>Require checksum and storage metadata on critical uploads.</li>
+  <li>After OCR/redaction, preview the generated version and confirm expected text/page behavior.</li>
+  <li>Keep notes current so downstream reviewers understand what changed and why.</li>
+</ul>
+
+<p><a class="btn" href="{{ctx}}/help_browser.jsp?topic=search_guide">Next: Search Guide</a></p>
+    ]]></content>
+  </topic>
+
+  <topic id="search_guide" title="Search Guide" category="Search" audience="All" order="140">
+    <summary>How to run asynchronous search jobs across document part versions and case conflicts with multi-criterion operators.</summary>
+    <keywords>search jobs document part versions case conflicts operators metadata ocr regex contains all terms any terms</keywords>
+    <content><![CDATA[
+<h3>How Search Jobs Work</h3>
+<ol>
+  <li>Open <a href="{{ctx}}/search.jsp">Search</a> and select a search type.</li>
+  <li>Add one or more criteria (scope + operator + query).</li>
+  <li>Choose criteria logic (<code>OR</code> or <code>AND</code>), source toggles, and max results.</li>
+  <li>Queue the job and monitor progress under <strong>Search Jobs</strong>.</li>
+  <li>Open completed jobs to inspect matched snippets and source context.</li>
+</ol>
+
+<h3>Built-In Search Types</h3>
+<table class="table">
+  <thead>
+    <tr><th>Type</th><th>What It Searches</th><th>Permission Key</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Document Part Versions</td>
+      <td>Part-version metadata plus OCR/extracted text companions.</td>
+      <td><code>documents.access</code></td>
+    </tr>
+    <tr>
+      <td>Case Conflicts</td>
+      <td>Per-matter <code>conflicts.xml</code> entries (including scanner/contact-derived entities).</td>
+      <td><code>conflicts.access</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Operator Reference</h3>
+<table class="table">
+  <thead>
+    <tr><th>Operator Key</th><th>Behavior</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>contains</code></td><td>Matches when query text appears in target content.</td></tr>
+    <tr><td><code>not_contains</code></td><td>Matches when query text does not appear in target content.</td></tr>
+    <tr><td><code>equals</code></td><td>Exact whole-content equality match.</td></tr>
+    <tr><td><code>not_equals</code></td><td>Inverse of exact equality.</td></tr>
+    <tr><td><code>starts_with</code></td><td>Matches when target content starts with query.</td></tr>
+    <tr><td><code>ends_with</code></td><td>Matches when target content ends with query.</td></tr>
+    <tr><td><code>all_terms</code></td><td>All whitespace-delimited terms must match (AND semantics).</td></tr>
+    <tr><td><code>any_terms</code></td><td>Any whitespace-delimited term may match (OR semantics).</td></tr>
+    <tr><td><code>regex</code></td><td>Regular-expression match.</td></tr>
+  </tbody>
+</table>
+
+<h3>Limits and Guardrails</h3>
+<ul>
+  <li>Maximum 10 criteria per job.</li>
+  <li>Maximum 500 results per job.</li>
+  <li>At least one source must be enabled (<strong>Include Metadata</strong> and/or <strong>Include OCR Text</strong>).</li>
+  <li>Jobs are tenant/user scoped; you only see your own queued/completed jobs.</li>
+</ul>
+
+<h3>Query Quality Tips</h3>
+<ul>
+  <li>Use <code>all_terms</code> for filing-specific phrase coverage checks.</li>
+  <li>Use <code>regex</code> only when exact pattern semantics are required.</li>
+  <li>For conflict screens, combine entity name criteria with type/source fragments to reduce false positives.</li>
+  <li>For document searches, start broad (<code>contains</code>) and then tighten with additional criteria.</li>
+</ul>
+
+<p><a class="btn" href="{{ctx}}/help_browser.jsp?topic=template_authoring">Next: Template Authoring Guide</a></p>
+    ]]></content>
+  </topic>
+
+  <topic id="template_authoring" title="Template Authoring Guide" category="Templates" audience="All" order="150">
+    <summary>Template lifecycle guidance covering library import, editor tools, token discipline, and assembly release quality checks.</summary>
+    <keywords>templates template library template editor token guide markup case lists grids assembly pdf acroform quality checks</keywords>
+    <content><![CDATA[
+<h3>Template Lifecycle</h3>
+<ol>
+  <li>Import or create templates in <a href="{{ctx}}/template_library.jsp">Template Library</a>.</li>
+  <li>Maintain labels/folder paths for predictable retrieval.</li>
+  <li>Edit source files in <a href="{{ctx}}/template_editor.jsp">Template Editor</a>.</li>
+  <li>Validate field values in <a href="{{ctx}}/case_fields.jsp">Case Fields</a> and repeated datasets in <a href="{{ctx}}/case_lists.jsp">Case Lists/Grids</a>.</li>
+  <li>Run assembly in <a href="{{ctx}}/forms.jsp">Form Assembly</a> and review output in <a href="{{ctx}}/assembled_forms.jsp">Assembled Forms</a>.</li>
+</ol>
+
+<h3>Import Channels and Supported Types</h3>
+<table class="table">
+  <thead>
+    <tr><th>Channel</th><th>Supported Inputs</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Direct file import</td>
+      <td><code>.docx</code>, <code>.doc</code>, <code>.rtf</code>, <code>.odt</code>, <code>.txt</code>, <code>.pdf</code></td>
+      <td>Use for single-template updates or small batches.</td>
+    </tr>
+    <tr>
+      <td>Folder import</td>
+      <td>Recursive import of supported files</td>
+      <td>Preserves folder-relative grouping under an optional root folder.</td>
+    </tr>
+    <tr>
+      <td>ZIP import</td>
+      <td><code>.zip</code> containing supported template files</td>
+      <td>Server-side extraction with limits to protect runtime stability.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Authoring Standards</h3>
+<ul>
+  <li>Use explicit token scopes (<code>{{case.*}}</code>, <code>{{tenant.*}}</code>, <code>{{kv.*}}</code>).</li>
+  <li>Apply fallback notation for optional values when blank values are expected.</li>
+  <li>Keep one legal fact per token to simplify verification and troubleshooting.</li>
+  <li>For list/table repeaters, model repeating data in Case Lists/Grids instead of manual copy blocks.</li>
+  <li>For PDF templates, treat mapped fields as structured form controls (AcroForm fill workflow).</li>
+</ul>
+
+<h3>Template Editor Tools</h3>
+<ul>
+  <li>Undo/redo, revert to saved, and reload saved baseline.</li>
+  <li>Header/footer add/remove operations and footer pagination helper.</li>
+  <li>Font family, font size, and margin normalization controls for consistency.</li>
+  <li>PNG page preview and extracted-text preview for fast visual/text verification.</li>
+</ul>
+
+<h3>Release Checklist</h3>
+<ul>
+  <li>No unresolved filing-critical tokens remain.</li>
+  <li>Date/party/court metadata renders correctly for the selected matter.</li>
+  <li>Conditional and list-driven content behaves as expected with real case values.</li>
+  <li>Final assembled output is saved and reviewed in target format before filing/service.</li>
+</ul>
+
+<p><a class="btn" href="{{ctx}}/help_browser.jsp?topic=tenant_settings_integrations">Next: Tenant Settings &amp; Integrations Guide</a></p>
+    ]]></content>
+  </topic>
+
+  <topic id="tenant_settings_integrations" title="Tenant Settings &amp; Integrations Guide" category="Administration" audience="Admin" order="160">
+    <summary>Administrative guidance for tenant security posture, runtime settings, storage, messaging, and integration management.</summary>
+    <keywords>tenant settings integrations clio office 365 smtp microsoft graph api credentials security tls ssl storage plugins 2fa</keywords>
+    <content><![CDATA[
+<h3>Admin Baseline Checklist</h3>
+<ol>
+  <li>Open <a href="{{ctx}}/tenant_settings.jsp">Tenant Settings</a> and confirm tenant context.</li>
+  <li>Set password policy and two-factor authentication requirements.</li>
+  <li>Configure notification email provider for system notices and BPM email-backed actions.</li>
+  <li>Set storage backend/encryption strategy and validate connectivity before production use.</li>
+  <li>Review API credentials and rotate when staffing or integration scope changes.</li>
+</ol>
+
+<h3>Key Settings Areas</h3>
+<table class="table">
+  <thead>
+    <tr><th>Area</th><th>Where</th><th>Primary Decisions</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>TLS / SSL Runtime</td>
+      <td><a href="{{ctx}}/tenant_settings.jsp">Tenant Settings</a></td>
+      <td>Auto/self-signed/certbot/custom mode and runtime certificate path choices.</td>
+    </tr>
+    <tr>
+      <td>Storage Backend</td>
+      <td><a href="{{ctx}}/tenant_settings.jsp">Tenant Settings</a></td>
+      <td>Local vs remote backend, transport security, and encryption mode.</td>
+    </tr>
+    <tr>
+      <td>Clio Connection</td>
+      <td><a href="{{ctx}}/tenant_settings.jsp">Tenant Settings</a></td>
+      <td>OAuth mode and external document read-only synchronization behavior.</td>
+    </tr>
+    <tr>
+      <td>Office 365 Contact Sync</td>
+      <td><a href="{{ctx}}/tenant_settings.jsp">Tenant Settings</a></td>
+      <td>Enablement, polling interval, and source filtering.</td>
+    </tr>
+    <tr>
+      <td>Notification Email</td>
+      <td><a href="{{ctx}}/tenant_settings.jsp">Tenant Settings</a></td>
+      <td>SMTP vs Microsoft Graph transport with sender identity controls.</td>
+    </tr>
+    <tr>
+      <td>API Credentials</td>
+      <td><a href="{{ctx}}/tenant_settings.jsp">Tenant Settings</a></td>
+      <td>Credential issuance, labeling, and key-rotation cadence.</td>
+    </tr>
+    <tr>
+      <td>Plugin Runtime</td>
+      <td><a href="{{ctx}}/plugin_manager.jsp">Plugin Manager</a></td>
+      <td>Plugin config, artifact inspection, and state reset maintenance.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Integration Rollout Sequence</h3>
+<ol>
+  <li>Enable settings in a lower-risk tenant or test matter first.</li>
+  <li>Verify permissions and service credentials for impacted users/roles.</li>
+  <li>Run a contained sync/test action and review <a href="{{ctx}}/log_viewer.jsp">Activity Logs</a>.</li>
+  <li>Document rollback steps before enabling broad production scope.</li>
+</ol>
+
+<h3>Change-Control Recommendations</h3>
+<ul>
+  <li>Change one high-impact subsystem at a time (storage, TLS, messaging, or integration auth).</li>
+  <li>Record effective date/time and operator in internal runbooks.</li>
+  <li>Rotate exposed or stale credentials immediately; avoid reusing retired secrets.</li>
+  <li>Use feature flags for phased rollout where possible.</li>
+</ul>
+
+<p><a class="btn" href="{{ctx}}/help_browser.jsp?topic=texas_law_deadlines">Next: Texas Law &amp; Deadlines Guide</a></p>
+    ]]></content>
+  </topic>
+
+  <topic id="texas_law_deadlines" title="Texas Law &amp; Deadlines Guide" category="Research" audience="All" order="170">
+    <summary>How to use the Texas Law library and deadline calculation tools to support filing-quality legal workflows.</summary>
+    <keywords>texas law codes rules deadline calculator jurisdiction triggers holiday xml compatibility check filing</keywords>
+    <content><![CDATA[
+<h3>Texas Law Library Workflow</h3>
+<ol>
+  <li>Open <a href="{{ctx}}/texas_law.jsp">Texas Law</a> and select <strong>Rules</strong> or <strong>Codes</strong>.</li>
+  <li>Use optional search controls (mode, file type, path filter) to narrow material.</li>
+  <li>Open renderable files in page-view mode and use built-in navigation to jump by heading/bookmark/link.</li>
+  <li>Use copy-text and page navigation controls when building citation and drafting notes.</li>
+  <li>Use <strong>Run Refresh Now</strong> when an immediate sync cycle is required.</li>
+</ol>
+
+<h3>Texas Law Search Controls</h3>
+<table class="table">
+  <thead>
+    <tr><th>Control</th><th>Options</th><th>Use Case</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Mode</td>
+      <td>Filename, Content, Filename + Content</td>
+      <td>Choose fast filename lookups or deeper content scans.</td>
+    </tr>
+    <tr>
+      <td>File Type Filter</td>
+      <td>PDF, DOCX, DOC, RTF, TXT, ODT, JSON, XML</td>
+      <td>Narrow results to specific evidence/reference formats.</td>
+    </tr>
+    <tr>
+      <td>Path Contains</td>
+      <td>Free-text folder/file filter</td>
+      <td>Limit search to a code family or rule subset.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Deadline Calculator Workflow</h3>
+<ol>
+  <li>Open <a href="{{ctx}}/deadline_calculator.jsp">Deadline Calculator</a>.</li>
+  <li>Select jurisdiction, zone ID, and trigger-date values from your tenant deadline XML definition.</li>
+  <li>Run calculation and review output date, explanation, and imaginary-date indicators.</li>
+  <li>Review holiday preview to confirm court-closure and holiday assumptions for the selected year.</li>
+  <li>Update tenant deadline/holiday XML only through controlled review and approval steps.</li>
+</ol>
+
+<h3>Related Filing Controls</h3>
+<ul>
+  <li>For PDF filings, run Texas PDF compatibility checks from part versions before external submission.</li>
+  <li>Store final trigger dates and computed deadlines in matter records for audit traceability.</li>
+  <li>When rule definitions change, re-run impacted calculations and annotate changes in case notes/tasks.</li>
+</ul>
+
+<p><a class="btn" href="{{ctx}}/help_browser.jsp?topic=operations_troubleshooting">Next: Operations &amp; Troubleshooting Guide</a></p>
+    ]]></content>
+  </topic>
+
+  <topic id="operations_troubleshooting" title="Operations &amp; Troubleshooting Guide" category="Operations" audience="All" order="180">
+    <summary>Triage and recovery playbook for common runtime, workflow, and data-quality issues across Controversies screens.</summary>
+    <keywords>operations troubleshooting logs diagnostics errors search jobs uploads ocr redaction assembly plugins integrations</keywords>
+    <content><![CDATA[
+<h3>Fast Triage Workflow</h3>
+<ol>
+  <li>Capture symptom, impacted matter/document identifiers, and the time window.</li>
+  <li>Review <a href="{{ctx}}/log_viewer.jsp">Activity Logs</a> for related actions and error messages.</li>
+  <li>Reproduce in the smallest possible scope (single matter, single document part, single template).</li>
+  <li>Apply the least-destructive recovery action first, then validate output.</li>
+  <li>Document root cause and prevention notes for future incidents.</li>
+</ol>
+
+<h3>Common Symptoms and Checks</h3>
+<table class="table">
+  <thead>
+    <tr><th>Symptom</th><th>First Checks</th><th>Likely Surface</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Search job completes with no expected hits</td>
+      <td>Verify operator, criteria logic, source toggles (metadata/OCR), and case sensitivity.</td>
+      <td><a href="{{ctx}}/search.jsp">Search</a></td>
+    </tr>
+    <tr>
+      <td>Document cannot be edited</td>
+      <td>Check read-only sync source and checkout ownership/expiry state.</td>
+      <td><a href="{{ctx}}/documents.jsp">Case Documents</a></td>
+    </tr>
+    <tr>
+      <td>Preview unavailable for a version</td>
+      <td>Confirm source file exists, is in a renderable format, and path constraints are satisfied.</td>
+      <td>Part Versions / Document Preview</td>
+    </tr>
+    <tr>
+      <td>OCR or flatten workflow not progressing</td>
+      <td>Confirm tool availability and review job status/alerts.</td>
+      <td>Part Versions / Logs</td>
+    </tr>
+    <tr>
+      <td>Unexpected assembly output values</td>
+      <td>Validate source field placement (tenant vs case), token names, and list/grid data.</td>
+      <td><a href="{{ctx}}/forms.jsp">Form Assembly</a></td>
+    </tr>
+    <tr>
+      <td>Integration notifications or sync behavior missing</td>
+      <td>Review tenant integration settings, provider credentials, and permission scopes.</td>
+      <td><a href="{{ctx}}/tenant_settings.jsp">Tenant Settings</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Safe Recovery Actions</h3>
+<ul>
+  <li>Re-run generation actions (search/report/assembly) after correcting source data.</li>
+  <li>Use new versions instead of overwriting previous evidentiary outputs.</li>
+  <li>For plugin cache issues, use <a href="{{ctx}}/plugin_manager.jsp">Plugin Manager</a> state reset with change documentation.</li>
+  <li>For permissions issues, verify resolution order in <a href="{{ctx}}/help_browser.jsp?topic=permissions_guide">Permissions Guide</a> before broad policy edits.</li>
+</ul>
+
+<h3>Escalation Packet (Recommended)</h3>
+<ul>
+  <li>Timestamped reproduction steps and affected tenant/user/matter identifiers.</li>
+  <li>Relevant log lines and screen-level messages.</li>
+  <li>Current configuration snapshot for impacted subsystem (search, storage, email, integration, or plugin).</li>
+  <li>Business impact statement (deadline risk, filing risk, or communication risk).</li>
+</ul>
+
+<p><a class="btn" href="{{ctx}}/help_browser.jsp?topic=help_center">Back To Help Center</a></p>
     ]]></content>
   </topic>
 </help>

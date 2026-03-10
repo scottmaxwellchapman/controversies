@@ -524,7 +524,7 @@ Current API coverage includes:
   - `tasks.round_robin.next_assignee`, `tasks.report.refresh`
 - Document workflow:
   - `document.taxonomy.*`, `document.attributes.*`, `documents.*`, `document.fields.*`, `document.parts.*`, `document.versions.*`
-  - `document.versions.render_page`, `document.versions.redact` (PDF version preview/redaction)
+  - `document.versions.render_page`, `document.versions.find_similar`, `document.versions.redact` (preview/hash similarity/redaction)
 - Templates + assembly:
   - `templates.*`, `template.tools.*`, `assembler.preview`, `assembler.assemble`, `assembly.run`, `assembled_forms.*`
 - Custom objects:
@@ -547,7 +547,10 @@ These operations support automation around the interactive PDF redaction feature
 
 - `document.versions.render_page`
   - Inputs: `matter_uuid`, `doc_uuid`, `part_uuid`, `source_version_uuid`, `page` (0-based)
-  - Output: PNG page bytes (`image_png_base64`) plus pagination metadata
+  - Output: PNG page bytes (`image_png_base64`), pagination metadata, and page image hashes (`image_hash_sha256_rgb`, `image_hash_ahash64`, `image_hash_dhash64`)
+- `document.versions.find_similar`
+  - Inputs: `matter_uuid`, `doc_uuid`, `part_uuid`, `source_version_uuid`, optional `scope` (`matter` or `tenant`), `max_results`, `max_hamming_distance`, `duplicates_only`
+  - Output: candidate versions with hash-match similarity metrics for deduplication and near-match discovery
 - `document.versions.redact`
   - Inputs: `matter_uuid`, `doc_uuid`, `part_uuid`, `source_version_uuid`, plus redactions either as:
     - `redactions` JSON array of objects with `page`/`x_norm`/`y_norm`/`width_norm`/`height_norm`, or

@@ -283,6 +283,14 @@ public final class filter implements Filter {
         res.setHeader("Referrer-Policy", "no-referrer");
         res.setHeader("X-Frame-Options", "SAMEORIGIN");
         res.setHeader("Permissions-Policy", "geolocation=(self), microphone=(), camera=()");
+        res.setHeader("X-Robots-Tag",
+                "noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate, max-snippet:0, max-image-preview:none, max-video-preview:0");
+        if (isPageRequest(req)) {
+            // Discourage browser persistence of dynamic pages.
+            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0, private");
+            res.setHeader("Pragma", "no-cache");
+            res.setDateHeader("Expires", 0L);
+        }
 
         // CSP: conservative to avoid breaking JSP UI
         res.setHeader("Content-Security-Policy",
@@ -443,6 +451,12 @@ public final class filter implements Filter {
 
     private static boolean isApiRequest(HttpServletRequest req) {
         return normalizedPath(req).startsWith("/api/");
+    }
+
+    private static boolean isPageRequest(HttpServletRequest req) {
+        String path = normalizedPath(req).toLowerCase(Locale.ROOT);
+        if ("/".equals(path)) return true;
+        return path.endsWith(".jsp") || path.endsWith(".html") || path.endsWith(".htm");
     }
 
     private static boolean apiAuthRequired(HttpServletRequest req) {

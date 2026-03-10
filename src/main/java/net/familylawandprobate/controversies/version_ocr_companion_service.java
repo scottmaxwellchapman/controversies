@@ -35,6 +35,7 @@ public final class version_ocr_companion_service {
     private static final long TESSERACT_CACHE_MS = 30_000L;
     private static final int OCR_PDF_DPI = 144;
     private static final int OCR_PDF_PAGE_CAP = 220;
+    private static final int STRUCTURED_IMAGE_HASH_PAGE_CAP = 20;
     private static final int OCR_TIMEOUT_SECONDS = 90;
     private static final int EMBEDDED_TEXT_MIN_CHARS = 40;
     private static final int MAX_CAPTURED_STDOUT_BYTES = 4 * 1024 * 1024;
@@ -42,6 +43,7 @@ public final class version_ocr_companion_service {
     private static final class DocumentTextExtraction {
         String engine = "document_assembler";
         String text = "";
+        final ArrayList<ImageHashRec> imageHashes = new ArrayList<ImageHashRec>();
     }
 
     private static final class Holder {
@@ -60,6 +62,36 @@ public final class version_ocr_companion_service {
         public String sourceChecksum;
         public long sourceBytes;
         public long sourceMtimeMs;
+        public final ArrayList<ImageHashRec> imageHashes = new ArrayList<ImageHashRec>();
+    }
+
+    public static final class ImageHashRec {
+        public int pageIndex;
+        public int width;
+        public int height;
+        public String source;
+        public String sha256Rgb;
+        public String averageHash64;
+        public String differenceHash64;
+
+        public ImageHashRec() {
+        }
+
+        public ImageHashRec(int pageIndex,
+                            int width,
+                            int height,
+                            String source,
+                            String sha256Rgb,
+                            String averageHash64,
+                            String differenceHash64) {
+            this.pageIndex = Math.max(0, pageIndex);
+            this.width = Math.max(0, width);
+            this.height = Math.max(0, height);
+            this.source = safe(source).trim();
+            this.sha256Rgb = safe(sha256Rgb).trim().toLowerCase(Locale.ROOT);
+            this.averageHash64 = image_hash_tools.normalizeHex64(averageHash64);
+            this.differenceHash64 = image_hash_tools.normalizeHex64(differenceHash64);
+        }
     }
 
     private static final class PageTextRec {
@@ -129,7 +161,7 @@ public final class version_ocr_companion_service {
 
         Path companionPath = companionPath(tu, mu, du, pu, vu);
         CompanionRec existing = readCompanion(companionPath);
-        if (isFresh(existing, version, sourceBytes, sourceMtimeMs)) {
+        if (isFresh(existing, version, sourcePath, sourceBytes, sourceMtimeMs)) {
             return existing;
         }
 
@@ -137,7 +169,7 @@ public final class version_ocr_companion_service {
         Object lock = perVersionLocks.computeIfAbsent(lockKey, k -> new Object());
         synchronized (lock) {
             CompanionRec again = readCompanion(companionPath);
-            if (isFresh(again, version, sourceBytes, sourceMtimeMs)) {
+            if (isFresh(again, version, sourcePath, sourceBytes, sourceMtimeMs)) {
                 return again;
             }
             CompanionRec generated = generateCompanion(companionPath, sourcePath, version, sourceBytes, sourceMtimeMs);
@@ -201,6 +233,25 @@ public final class version_ocr_companion_service {
             } else {
                 rec.pageCount = 0;
             }
+            Element imageHashesEl = firstChild(root, "image_hashes");
+            if (imageHashesEl != null) {
+                var nodes = imageHashesEl.getElementsByTagName("image");
+                int count = nodes == null ? 0 : nodes.getLength();
+                for (int i = 0; i < count; i++) {
+                    if (!(nodes.item(i) instanceof Element e)) continue;
+                    ImageHashRec hash = new ImageHashRec();
+                    hash.pageIndex = intOrDefault(e.getAttribute("page_index"), 0);
+                    hash.width = intOrDefault(e.getAttribute("width"), 0);
+                    hash.height = intOrDefault(e.getAttribute("height"), 0);
+                    hash.source = safe(e.getAttribute("source")).trim();
+                    hash.sha256Rgb = safe(e.getAttribute("sha256_rgb")).trim().toLowerCase(Locale.ROOT);
+                    hash.averageHash64 = image_hash_tools.normalizeHex64(e.getAttribute("ahash64"));
+                    hash.differenceHash64 = image_hash_tools.normalizeHex64(e.getAttribute("dhash64"));
+                    if (!hash.sha256Rgb.isBlank() || !hash.averageHash64.isBlank() || !hash.differenceHash64.isBlank()) {
+                        rec.imageHashes.add(hash);
+                    }
+                }
+            }
             return rec;
         } catch (Exception ignored) {
             return null;
@@ -219,6 +270,7 @@ public final class version_ocr_companion_service {
         String versionUuid = safe(version == null ? "" : version.uuid).trim();
 
         ArrayList<PageTextRec> pages = new ArrayList<PageTextRec>();
+        ArrayList<ImageHashRec> imageHashes = new ArrayList<ImageHashRec>();
         String engine = "";
         boolean usedTesseract = false;
         String fullText = "";
@@ -226,6 +278,7 @@ public final class version_ocr_companion_service {
         if ("pdf".equals(ext) || mime.contains("pdf")) {
             PdfExtraction rec = extractPdfPageTextAndOcr(sourcePath);
             pages.addAll(rec.pages);
+            imageHashes.addAll(rec.imageHashes);
             engine = rec.engine;
             usedTesseract = rec.usedTesseract;
             fullText = rec.fullText;
@@ -235,6 +288,8 @@ public final class version_ocr_companion_service {
             }
             String text = runTesseractSerialized(sourcePath);
             pages.add(new PageTextRec(0, "tesseract", text));
+            ImageHashRec hash = buildImageHashRec(0, "source_image", ImageIO.read(sourcePath.toFile()));
+            if (hash != null) imageHashes.add(hash);
             fullText = text;
             engine = "tesseract";
             usedTesseract = true;
@@ -242,6 +297,7 @@ public final class version_ocr_companion_service {
             DocumentTextExtraction rec = extractStructuredDocumentText(sourcePath);
             fullText = safe(rec == null ? "" : rec.text);
             pages.add(new PageTextRec(0, safe(rec == null ? "document_assembler" : rec.engine), fullText));
+            if (rec != null) imageHashes.addAll(rec.imageHashes);
             engine = safe(rec == null ? "document_assembler" : rec.engine);
             usedTesseract = false;
         } else if (isLikelyTextExtension(ext) || mime.startsWith("text/")) {
@@ -267,6 +323,7 @@ public final class version_ocr_companion_service {
                 sourceBytes,
                 sourceMtimeMs,
                 pages,
+                imageHashes,
                 fullText
         );
 
@@ -282,6 +339,7 @@ public final class version_ocr_companion_service {
         out.sourceChecksum = sourceChecksum;
         out.sourceBytes = sourceBytes;
         out.sourceMtimeMs = sourceMtimeMs;
+        out.imageHashes.addAll(imageHashes);
         return out;
     }
 
@@ -291,13 +349,32 @@ public final class version_ocr_companion_service {
         byte[] bytes = Files.readAllBytes(sourcePath);
         String extOrName = sourcePath.getFileName() == null ? "" : sourcePath.getFileName().toString();
         document_assembler.PreviewResult preview = new document_assembler().preview(bytes, extOrName, Map.of());
-        out.engine = "document_assembler";
+        out.engine = "document_assembler+image_preview";
         out.text = safe(preview == null ? "" : preview.sourceText);
+        try {
+            document_image_preview.PreviewResult rendered = new document_image_preview().render(
+                    bytes,
+                    extOrName,
+                    null,
+                    STRUCTURED_IMAGE_HASH_PAGE_CAP
+            );
+            if (rendered != null && rendered.pages != null) {
+                for (document_image_preview.PageImage page : rendered.pages) {
+                    if (page == null) continue;
+                    BufferedImage img = image_hash_tools.decodePngBase64(page.base64Png);
+                    ImageHashRec hash = buildImageHashRec(page.pageIndex, "preview_renderer", img);
+                    if (hash != null) out.imageHashes.add(hash);
+                }
+            }
+        } catch (Exception ignored) {
+            // Keep OCR companion resilient when preview image rendering fails.
+        }
         return out;
     }
 
     private static final class PdfExtraction {
         final ArrayList<PageTextRec> pages = new ArrayList<PageTextRec>();
+        final ArrayList<ImageHashRec> imageHashes = new ArrayList<ImageHashRec>();
         String engine = "pdfbox";
         boolean usedTesseract = false;
         String fullText = "";
@@ -317,39 +394,53 @@ public final class version_ocr_companion_service {
             PDFRenderer renderer = new PDFRenderer(doc);
 
             for (int pageIndex = 0; pageIndex < limit; pageIndex++) {
-                String pageText = extractPdfPageText(doc, pageIndex);
-                String source = "pdfbox";
+                BufferedImage renderedPage = null;
+                try {
+                    String pageText = extractPdfPageText(doc, pageIndex);
+                    String source = "pdfbox";
+                    renderedPage = renderer.renderImageWithDPI(pageIndex, OCR_PDF_DPI, ImageType.GRAY);
+                    ImageHashRec hash = buildImageHashRec(pageIndex, "pdf_renderer", renderedPage);
+                    if (hash != null) out.imageHashes.add(hash);
 
-                if (safe(pageText).trim().length() < EMBEDDED_TEXT_MIN_CHARS) {
-                    if (!isTesseractAvailable()) {
-                        throw new IllegalStateException("Tesseract is required for OCR and is not available on this server.");
-                    }
-                    BufferedImage img = null;
-                    Path tempPng = null;
-                    try {
-                        img = renderer.renderImageWithDPI(pageIndex, OCR_PDF_DPI, ImageType.GRAY);
-                        tempPng = Files.createTempFile("ocr-page-" + pageIndex + "-", ".png");
-                        ImageIO.write(img, "png", tempPng.toFile());
-                        pageText = runTesseractSerialized(tempPng);
-                        source = "tesseract";
-                        anyOcr = true;
-                    } finally {
-                        if (img != null) img.flush();
-                        if (tempPng != null) {
-                            try {
-                                Files.deleteIfExists(tempPng);
-                            } catch (Exception ignored) {
+                    if (safe(pageText).trim().length() < EMBEDDED_TEXT_MIN_CHARS) {
+                        if (!isTesseractAvailable()) {
+                            throw new IllegalStateException("Tesseract is required for OCR and is not available on this server.");
+                        }
+                        Path tempPng = null;
+                        try {
+                            BufferedImage img = renderedPage;
+                            if (img == null) {
+                                img = renderer.renderImageWithDPI(pageIndex, OCR_PDF_DPI, ImageType.GRAY);
+                            }
+                            tempPng = Files.createTempFile("ocr-page-" + pageIndex + "-", ".png");
+                            ImageIO.write(img, "png", tempPng.toFile());
+                            pageText = runTesseractSerialized(tempPng);
+                            source = "tesseract";
+                            anyOcr = true;
+                        } finally {
+                            if (tempPng != null) {
+                                try {
+                                    Files.deleteIfExists(tempPng);
+                                } catch (Exception ignored) {
+                                }
                             }
                         }
+                    } else {
+                        anyPdfText = true;
                     }
-                } else {
-                    anyPdfText = true;
-                }
 
-                out.pages.add(new PageTextRec(pageIndex, source, pageText));
-                if (!safe(pageText).isBlank()) {
-                    if (full.length() > 0) full.append('\n');
-                    full.append(pageText);
+                    out.pages.add(new PageTextRec(pageIndex, source, pageText));
+                    if (!safe(pageText).isBlank()) {
+                        if (full.length() > 0) full.append('\n');
+                        full.append(pageText);
+                    }
+                } catch (Exception ex) {
+                    if (ex instanceof IllegalStateException) throw ex;
+                    out.pages.add(new PageTextRec(pageIndex, "pdfbox", ""));
+                } finally {
+                    if (renderedPage != null) {
+                        renderedPage.flush();
+                    }
                 }
             }
         }
@@ -391,6 +482,7 @@ public final class version_ocr_companion_service {
                                           long sourceBytes,
                                           long sourceMtimeMs,
                                           List<PageTextRec> pages,
+                                          List<ImageHashRec> imageHashes,
                                           String fullText) throws Exception {
         if (targetPath == null) throw new IllegalArgumentException("OCR companion path is required.");
         StringBuilder sb = new StringBuilder();
@@ -417,6 +509,21 @@ public final class version_ocr_companion_service {
                     .append("</page>\n");
         }
         sb.append("  </pages>\n");
+        sb.append("  <image_hashes count=\"").append(imageHashes == null ? 0 : imageHashes.size()).append("\">\n");
+        List<ImageHashRec> hashes = imageHashes == null ? List.of() : imageHashes;
+        for (ImageHashRec hash : hashes) {
+            if (hash == null) continue;
+            sb.append("    <image")
+                    .append(" page_index=\"").append(Math.max(0, hash.pageIndex)).append("\"")
+                    .append(" width=\"").append(Math.max(0, hash.width)).append("\"")
+                    .append(" height=\"").append(Math.max(0, hash.height)).append("\"")
+                    .append(" source=\"").append(document_workflow_support.xmlText(hash.source)).append("\"")
+                    .append(" sha256_rgb=\"").append(document_workflow_support.xmlText(hash.sha256Rgb)).append("\"")
+                    .append(" ahash64=\"").append(document_workflow_support.xmlText(hash.averageHash64)).append("\"")
+                    .append(" dhash64=\"").append(document_workflow_support.xmlText(hash.differenceHash64)).append("\"")
+                    .append("/>\n");
+        }
+        sb.append("  </image_hashes>\n");
         sb.append("</ocr_companion>\n");
 
         document_workflow_support.writeAtomic(targetPath, sb.toString());
@@ -424,6 +531,7 @@ public final class version_ocr_companion_service {
 
     private boolean isFresh(CompanionRec rec,
                             part_versions.VersionRec version,
+                            Path sourcePath,
                             long sourceBytes,
                             long sourceMtimeMs) {
         if (rec == null) return false;
@@ -439,6 +547,11 @@ public final class version_ocr_companion_service {
         if (sourceMtimeMs > 0L && rec.sourceMtimeMs > 0L && sourceMtimeMs != rec.sourceMtimeMs) return false;
         if (!currentChecksum.isBlank() && !safe(rec.sourceChecksum).isBlank()
                 && !currentChecksum.equalsIgnoreCase(safe(rec.sourceChecksum).trim())) {
+            return false;
+        }
+        String ext = extension(sourcePath);
+        String mime = safe(version == null ? "" : version.mimeType).trim().toLowerCase(Locale.ROOT);
+        if (shouldRequireImageHashes(sourcePath, ext, mime) && (rec.imageHashes == null || rec.imageHashes.isEmpty())) {
             return false;
         }
         return true;
@@ -519,6 +632,50 @@ public final class version_ocr_companion_service {
         if (nodes == null || nodes.getLength() <= 0) return null;
         if (nodes.item(0) instanceof Element e) return e;
         return null;
+    }
+
+    private static ImageHashRec buildImageHashRec(int pageIndex, String source, BufferedImage image) {
+        if (image == null) return null;
+        try {
+            image_hash_tools.HashRec hash = image_hash_tools.compute(image);
+            if (hash == null) return null;
+            if (safe(hash.sha256Rgb).isBlank()
+                    && safe(hash.averageHash64).isBlank()
+                    && safe(hash.differenceHash64).isBlank()) {
+                return null;
+            }
+            return new ImageHashRec(
+                    pageIndex,
+                    hash.width,
+                    hash.height,
+                    source,
+                    hash.sha256Rgb,
+                    hash.averageHash64,
+                    hash.differenceHash64
+            );
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static boolean shouldRequireImageHashes(Path sourcePath, String ext, String mime) {
+        String e = safe(ext).trim().toLowerCase(Locale.ROOT);
+        String m = safe(mime).trim().toLowerCase(Locale.ROOT);
+        if ("pdf".equals(e) || m.contains("pdf")) return true;
+        if (isImageExtension(e) || m.startsWith("image/")) {
+            BufferedImage img = null;
+            try {
+                if (sourcePath != null && Files.isRegularFile(sourcePath)) {
+                    img = ImageIO.read(sourcePath.toFile());
+                }
+            } catch (Exception ignored) {
+                img = null;
+            } finally {
+                if (img != null) img.flush();
+            }
+            return img != null;
+        }
+        return false;
     }
 
     private static boolean isImageExtension(String ext) {

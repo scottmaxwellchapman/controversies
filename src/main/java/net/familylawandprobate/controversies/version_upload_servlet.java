@@ -25,12 +25,18 @@ public final class version_upload_servlet extends HttpServlet {
     private static final String S_TENANT_UUID = "tenant.uuid";
     private static final String S_USER_UUID = users_roles.S_USER_UUID;
     private static final String S_USER_EMAIL = users_roles.S_USER_EMAIL;
+    private static final activity_log LOGS = activity_log.defaultStore();
 
     private final version_upload_service service = version_upload_service.defaultService();
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         String requestId = UUID.randomUUID().toString();
+        String tenantUuid = "";
+        String actor = "";
+        String caseUuid = "";
+        String docUuid = "";
+        String action = "";
         try {
             HttpSession sess = req.getSession(false);
             security.sec_bind(req, resp, null, sess);
@@ -38,16 +44,25 @@ public final class version_upload_servlet extends HttpServlet {
             if (!security.require_permission("documents.access")) return;
 
             sess = req.getSession(false);
-            String tenantUuid = safe(sess == null ? null : (String) sess.getAttribute(S_TENANT_UUID)).trim();
+            tenantUuid = safe(sess == null ? null : (String) sess.getAttribute(S_TENANT_UUID)).trim();
             String userUuid = safe(sess == null ? null : (String) sess.getAttribute(S_USER_UUID)).trim();
             String userEmail = safe(sess == null ? null : (String) sess.getAttribute(S_USER_EMAIL)).trim();
+            actor = !userEmail.isBlank() ? userEmail : userUuid;
             if (tenantUuid.isBlank() || (userUuid.isBlank() && userEmail.isBlank())) {
+                LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+                details.put("request_id", requestId);
+                details.put("reason", "missing_authenticated_context");
+                LOGS.logWarning("document.version_upload.unauthorized", tenantUuid, actor, "", "", details);
                 writeError(resp, 401, "unauthorized", "Authenticated user context is required.", requestId);
                 return;
             }
 
-            String action = safe(req.getParameter("action")).trim().toLowerCase(Locale.ROOT);
+            action = safe(req.getParameter("action")).trim().toLowerCase(Locale.ROOT);
             if (action.isBlank()) action = safe(req.getHeader("X-Upload-Action")).trim().toLowerCase(Locale.ROOT);
+            caseUuid = safe(req.getParameter("case_uuid")).trim();
+            docUuid = safe(req.getParameter("doc_uuid")).trim();
+            if (caseUuid.isBlank()) caseUuid = safe(req.getHeader("X-Case-UUID")).trim();
+            if (docUuid.isBlank()) docUuid = safe(req.getHeader("X-Doc-UUID")).trim();
 
             if ("chunk".equals(action)) {
                 handleChunk(req, resp, tenantUuid, requestId);
@@ -62,13 +77,33 @@ public final class version_upload_servlet extends HttpServlet {
                 writeDiagnostics(req, resp, requestId);
                 return;
             }
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("request_id", requestId);
+            details.put("action", safe(action));
+            details.put("reason", "unknown_action");
+            LOGS.logWarning("document.version_upload.request_rejected", tenantUuid, actor, caseUuid, docUuid, details);
             writeError(resp, 400, "bad_action", "Unknown upload action.", requestId);
         } catch (IllegalArgumentException ex) {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("request_id", requestId);
+            details.put("action", safe(action));
+            details.put("reason", safe(ex.getMessage()));
+            LOGS.logWarning("document.version_upload.request_invalid", tenantUuid, actor, caseUuid, docUuid, details);
             writeError(resp, 400, "bad_request", safe(ex.getMessage()), requestId);
         } catch (IllegalStateException ex) {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("request_id", requestId);
+            details.put("action", safe(action));
+            details.put("reason", safe(ex.getMessage()));
+            LOGS.logWarning("document.version_upload.request_conflict", tenantUuid, actor, caseUuid, docUuid, details);
             writeError(resp, 409, "read_only", safe(ex.getMessage()), requestId);
         } catch (Exception ex) {
             LOG.log(Level.SEVERE, "Version upload failed [" + requestId + "]: " + ex.getMessage(), ex);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("request_id", requestId);
+            details.put("action", safe(action));
+            details.put("reason", safe(ex.getMessage()));
+            LOGS.logError("document.version_upload.request_failed", tenantUuid, actor, caseUuid, docUuid, details);
             writeError(resp, 500, "server_error", safe(ex.getMessage()), requestId);
         }
     }

@@ -8,8 +8,10 @@
 <%@ page import="java.util.LinkedHashMap" %>
 <%@ page import="java.util.List" %>
 <%@ page import="java.util.Locale" %>
+<%@ page import="java.util.Map" %>
 <%@ page import="java.util.stream.Stream" %>
 
+<%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.notification_emails" %>
 <%@ page import="net.familylawandprobate.controversies.password_reset_tokens" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
@@ -138,6 +140,19 @@
       });
     } catch (Exception ignored) {}
   }
+
+  private static void fpAudit(activity_log logs,
+                              String level,
+                              String action,
+                              String tenantUuid,
+                              String userUuid,
+                              Map<String, String> details) {
+    if (logs == null) return;
+    String lvl = fpSafe(level).trim().toLowerCase(Locale.ROOT);
+    if ("error".equals(lvl)) logs.logError(action, tenantUuid, userUuid, "", "", details);
+    else if ("warning".equals(lvl)) logs.logWarning(action, tenantUuid, userUuid, "", "", details);
+    else logs.logVerbose(action, tenantUuid, userUuid, "", "", details);
+  }
 %>
 
 <%
@@ -166,6 +181,7 @@
   notification_emails emailStore = notification_emails.defaultStore();
   users_roles userStore = users_roles.defaultStore();
   password_reset_tokens resetStore = password_reset_tokens.defaultStore();
+  activity_log logs = activity_log.defaultStore();
 
   List<tenants.Tenant> enabledTenants = new ArrayList<tenants.Tenant>();
   List<tenants.Tenant> eligibleTenants = new ArrayList<tenants.Tenant>();
@@ -213,12 +229,16 @@
     if ("request_reset".equalsIgnoreCase(action)) {
       if (eligibleTenants.isEmpty()) {
         error = "Forgot password is unavailable because no tenant has notification email configured.";
+        fpAudit(logs, "warning", "auth.password_reset.request_rejected", reqTenantUuid, "", Map.of("reason", "feature_unavailable"));
       } else if (reqTenantUuid.isBlank()) {
         error = "Please select a tenant.";
+        fpAudit(logs, "warning", "auth.password_reset.request_rejected", reqTenantUuid, "", Map.of("reason", "missing_tenant"));
       } else if (!fpTenantInList(eligibleTenants, reqTenantUuid)) {
         error = "Forgot password is unavailable for the selected tenant.";
+        fpAudit(logs, "warning", "auth.password_reset.request_rejected", reqTenantUuid, "", Map.of("reason", "tenant_not_eligible"));
       } else if (reqEmail.isBlank()) {
         error = "Email is required.";
+        fpAudit(logs, "warning", "auth.password_reset.request_rejected", reqTenantUuid, "", Map.of("reason", "missing_email"));
       } else {
         try {
           String clientIp = fpClientIp(request);
@@ -234,6 +254,11 @@
                     clientIp,
                     Duration.ofMinutes(20)
             );
+            fpAudit(logs, "verbose", "auth.password_reset.requested", reqTenantUuid, fpSafe(user.uuid).trim(), Map.of(
+              "client_ip", fpSafe(clientIp),
+              "delivery_channel", "notification_email",
+              "expires_at", fpSafe(issued.expiresAt)
+            ));
 
             String tenantLabel = tenantLabelByUuid.getOrDefault(reqTenantUuid, "your tenant");
             String subject = "Password reset code for " + tenantLabel;
@@ -269,10 +294,21 @@
               emailStore.enqueue(reqTenantUuid, "forgot_password", mailReq);
             } catch (Exception mailEx) {
               application.log("[forgot_password] unable to enqueue reset email for tenant " + reqTenantUuid, mailEx);
+              fpAudit(logs, "error", "auth.password_reset.delivery_failed", reqTenantUuid, fpSafe(user.uuid).trim(), Map.of(
+                "reason", fpSafe(mailEx.getMessage())
+              ));
             }
+          } else {
+            fpAudit(logs, "warning", "auth.password_reset.request_ignored", reqTenantUuid, "", Map.of(
+              "reason", user == null ? "user_not_found" : "user_disabled",
+              "client_ip", fpSafe(clientIp)
+            ));
           }
         } catch (Exception ex) {
           application.log("[forgot_password] request reset failure", ex);
+          fpAudit(logs, "error", "auth.password_reset.request_failed", reqTenantUuid, "", Map.of(
+            "reason", fpSafe(ex.getMessage())
+          ));
         }
 
         message = "If an active account exists for that tenant and email, a reset code has been queued for delivery.";
@@ -281,20 +317,27 @@
     } else if ("complete_reset".equalsIgnoreCase(action)) {
       if (eligibleTenants.isEmpty()) {
         error = "Forgot password is unavailable because no tenant has notification email configured.";
+        fpAudit(logs, "warning", "auth.password_reset.complete_rejected", rstTenantUuid, "", Map.of("reason", "feature_unavailable"));
       } else if (rstTenantUuid.isBlank()) {
         error = "Please select a tenant.";
+        fpAudit(logs, "warning", "auth.password_reset.complete_rejected", rstTenantUuid, "", Map.of("reason", "missing_tenant"));
       } else if (!fpTenantInList(eligibleTenants, rstTenantUuid)) {
         error = "Forgot password is unavailable for the selected tenant.";
+        fpAudit(logs, "warning", "auth.password_reset.complete_rejected", rstTenantUuid, "", Map.of("reason", "tenant_not_eligible"));
       } else if (resetToken.isBlank()) {
         error = "Reset code is required.";
+        fpAudit(logs, "warning", "auth.password_reset.complete_rejected", rstTenantUuid, "", Map.of("reason", "missing_reset_code"));
       } else if (newPassword.isBlank()) {
         error = "New password is required.";
+        fpAudit(logs, "warning", "auth.password_reset.complete_rejected", rstTenantUuid, "", Map.of("reason", "missing_new_password"));
       } else if (!newPassword.equals(confirmPassword)) {
         error = "Password confirmation does not match.";
+        fpAudit(logs, "warning", "auth.password_reset.complete_rejected", rstTenantUuid, "", Map.of("reason", "confirm_mismatch"));
       } else {
         List<String> policyIssues = settingsStore.validatePasswordAgainstPolicy(rstTenantUuid, newPassword.toCharArray());
         if (policyIssues != null && !policyIssues.isEmpty()) {
           error = "Password does not meet tenant policy: " + String.join(" ", policyIssues);
+          fpAudit(logs, "warning", "auth.password_reset.complete_rejected", rstTenantUuid, "", Map.of("reason", "password_policy_failed"));
         }
       }
 
@@ -307,6 +350,7 @@
           );
           if (!consumed.ok) {
             error = "Reset code is invalid, expired, or already used.";
+            fpAudit(logs, "warning", "auth.password_reset.consume_failed", rstTenantUuid, "", Map.of("reason", "invalid_or_expired_token"));
           } else {
             boolean updated = false;
             users_roles.UserRec target = null;
@@ -315,6 +359,7 @@
 
             if (target == null || !target.enabled) {
               error = "Unable to reset this account. Request a new reset code.";
+              fpAudit(logs, "warning", "auth.password_reset.complete_failed", rstTenantUuid, fpSafe(consumed.userUuid).trim(), Map.of("reason", "target_user_missing_or_disabled"));
             } else {
               try {
                 updated = userStore.updateUserPassword(rstTenantUuid, target.uuid, newPassword.toCharArray());
@@ -323,15 +368,18 @@
                 String msg = fpSafe(ex.getMessage()).trim();
                 if (!msg.isBlank()) error = msg;
                 application.log("[forgot_password] unable to update password for tenant " + rstTenantUuid, ex);
+                fpAudit(logs, "error", "auth.password_reset.complete_failed", rstTenantUuid, fpSafe(target.uuid).trim(), Map.of("reason", fpSafe(ex.getMessage())));
               }
 
               if (!updated) {
                 if (error == null || error.isBlank()) {
                   error = "Unable to update password. Request a new reset code and try again.";
                 }
+                fpAudit(logs, "warning", "auth.password_reset.complete_failed", rstTenantUuid, fpSafe(target.uuid).trim(), Map.of("reason", "password_not_updated"));
               } else {
                 fpClearAllUserBindings(rstTenantUuid, target.uuid);
                 message = "Password reset complete. You can sign in now.";
+                fpAudit(logs, "verbose", "auth.password_reset.completed", rstTenantUuid, fpSafe(target.uuid).trim(), Map.of("session_bindings_cleared", "true"));
                 resetToken = "";
                 newPassword = "";
                 confirmPassword = "";
@@ -341,6 +389,7 @@
         } catch (Exception ex) {
           error = "Unable to process reset code.";
           application.log("[forgot_password] complete reset failure", ex);
+          fpAudit(logs, "error", "auth.password_reset.complete_failed", rstTenantUuid, "", Map.of("reason", fpSafe(ex.getMessage())));
         }
       }
     }

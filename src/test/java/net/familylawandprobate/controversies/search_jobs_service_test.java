@@ -382,6 +382,91 @@ public class search_jobs_service_test {
     }
 
     @Test
+    void document_search_matches_tracked_image_hash_tokens() throws Exception {
+        String tenant = "tenant-search-hash-" + UUID.randomUUID();
+        String requestedBy = "search-hash-" + UUID.randomUUID() + "@test.local";
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+        matters.MatterRec matterRec = matters.defaultStore().create(tenant, "Hash Search Matter", "", "", "", "", "");
+        String matter = matterRec.uuid;
+
+        documents.DocumentRec doc = documents.defaultStore().create(
+                tenant,
+                matter,
+                "Hash Search Doc",
+                "pleading",
+                "motion",
+                "draft",
+                "Tester",
+                "work_product",
+                "",
+                "",
+                ""
+        );
+        document_parts.PartRec part = document_parts.defaultStore().create(
+                tenant,
+                matter,
+                doc.uuid,
+                "Main Part",
+                "lead",
+                "1",
+                "",
+                "Tester",
+                ""
+        );
+
+        Path partFolder = document_parts.defaultStore().partFolder(tenant, matter, doc.uuid, part.uuid);
+        Files.createDirectories(partFolder.resolve("version_files"));
+        Path versionPath = partFolder.resolve("version_files").resolve("search-hash.docx");
+        Files.write(versionPath, minimalDocx("Nebula Hash Phrase"), java.nio.file.StandardOpenOption.CREATE_NEW);
+
+        part_versions.VersionRec version = part_versions.defaultStore().create(
+                tenant,
+                matter,
+                doc.uuid,
+                part.uuid,
+                "DOCX Hash Candidate",
+                "uploaded",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "",
+                String.valueOf(Files.size(versionPath)),
+                versionPath.toUri().toString(),
+                "Tester",
+                "hash searchable",
+                true
+        );
+
+        version_ocr_companion_service.CompanionRec companion = version_ocr_companion_service.defaultService().ensureCompanion(
+                tenant,
+                matter,
+                doc.uuid,
+                part.uuid,
+                version
+        );
+        assertNotNull(companion);
+        assertNotNull(companion.imageHashes);
+        assertFalse(companion.imageHashes.isEmpty());
+        String dhash = image_hash_tools.normalizeHex64(companion.imageHashes.get(0).differenceHash64);
+        assertFalse(dhash.isBlank());
+
+        search_jobs_service.SearchJobRequest req = new search_jobs_service.SearchJobRequest();
+        req.tenantUuid = tenant;
+        req.requestedBy = requestedBy;
+        req.searchType = "document_part_versions";
+        req.query = "image_dhash64:" + dhash;
+        req.operator = "contains";
+        req.caseSensitive = false;
+        req.includeMetadata = true;
+        req.includeOcr = true;
+        req.maxResults = 50;
+
+        String jobId = search_jobs_service.defaultService().enqueue(req);
+        search_jobs_service.SearchJobSnapshot done = waitForJob(tenant, requestedBy, jobId, 30_000L);
+        assertNotNull(done);
+        assertEquals("completed", done.status);
+        assertFalse(done.results.isEmpty());
+    }
+
+    @Test
     void case_conflicts_search_type_scans_versions_and_linked_contacts() throws Exception {
         String tenant = "tenant-search-conflicts-" + UUID.randomUUID();
         String requestedBy = "search-conflicts-" + UUID.randomUUID() + "@test.local";

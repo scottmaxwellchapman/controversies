@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /
+
+# Do not index any environment.
+# Search bots should rely on this plus X-Robots-Tag / meta noindex directives.

@@ -583,19 +583,49 @@
     gap: 10px;
     margin-top: 12px;
   }
+  .omni-actions {
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .omni-inline-form {
+    display: inline;
+  }
+  .omni-stat-card {
+    margin: 0;
+    padding: 12px;
+  }
+  .omni-stat-value {
+    font-size: 1.3rem;
+    font-weight: 700;
+  }
+  .omni-subheading {
+    margin: 12px 0 8px 0;
+  }
+  .omni-check-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .omni-message-body {
+    max-width: 460px;
+  }
+  .omni-message-body pre {
+    white-space: pre-wrap;
+    margin: 0;
+  }
 </style>
 
 <section class="card">
-  <h1 style="margin:0;">Omnichannel Threads</h1>
-  <div class="meta" style="margin-top:6px;">
+  <h1 class="u-m-0">Omnichannel Threads</h1>
+  <div class="meta u-mt-6">
     Unified thread workflow for Flowroute SMS/MMS, IMAP/SMTP email, Microsoft Graph user/shared mailbox email,
     and internal user-to-user messages.
     Matter-linked threads automatically produce versioned PDF reports with embedded multimedia.
   </div>
-  <div class="actions" style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
+  <div class="actions omni-actions">
     <a class="btn btn-ghost" href="<%= ctx %>/omnichannel_manifest.jsp<%= selectedTicket != null ? "?ticket_uuid=" + enc(safe(selectedTicket.uuid)) : "" %>">Open Embedded Content Manifest</a>
     <% if (selectedTicket != null && !safe(selectedTicket.matterUuid).trim().isBlank()) { %>
-      <form method="post" action="<%= ctx %>/omnichannel.jsp" style="display:inline;">
+      <form method="post" action="<%= ctx %>/omnichannel.jsp" class="omni-inline-form">
         <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
         <input type="hidden" name="action" value="regenerate_report" />
         <input type="hidden" name="ticket_uuid" value="<%= esc(safe(selectedTicket.uuid)) %>" />
@@ -604,14 +634,14 @@
     <% } %>
   </div>
 
-  <% if (message != null) { %><div class="alert alert-ok" style="margin-top:12px;"><%= esc(message) %></div><% } %>
-  <% if (error != null) { %><div class="alert alert-error" style="margin-top:12px;"><%= esc(error) %></div><% } %>
+  <% if (message != null) { %><div class="alert alert-ok u-mt-12"><%= esc(message) %></div><% } %>
+  <% if (error != null) { %><div class="alert alert-error u-mt-12"><%= esc(error) %></div><% } %>
 </section>
 
-<details class="card omni-pane" style="margin-top:12px;" open>
+<details class="card omni-pane section-gap-12" open>
   <summary>Filters and Metrics</summary>
   <div class="omni-pane-body">
-  <form class="form" method="get" action="<%= ctx %>/omnichannel.jsp">
+  <form class="form" method="get" action="<%= ctx %>/omnichannel.jsp" id="omniFilterForm">
     <div class="grid grid-3">
       <label>
         <span>Search</span>
@@ -671,18 +701,18 @@
   </form>
 
   <div class="omni-stats">
-    <article class="card" style="margin:0; padding:12px;"><div class="meta">Total</div><div style="font-size:1.3rem; font-weight:700;"><%= totalCount %></div></article>
-    <article class="card" style="margin:0; padding:12px;"><div class="meta">Active</div><div style="font-size:1.3rem; font-weight:700;"><%= activeCount %></div></article>
-    <article class="card" style="margin:0; padding:12px;"><div class="meta">Archived</div><div style="font-size:1.3rem; font-weight:700;"><%= archivedCount %></div></article>
-    <article class="card" style="margin:0; padding:12px;"><div class="meta">Flowroute</div><div style="font-size:1.3rem; font-weight:700;"><%= flowrouteCount %></div></article>
-    <article class="card" style="margin:0; padding:12px;"><div class="meta">Email</div><div style="font-size:1.3rem; font-weight:700;"><%= emailCount %></div></article>
-    <article class="card" style="margin:0; padding:12px;"><div class="meta">Internal Messages</div><div style="font-size:1.3rem; font-weight:700;"><%= internalMessagesCount %></div></article>
-    <article class="card" style="margin:0; padding:12px;"><div class="meta">Filtered</div><div style="font-size:1.3rem; font-weight:700;"><%= filteredTickets.size() %></div></article>
+    <article class="card omni-stat-card"><div class="meta">Total</div><div class="omni-stat-value"><%= totalCount %></div></article>
+    <article class="card omni-stat-card"><div class="meta">Active</div><div class="omni-stat-value"><%= activeCount %></div></article>
+    <article class="card omni-stat-card"><div class="meta">Archived</div><div class="omni-stat-value"><%= archivedCount %></div></article>
+    <article class="card omni-stat-card"><div class="meta">Flowroute</div><div class="omni-stat-value"><%= flowrouteCount %></div></article>
+    <article class="card omni-stat-card"><div class="meta">Email</div><div class="omni-stat-value"><%= emailCount %></div></article>
+    <article class="card omni-stat-card"><div class="meta">Internal Messages</div><div class="omni-stat-value"><%= internalMessagesCount %></div></article>
+    <article class="card omni-stat-card"><div class="meta">Filtered</div><div class="omni-stat-value"><%= filteredTickets.size() %></div></article>
   </div>
   </div>
 </details>
 
-<details class="card omni-pane" style="margin-top:12px;">
+<details class="card omni-pane section-gap-12">
   <summary>Create Thread</summary>
   <div class="omni-pane-body">
   <form method="post" class="form" action="<%= ctx %>/omnichannel.jsp">
@@ -800,7 +830,7 @@
       </label>
     </div>
 
-    <h4 style="margin:12px 0 8px 0;">Initial Message (Optional)</h4>
+    <h4 class="omni-subheading">Initial Message (Optional)</h4>
     <div class="grid grid-3">
       <label>
         <span>Direction</span>
@@ -823,21 +853,21 @@
       <span>Message Body</span>
       <textarea name="initial_body" rows="3" placeholder="Paste first message summary/content"></textarea>
     </label>
-    <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+    <label class="omni-check-row u-mt-8">
       <input type="checkbox" name="initial_mms" value="1" />
       <span>Initial message includes MMS/multimedia context</span>
     </label>
 
-    <div class="meta" style="margin-top:10px;">
+    <div class="meta u-mt-10">
       Future development plan: plug inbound/outbound transport workers into Flowroute webhook polling, IMAP/SMTP mailbox sync, and Graph user/shared mailbox graph subscriptions while preserving this thread/report schema.
     </div>
 
-    <button class="btn" type="submit" style="margin-top:10px;">Create Thread</button>
+    <button class="btn u-mt-10" type="submit">Create Thread</button>
   </form>
   </div>
 </details>
 
-<details class="card omni-pane" style="margin-top:12px;" open>
+<details class="card omni-pane section-gap-12" open>
   <summary>Threads <span class="omni-pane-count"><%= filteredTickets.size() %> shown</span></summary>
   <div class="omni-pane-body">
   <div class="table-wrap">
@@ -876,14 +906,14 @@
             <a class="btn btn-ghost" href="<%= ctx %>/omnichannel.jsp?show=<%= enc(show) %>&q=<%= enc(q) %>&matter_filter=<%= enc(matterFilter) %>&channel_filter=<%= enc(channelFilter) %>&ticket_uuid=<%= enc(tId) %>">Open</a>
             <a class="btn btn-ghost" href="<%= ctx %>/omnichannel_manifest.jsp?ticket_uuid=<%= enc(tId) %>">Manifest</a>
             <% if (!t.archived) { %>
-              <form method="post" action="<%= ctx %>/omnichannel.jsp" style="display:inline;">
+              <form method="post" action="<%= ctx %>/omnichannel.jsp" class="omni-inline-form">
                 <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
                 <input type="hidden" name="action" value="archive_ticket" />
                 <input type="hidden" name="ticket_uuid" value="<%= esc(tId) %>" />
                 <button class="btn btn-ghost" type="submit">Archive</button>
               </form>
             <% } else { %>
-              <form method="post" action="<%= ctx %>/omnichannel.jsp" style="display:inline;">
+              <form method="post" action="<%= ctx %>/omnichannel.jsp" class="omni-inline-form">
                 <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
                 <input type="hidden" name="action" value="restore_ticket" />
                 <input type="hidden" name="ticket_uuid" value="<%= esc(tId) %>" />
@@ -901,10 +931,10 @@
 </details>
 
 <% if (selectedTicket != null) { %>
-<details class="card omni-pane" style="margin-top:12px;" open>
+<details class="card omni-pane section-gap-12" open>
   <summary>Selected Thread Detail</summary>
   <div class="omni-pane-body">
-  <div class="meta" style="margin-bottom:10px;">
+  <div class="meta u-mb-12">
     Channel: <code><%= esc(safe(selectedTicket.channel)) %></code>
     | Status: <code><%= esc(safe(selectedTicket.status)) %></code>
     | Updated: <code><%= esc(safe(selectedTicket.updatedAt)) %></code>
@@ -1002,7 +1032,7 @@
       <label><span>Assignment Note</span><input type="text" name="assignment_reason" placeholder="Reason for reassignment" /></label>
     </div>
 
-    <label style="display:flex; gap:8px; align-items:center;">
+    <label class="omni-check-row">
       <input type="checkbox" name="mms_enabled" value="1" <%= selectedTicket.mmsEnabled ? "checked" : "" %> />
       <span>Thread has MMS/multimedia context</span>
     </label>
@@ -1012,7 +1042,7 @@
   </div>
 </details>
 
-<details class="card omni-pane" style="margin-top:12px;">
+<details class="card omni-pane section-gap-12">
   <summary>Add External Message</summary>
   <div class="omni-pane-body">
   <form method="post" class="form" action="<%= ctx %>/omnichannel.jsp">
@@ -1048,7 +1078,7 @@
       <textarea name="body" rows="4" required placeholder="Message content"></textarea>
     </label>
 
-    <label style="display:flex; gap:8px; align-items:center;">
+    <label class="omni-check-row">
       <input type="checkbox" name="mms" value="1" />
       <span>This message includes MMS/multimedia context</span>
     </label>
@@ -1058,10 +1088,10 @@
   </div>
 </details>
 
-<details class="card omni-pane" style="margin-top:12px;">
+<details class="card omni-pane section-gap-12">
   <summary>Add Internal Note</summary>
   <div class="omni-pane-body">
-  <div class="meta" style="margin-bottom:8px;">
+  <div class="meta u-mb-8">
     Internal notes are visible to authenticated users in this app but are excluded from embedded matter PDF reports.
   </div>
   <form method="post" class="form" action="<%= ctx %>/omnichannel.jsp">
@@ -1077,7 +1107,7 @@
   </div>
 </details>
 
-<details class="card omni-pane" style="margin-top:12px;">
+<details class="card omni-pane section-gap-12">
   <summary>Add Attachment / MMS Multimedia</summary>
   <div class="omni-pane-body">
   <form method="post" class="form js-attachment-form" action="<%= ctx %>/omnichannel.jsp" data-max-bytes="20971520">
@@ -1102,7 +1132,7 @@
         <span>File</span>
         <input type="file" name="attachment_file" required />
       </label>
-      <label style="display:flex; align-items:center; gap:8px;">
+      <label class="omni-check-row">
         <input type="checkbox" name="inline_media" value="1" checked />
         <span>Inline media (embed as multimedia)</span>
       </label>
@@ -1110,7 +1140,7 @@
 
     <input type="hidden" name="attachment_name" value="" />
     <input type="hidden" name="attachment_mime" value="" />
-    <textarea name="attachment_base64" style="display:none;"></textarea>
+    <textarea name="attachment_base64" class="u-hidden"></textarea>
 
     <div class="meta">Attachments are base64-encoded client-side, stored with thread history, and embedded into linked matter PDF reports.</div>
     <button class="btn" type="submit">Upload Attachment</button>
@@ -1118,7 +1148,7 @@
   </div>
 </details>
 
-<details class="card omni-pane" style="margin-top:12px;">
+<details class="card omni-pane section-gap-12">
   <summary>Assignment History <span class="omni-pane-count"><%= selectedAssignments.size() %> records</span></summary>
   <div class="omni-pane-body">
   <div class="table-wrap">
@@ -1157,7 +1187,7 @@
   </div>
 </details>
 
-<details class="card omni-pane" style="margin-top:12px;" open>
+<details class="card omni-pane section-gap-12" open>
   <summary>Message Timeline <span class="omni-pane-count"><%= selectedMessages.size() %> messages</span></summary>
   <div class="omni-pane-body">
   <div class="table-wrap">
@@ -1194,7 +1224,7 @@
             <div>Email Message-ID: <%= esc(safe(m.emailMessageId)) %></div>
             <div>In-Reply-To: <%= esc(safe(m.emailInReplyTo)) %></div>
           </td>
-          <td style="max-width:460px;"><pre style="white-space:pre-wrap; margin:0;"><%= esc(safe(m.body)) %></pre></td>
+          <td class="omni-message-body"><pre><%= esc(safe(m.body)) %></pre></td>
         </tr>
       <%   }
          } %>
@@ -1204,7 +1234,7 @@
   </div>
 </details>
 
-<details class="card omni-pane" style="margin-top:12px;">
+<details class="card omni-pane section-gap-12">
   <summary>Attachment / Multimedia Ledger <span class="omni-pane-count"><%= selectedAttachments.size() %> files</span></summary>
   <div class="omni-pane-body">
   <div class="table-wrap">
@@ -1259,6 +1289,55 @@
 
 <script>
   (function () {
+    function uiScope() {
+      var cfg = document.getElementById("uiThemeConfig");
+      if (!cfg) return "global";
+      var value = String(cfg.getAttribute("data-scope") || cfg.getAttribute("data-tenant") || "").trim();
+      return value || "global";
+    }
+
+    function wireFilterPersistence() {
+      var form = document.getElementById("omniFilterForm");
+      if (!form || !window.localStorage) return;
+
+      var key = "omnichannel.filters." + uiScope();
+      var fields = ["q", "show", "matter_filter", "channel_filter", "ticket_uuid"];
+
+      var params = new URLSearchParams(window.location.search || "");
+      var hasExplicit = fields.some(function (name) {
+        return params.has(name);
+      });
+
+      if (!hasExplicit) {
+        try {
+          var raw = localStorage.getItem(key);
+          if (raw) {
+            var saved = JSON.parse(raw);
+            fields.forEach(function (name) {
+              var input = form.elements.namedItem(name);
+              if (!input || !saved || saved[name] == null) return;
+              input.value = String(saved[name]);
+            });
+          }
+        } catch (err) {
+          // Ignore invalid/blocked local storage.
+        }
+      }
+
+      form.addEventListener("submit", function () {
+        try {
+          var payload = {};
+          fields.forEach(function (name) {
+            var input = form.elements.namedItem(name);
+            payload[name] = input ? String(input.value || "") : "";
+          });
+          localStorage.setItem(key, JSON.stringify(payload));
+        } catch (err) {
+          // Ignore local storage failures.
+        }
+      });
+    }
+
     function wireAttachmentForms() {
       var forms = document.querySelectorAll("form.js-attachment-form");
       forms.forEach(function (form) {
@@ -1309,6 +1388,7 @@
       });
     }
 
+    wireFilterPersistence();
     wireAttachmentForms();
   })();
 </script>

@@ -300,6 +300,18 @@ public final class two_factor_auth {
         String cid = safeFileToken(challengeId);
         String code = digitsOnly(submittedCode);
         if (tu.isBlank() || uu.isBlank() || cid.isBlank() || code.length() != 6) {
+            logs.logWarning(
+                    "two_factor.verify_failed",
+                    tu,
+                    uu,
+                    "",
+                    "",
+                    Map.of(
+                            "challenge_id", cid,
+                            "reason", "invalid_input",
+                            "client_ip", safe(clientIp).trim()
+                    )
+            );
             return new VerifyResult(false, false, 0, "Verification code is invalid.");
         }
 
@@ -308,12 +320,48 @@ public final class two_factor_auth {
         try {
             ChallengeRec rec = readChallengeLocked(tu, cid);
             if (rec == null) {
+                logs.logWarning(
+                        "two_factor.verify_failed",
+                        tu,
+                        uu,
+                        "",
+                        "",
+                        Map.of(
+                                "challenge_id", cid,
+                                "reason", "challenge_not_found",
+                                "client_ip", safe(clientIp).trim()
+                        )
+                );
                 return new VerifyResult(false, false, 0, "Verification challenge was not found.");
             }
             if (!uu.equals(rec.userUuid)) {
+                logs.logWarning(
+                        "two_factor.verify_failed",
+                        tu,
+                        uu,
+                        "",
+                        "",
+                        Map.of(
+                                "challenge_id", cid,
+                                "reason", "challenge_user_mismatch",
+                                "client_ip", safe(clientIp).trim()
+                        )
+                );
                 return new VerifyResult(false, false, 0, "Verification challenge does not match the authenticated user.");
             }
             if (!rec.ip.isBlank() && !safe(clientIp).trim().isBlank() && !rec.ip.equals(safe(clientIp).trim())) {
+                logs.logWarning(
+                        "two_factor.verify_failed",
+                        tu,
+                        uu,
+                        "",
+                        "",
+                        Map.of(
+                                "challenge_id", cid,
+                                "reason", "client_context_changed",
+                                "client_ip", safe(clientIp).trim()
+                        )
+                );
                 return new VerifyResult(false, false, 0, "Client verification context changed. Start over and try again.");
             }
 
@@ -321,11 +369,35 @@ public final class two_factor_auth {
             Instant expiry = parseInstant(rec.expiresAt);
             if (expiry == null || now.isAfter(expiry)) {
                 deleteChallengeLocked(tu, cid);
+                logs.logWarning(
+                        "two_factor.verify_failed",
+                        tu,
+                        uu,
+                        "",
+                        "",
+                        Map.of(
+                                "challenge_id", cid,
+                                "reason", "expired",
+                                "client_ip", safe(clientIp).trim()
+                        )
+                );
                 return new VerifyResult(false, true, 0, "Verification code expired. Request a new code.");
             }
 
             if (rec.attempts >= rec.maxAttempts) {
                 deleteChallengeLocked(tu, cid);
+                logs.logWarning(
+                        "two_factor.verify_failed",
+                        tu,
+                        uu,
+                        "",
+                        "",
+                        Map.of(
+                                "challenge_id", cid,
+                                "reason", "max_attempts_reached",
+                                "client_ip", safe(clientIp).trim()
+                        )
+                );
                 return new VerifyResult(false, false, 0, "Too many verification attempts. Request a new code.");
             }
 
@@ -338,6 +410,18 @@ public final class two_factor_auth {
 
             if (ok) {
                 deleteChallengeLocked(tu, cid);
+                logs.logVerbose(
+                        "two_factor.verify_success",
+                        tu,
+                        uu,
+                        "",
+                        "",
+                        Map.of(
+                                "challenge_id", cid,
+                                "engine", safe(rec.engine),
+                                "client_ip", safe(clientIp).trim()
+                        )
+                );
                 return new VerifyResult(true, false, rec.maxAttempts - rec.attempts, "");
             }
 
@@ -345,6 +429,18 @@ public final class two_factor_auth {
             int remaining = Math.max(0, rec.maxAttempts - attempts);
             if (remaining <= 0) {
                 deleteChallengeLocked(tu, cid);
+                logs.logWarning(
+                        "two_factor.verify_failed",
+                        tu,
+                        uu,
+                        "",
+                        "",
+                        Map.of(
+                                "challenge_id", cid,
+                                "reason", "max_attempts_reached",
+                                "client_ip", safe(clientIp).trim()
+                        )
+                );
                 return new VerifyResult(false, false, 0, "Too many verification attempts. Request a new code.");
             }
 
@@ -362,6 +458,12 @@ public final class two_factor_auth {
                     attempts,
                     rec.maxAttempts
             ));
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("challenge_id", cid);
+            details.put("reason", "incorrect_code");
+            details.put("remaining_attempts", String.valueOf(remaining));
+            details.put("client_ip", safe(clientIp).trim());
+            logs.logWarning("two_factor.verify_failed", tu, uu, "", "", details);
             return new VerifyResult(false, false, remaining, "Verification code is incorrect.");
         } finally {
             lock.writeLock().unlock();

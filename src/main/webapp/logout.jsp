@@ -6,6 +6,7 @@
 <%@ page import="jakarta.servlet.http.Cookie" %>
 <%@ page import="jakarta.servlet.http.HttpSession" %>
 
+<%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 
 <%!
@@ -91,6 +92,14 @@
 
     // read user identity BEFORE clearing session
     String userUuid = safe((String) session.getAttribute(users_roles.S_USER_UUID)).trim();
+
+    try {
+        java.util.LinkedHashMap<String, String> details = new java.util.LinkedHashMap<String, String>();
+        details.put("session_id", safe(sessionId));
+        details.put("tenant_label", safe(tenantLabel));
+        details.put("has_user", userUuid.isBlank() ? "false" : "true");
+        activity_log.defaultStore().logVerbose("auth.logout", tenantUuid, userUuid, "", "", details);
+    } catch (Exception ignored) {}
 
     // Remove THIS SESSION's tenant binding file (recommended)
     if (!tenantUuid.isEmpty()) {

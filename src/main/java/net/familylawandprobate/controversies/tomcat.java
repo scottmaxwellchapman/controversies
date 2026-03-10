@@ -224,7 +224,7 @@ public class tomcat {
     }
 
     private static void configureJspCompilerLevel(Context ctx) {
-        String vm = Integer.toString(Runtime.version().feature());
+        String vm = resolveJspCompilerLevel();
         org.apache.catalina.Container jspServlet = ctx.findChild("jsp");
         if (jspServlet instanceof Wrapper) {
             Wrapper jsp = (Wrapper) jspServlet;
@@ -235,6 +235,14 @@ public class tomcat {
         // Fallback for containers where the JSP servlet is initialized later.
         ctx.addParameter("compilerSourceVM", vm);
         ctx.addParameter("compilerTargetVM", vm);
+    }
+
+    private static String resolveJspCompilerLevel() {
+        int runtimeFeature = Runtime.version().feature();
+        // Tomcat Jasper + ECJ can lag the latest JDK release. Cap to a stable level
+        // that supports modern language features used in JSP scriptlets.
+        int capped = Math.min(runtimeFeature, 17);
+        return Integer.toString(capped);
     }
 
     private static void registerApiServlet(Context ctx) {

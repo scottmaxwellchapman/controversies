@@ -24,6 +24,7 @@ import java.util.logging.Logger;
 public final class search_jobs_service {
 
     private static final Logger LOG = Logger.getLogger(search_jobs_service.class.getName());
+    private static final activity_log ACTIVITY_LOGS = activity_log.defaultStore();
     private static final int SEARCH_WORKERS = 2;
     private static final int MAX_RESULTS_PER_JOB = 500;
     private static final int DEFAULT_RESULTS_PER_JOB = 200;
@@ -248,6 +249,22 @@ public final class search_jobs_service {
         jobsById.put(record.jobId, record);
         jobOrder.addLast(record.jobId);
         pruneJobs();
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("job_id", safe(record.jobId));
+        details.put("search_type", safe(normalized.searchType));
+        details.put("criteria_count", String.valueOf(normalized.criteria == null ? 0 : normalized.criteria.size()));
+        details.put("logic", safe(normalized.logic));
+        details.put("max_results", String.valueOf(normalized.maxResults));
+        details.put("include_metadata", normalized.includeMetadata ? "true" : "false");
+        details.put("include_ocr", normalized.includeOcr ? "true" : "false");
+        ACTIVITY_LOGS.logVerbose(
+                "search.job.queued",
+                safe(normalized.tenantUuid).trim(),
+                safe(normalized.requestedBy).trim(),
+                "",
+                "",
+                details
+        );
 
         workers.submit(() -> runJob(record, handler));
         return record.jobId;
@@ -282,6 +299,20 @@ public final class search_jobs_service {
         record.status = "running";
         record.startedAt = Instant.now().toString();
         record.message = "Running search...";
+        if (record.request != null) {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("job_id", safe(record.jobId));
+            details.put("search_type", safe(record.request.searchType));
+            details.put("started_at", safe(record.startedAt));
+            ACTIVITY_LOGS.logVerbose(
+                    "search.job.started",
+                    safe(record.request.tenantUuid).trim(),
+                    safe(record.request.requestedBy).trim(),
+                    "",
+                    "",
+                    details
+            );
+        }
 
         SearchContext ctx = new SearchContext(record.request, record, ocrService);
 
@@ -297,12 +328,45 @@ public final class search_jobs_service {
             } else {
                 record.message = "Completed. " + record.resultCount + " result(s).";
             }
+            if (record.request != null) {
+                LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+                details.put("job_id", safe(record.jobId));
+                details.put("search_type", safe(record.request.searchType));
+                details.put("status", safe(record.status));
+                details.put("result_count", String.valueOf(record.resultCount));
+                details.put("truncated", record.truncated ? "true" : "false");
+                details.put("processed_count", String.valueOf(record.processedCount));
+                details.put("total_count", String.valueOf(record.totalCount));
+                ACTIVITY_LOGS.logVerbose(
+                        "search.job.completed",
+                        safe(record.request.tenantUuid).trim(),
+                        safe(record.request.requestedBy).trim(),
+                        "",
+                        "",
+                        details
+                );
+            }
         } catch (Exception ex) {
             record.status = "failed";
             record.completedAt = Instant.now().toString();
             record.message = safe(ex.getMessage()).trim();
             if (record.message.isBlank()) record.message = "Search failed.";
             LOG.log(Level.WARNING, "Search job failed id=" + record.jobId + ": " + safe(ex.getMessage()), ex);
+            if (record.request != null) {
+                LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+                details.put("job_id", safe(record.jobId));
+                details.put("search_type", safe(record.request.searchType));
+                details.put("status", safe(record.status));
+                details.put("reason", safe(ex.getMessage()));
+                ACTIVITY_LOGS.logWarning(
+                        "search.job.failed",
+                        safe(record.request.tenantUuid).trim(),
+                        safe(record.request.requestedBy).trim(),
+                        "",
+                        "",
+                        details
+                );
+            }
         } finally {
             pruneJobs();
         }
@@ -545,9 +609,10 @@ public final class search_jobs_service {
 
                 String metadataText = req.includeMetadata ? metadataBlob(target) : "";
                 String ocrText = "";
+                version_ocr_companion_service.CompanionRec companion = null;
                 if (req.includeOcr) {
                     try {
-                        version_ocr_companion_service.CompanionRec companion = ctx.ocrService().ensureCompanion(
+                        companion = ctx.ocrService().ensureCompanion(
                                 req.tenantUuid,
                                 target.matterUuid,
                                 target.documentUuid,
@@ -560,6 +625,15 @@ public final class search_jobs_service {
                         if (ocrErrors <= 3) {
                             LOG.log(Level.FINE, "OCR companion generation skipped: " + safe(ex.getMessage()), ex);
                         }
+                    }
+                }
+                if (companion != null) {
+                    String hashBlob = imageHashBlob(companion);
+                    if (!hashBlob.isBlank()) {
+                        if (metadataText.isBlank()) metadataText = hashBlob;
+                        else metadataText = metadataText + "\n" + hashBlob;
+                        if (ocrText.isBlank()) ocrText = hashBlob;
+                        else ocrText = ocrText + "\n" + hashBlob;
                     }
                 }
 
@@ -755,6 +829,20 @@ public final class search_jobs_service {
             appendField(sb, v.storagePath);
             String fileName = fileName(v.storagePath);
             appendField(sb, fileName);
+            return sb.toString();
+        }
+
+        private static String imageHashBlob(version_ocr_companion_service.CompanionRec companion) {
+            if (companion == null || companion.imageHashes == null || companion.imageHashes.isEmpty()) return "";
+            StringBuilder sb = new StringBuilder(512);
+            for (version_ocr_companion_service.ImageHashRec hash : companion.imageHashes) {
+                if (hash == null) continue;
+                appendField(sb, safe(hash.sha256Rgb).trim());
+                String a = image_hash_tools.normalizeHex64(hash.averageHash64);
+                String d = image_hash_tools.normalizeHex64(hash.differenceHash64);
+                if (!a.isBlank()) appendField(sb, "image_ahash64:" + a);
+                if (!d.isBlank()) appendField(sb, "image_dhash64:" + d);
+            }
             return sb.toString();
         }
 

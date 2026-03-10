@@ -2,7 +2,9 @@
 
 <%@ page import="java.util.ArrayList" %>
 <%@ page import="java.util.List" %>
+<%@ page import="java.util.Map" %>
 
+<%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles.UserRec" %>
@@ -50,6 +52,19 @@
     } catch (Exception ignored) {}
     return "";
   }
+
+  private static void cpAudit(activity_log logs,
+                              String level,
+                              String action,
+                              String tenantUuid,
+                              String userUuid,
+                              Map<String, String> details) {
+    if (logs == null) return;
+    String lvl = cpSafe(level).trim().toLowerCase(java.util.Locale.ROOT);
+    if ("error".equals(lvl)) logs.logError(action, tenantUuid, userUuid, "", "", details);
+    else if ("warning".equals(lvl)) logs.logWarning(action, tenantUuid, userUuid, "", "", details);
+    else logs.logVerbose(action, tenantUuid, userUuid, "", "", details);
+  }
 %>
 
 <%
@@ -80,6 +95,7 @@
 
   users_roles store = users_roles.defaultStore();
   tenant_settings settingsStore = tenant_settings.defaultStore();
+  activity_log logs = activity_log.defaultStore();
   tenant_settings.PasswordPolicy policy = settingsStore.readPasswordPolicy(tenantUuid);
 
   try { store.ensure(tenantUuid); } catch (Exception ignored) {}
@@ -102,34 +118,48 @@
     if ("self_change_password".equalsIgnoreCase(action)) {
       if (currentPassword.isBlank()) {
         error = "Current password is required.";
+        cpAudit(logs, "warning", "auth.password.change_failed", tenantUuid, sessionUserUuid, Map.of("reason", "missing_current_password"));
       } else if (newPassword.isBlank()) {
         error = "New password is required.";
+        cpAudit(logs, "warning", "auth.password.change_failed", tenantUuid, sessionUserUuid, Map.of("reason", "missing_new_password"));
       } else if (!newPassword.equals(confirmPassword)) {
         error = "Password confirmation does not match.";
+        cpAudit(logs, "warning", "auth.password.change_failed", tenantUuid, sessionUserUuid, Map.of("reason", "confirm_mismatch"));
       } else {
         try {
           users_roles.AuthResult ar = store.authenticate(tenantUuid, sessionUserEmail, currentPassword.toCharArray());
           if (ar == null || ar.user == null || !sessionUserUuid.equals(cpSafe(ar.user.uuid).trim())) {
             error = "Current password is incorrect.";
+            cpAudit(logs, "warning", "auth.password.change_failed", tenantUuid, sessionUserUuid, Map.of("reason", "incorrect_current_password"));
           } else {
             boolean changed = store.updateUserPassword(tenantUuid, sessionUserUuid, newPassword.toCharArray());
-            if (changed) message = "Password updated.";
-            else error = "No changes were made.";
+            if (changed) {
+              message = "Password updated.";
+              cpAudit(logs, "verbose", "auth.password.changed", tenantUuid, sessionUserUuid, Map.of("scope", "self_service"));
+            } else {
+              error = "No changes were made.";
+              cpAudit(logs, "warning", "auth.password.change_failed", tenantUuid, sessionUserUuid, Map.of("reason", "no_change"));
+            }
           }
         } catch (Exception ex) {
           String m = cpSafe(ex.getMessage()).trim();
           error = m.isBlank() ? "Unable to update password." : m;
+          cpAudit(logs, "error", "auth.password.change_failed", tenantUuid, sessionUserUuid, Map.of("reason", cpSafe(ex.getMessage())));
         }
       }
     } else if ("admin_change_password".equalsIgnoreCase(action)) {
       if (!tenantAdmin) {
         error = "Tenant administrator permission is required.";
+        cpAudit(logs, "warning", "auth.password.admin_change_denied", tenantUuid, sessionUserUuid, Map.of("reason", "missing_tenant_admin"));
       } else if (selectedAdminUserUuid.isBlank()) {
         error = "Select a user.";
+        cpAudit(logs, "warning", "auth.password.admin_change_failed", tenantUuid, sessionUserUuid, Map.of("reason", "missing_target_user"));
       } else if (adminNewPassword.isBlank()) {
         error = "New password is required.";
+        cpAudit(logs, "warning", "auth.password.admin_change_failed", tenantUuid, sessionUserUuid, Map.of("reason", "missing_new_password", "target_user_uuid", selectedAdminUserUuid));
       } else if (!adminNewPassword.equals(adminConfirmPassword)) {
         error = "Password confirmation does not match.";
+        cpAudit(logs, "warning", "auth.password.admin_change_failed", tenantUuid, sessionUserUuid, Map.of("reason", "confirm_mismatch", "target_user_uuid", selectedAdminUserUuid));
       } else {
         try {
           boolean changed = store.updateUserPassword(
@@ -138,11 +168,23 @@
                   adminNewPassword.toCharArray(),
                   adminBypassPasswordPolicy
           );
-          if (changed) message = "User password updated.";
-          else error = "No changes were made.";
+          if (changed) {
+            message = "User password updated.";
+            cpAudit(logs, "verbose", "auth.password.admin_changed", tenantUuid, sessionUserUuid, Map.of(
+              "target_user_uuid", selectedAdminUserUuid,
+              "bypass_password_policy", adminBypassPasswordPolicy ? "true" : "false"
+            ));
+          } else {
+            error = "No changes were made.";
+            cpAudit(logs, "warning", "auth.password.admin_change_failed", tenantUuid, sessionUserUuid, Map.of("reason", "no_change", "target_user_uuid", selectedAdminUserUuid));
+          }
         } catch (Exception ex) {
           String m = cpSafe(ex.getMessage()).trim();
           error = m.isBlank() ? "Unable to update user password." : m;
+          cpAudit(logs, "error", "auth.password.admin_change_failed", tenantUuid, sessionUserUuid, Map.of(
+            "reason", cpSafe(ex.getMessage()),
+            "target_user_uuid", selectedAdminUserUuid
+          ));
         }
       }
     }

@@ -1227,6 +1227,7 @@ public final class permission_layers {
         out.add(def("documents.access", "Documents", "Access document storage, versions, parts, preview, and redaction pages.", "Core", false));
         out.add(def("facts.access", "Facts Case Plan", "Use claims/elements/facts workflows and related actions.", "Core", false));
         out.add(def("tasks.access", "Tasks", "Manage task workflows and task list operations.", "Core", false));
+        out.add(def("mail.access", "Postal Mail", "Manage inbound/outbound postal mail workflows, recipients, proof, and tracking.", "Core", false));
         out.add(def("threads.access", "Omnichannel Threads", "Use omnichannel thread inbox and manifest screens.", "Core", false));
         out.add(def("wiki.access", "Knowledge Wiki", "View and edit wiki pages and attachments (subject to wiki page keys).", "Core", false));
         out.add(def("wiki.view", "Wiki View", "View wiki pages and attachments.", "Core", false));
@@ -1282,6 +1283,7 @@ public final class permission_layers {
         legacy.put("documents.access", "true");
         legacy.put("facts.access", "true");
         legacy.put("tasks.access", "true");
+        legacy.put("mail.access", "true");
         legacy.put("threads.access", "true");
         legacy.put("wiki.access", "true");
         legacy.put("wiki.view", "true");
@@ -1321,6 +1323,7 @@ public final class permission_layers {
         review.put("cases.access", "true");
         review.put("conflicts.access", "true");
         review.put("documents.access", "true");
+        review.put("mail.access", "true");
         review.put("forms.access", "true");
         review.put("help.access", "true");
         review.put("user_settings.access", "true");

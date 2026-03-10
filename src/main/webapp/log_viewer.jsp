@@ -1,5 +1,6 @@
 <%@ page contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" isELIgnored="true" %>
 <%@ page import="java.util.List" %>
+<%@ page import="java.util.Map" %>
 <%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ include file="security.jspf" %>
 <% if (!require_login()) return; %>
@@ -20,6 +21,18 @@
   private static String redactUuid(String raw) {
     return safe(raw).replaceAll("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\b", "[hidden]");
   }
+  private static String detailSummary(activity_log.LogEntry e) {
+    if (e == null || e.detailMap == null || e.detailMap.isEmpty()) return safe(e == null ? "" : e.details);
+    StringBuilder sb = new StringBuilder(Math.max(64, e.detailMap.size() * 18));
+    for (Map.Entry<String, String> row : e.detailMap.entrySet()) {
+      if (row == null) continue;
+      String k = safe(row.getKey()).trim();
+      if (k.isBlank()) continue;
+      if (sb.length() > 0) sb.append("; ");
+      sb.append(k).append("=").append(safe(row.getValue()));
+    }
+    return sb.toString();
+  }
 %>
 <%
   String tenantUuid = safe((String) session.getAttribute("tenant.uuid"));
@@ -35,18 +48,19 @@
 </section>
 <section class="card" style="margin-top:12px;">
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>Time</th><th>Action</th><th>User</th><th>Case</th><th>Document</th><th>Details</th></tr></thead>
+    <thead><tr><th>Time</th><th>Level</th><th>Action</th><th>User</th><th>Case</th><th>Document</th><th>Details</th></tr></thead>
     <tbody>
       <% if (entries.isEmpty()) { %>
-      <tr><td colspan="6" class="muted">No log entries yet.</td></tr>
+      <tr><td colspan="7" class="muted">No log entries yet.</td></tr>
       <% } else { for (activity_log.LogEntry e : entries) { if (e == null) continue; %>
       <tr>
         <td><%= esc(e.time) %></td>
+        <td><code><%= esc(e.level) %></code></td>
         <td><code><%= esc(e.action) %></code></td>
         <td><%= esc(displayUser(e.userUuid)) %></td>
         <td><%= esc(linkedLabel(e.caseUuid)) %></td>
         <td><%= esc(linkedLabel(e.documentUuid)) %></td>
-        <td><%= esc(redactUuid(e.details)) %></td>
+        <td><%= esc(redactUuid(detailSummary(e))) %></td>
       </tr>
       <% }} %>
     </tbody>

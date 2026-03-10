@@ -18,6 +18,7 @@ import java.util.logging.Logger;
 public final class conflicts_scan_service {
 
     private static final Logger LOG = Logger.getLogger(conflicts_scan_service.class.getName());
+    private static final activity_log ACTIVITY_LOGS = activity_log.defaultStore();
 
     private static final class Holder {
         private static final conflicts_scan_service INSTANCE = new conflicts_scan_service();
@@ -151,6 +152,21 @@ public final class conflicts_scan_service {
                 + ", entities=" + (summary.nlpEntities + summary.linkedContactEntities)
                 + ", changes=" + summary.entriesChanged + ".";
         LOG.info("conflicts_scan tenant=" + tu + " matter=" + mu + " " + summary.message);
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("versions_total", String.valueOf(summary.versionsTotal));
+        details.put("versions_scanned", String.valueOf(summary.versionsScanned));
+        details.put("versions_skipped", String.valueOf(summary.versionsSkipped));
+        details.put("nlp_entities", String.valueOf(summary.nlpEntities));
+        details.put("linked_contact_entities", String.valueOf(summary.linkedContactEntities));
+        details.put("entries_changed", String.valueOf(summary.entriesChanged));
+        details.put("ocr_warnings", String.valueOf(summary.ocrWarnings));
+        details.put("include_linked_contacts", includeLinkedContacts ? "true" : "false");
+        details.put("message", safe(summary.message));
+        if (summary.ocrWarnings > 0) {
+            ACTIVITY_LOGS.logWarning("conflicts.scan.completed_with_warnings", tu, "", mu, "", details);
+        } else {
+            ACTIVITY_LOGS.logVerbose("conflicts.scan.completed", tu, "", mu, "", details);
+        }
         return summary;
     }
 
@@ -174,6 +190,9 @@ public final class conflicts_scan_service {
                 failed.message = "Scan failed: " + safe(ex.getMessage());
                 out.add(failed);
                 LOG.log(Level.WARNING, "Conflict scan failed tenant=" + tu + " matter=" + mu + ": " + safe(ex.getMessage()), ex);
+                LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+                details.put("reason", safe(ex.getMessage()));
+                ACTIVITY_LOGS.logError("conflicts.scan.failed", tu, "", mu, "", details);
             }
         }
         return out;

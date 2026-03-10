@@ -285,14 +285,12 @@ public final class self_upgrade_scheduler {
             buildExit = build.exitCode;
             if (build.timedOut || build.exitCode != 0) {
                 String buildFailure = "Build command failed: " + summarizeCommandResult(build);
-                if (!cfg.allowDirtyWorktree) {
-                    String rollbackError = rollbackToCommit(repoRoot, beforeHead, cfg.commandTimeout);
-                    if (!rollbackError.isBlank()) {
-                        throw new IllegalStateException(buildFailure + " | rollback failed: " + rollbackError);
-                    }
-                    throw new IllegalStateException(buildFailure + " | rolled back to " + beforeHead + ".");
+                String rollbackError = rollbackToCommit(repoRoot, beforeHead, cfg.commandTimeout);
+                if (!rollbackError.isBlank()) {
+                    throw new IllegalStateException(buildFailure + " | rollback failed: " + rollbackError);
                 }
-                throw new IllegalStateException(buildFailure + " | rollback skipped because allow_dirty_worktree=true.");
+                afterHead = beforeHead;
+                throw new IllegalStateException(buildFailure + " | rolled back to " + beforeHead + ".");
             }
 
             restartCommandUsed = resolveRestartCommand(cfg.restartCommand);

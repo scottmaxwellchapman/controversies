@@ -21,6 +21,7 @@ public final class wiki_file_servlet extends HttpServlet {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String S_TENANT_UUID = "tenant.uuid";
+    private static final activity_log ACTIVITY_LOGS = activity_log.defaultStore();
 
     private final tenant_wikis wikiStore = tenant_wikis.defaultStore();
 
@@ -48,13 +49,25 @@ public final class wiki_file_servlet extends HttpServlet {
         if (!security.require_login()) return;
 
         String tenantUuid = safe(session == null ? "" : (String) session.getAttribute(S_TENANT_UUID)).trim();
+        String actor = safe(session == null ? "" : (String) session.getAttribute(users_roles.S_USER_UUID)).trim();
+        String actorEmail = safe(session == null ? "" : (String) session.getAttribute(users_roles.S_USER_EMAIL)).trim();
+        if (!actorEmail.isBlank()) actor = actorEmail;
         if (tenantUuid.isBlank()) {
             resp.sendError(401);
             return;
         }
 
         String action = safe(req.getParameter("action")).trim().toLowerCase(Locale.ROOT);
+        String pageUuid = safe(req.getParameter("page_uuid")).trim();
         if (action.isBlank()) {
+            ACTIVITY_LOGS.logWarning(
+                    "wiki.file_request.invalid",
+                    tenantUuid,
+                    actor,
+                    "",
+                    "",
+                    details("reason", "missing_action")
+            );
             writeError(resp, 400, "bad_request", "Action is required.");
             return;
         }
@@ -65,6 +78,7 @@ public final class wiki_file_servlet extends HttpServlet {
         try {
             if ("download_attachment".equals(action)) {
                 if (!canView) {
+                    ACTIVITY_LOGS.logWarning("wiki.file_request.denied", tenantUuid, actor, "", "", details("action", action));
                     resp.sendError(403);
                     return;
                 }
@@ -73,6 +87,7 @@ public final class wiki_file_servlet extends HttpServlet {
             }
             if ("download_revision".equals(action)) {
                 if (!canView) {
+                    ACTIVITY_LOGS.logWarning("wiki.file_request.denied", tenantUuid, actor, "", "", details("action", action));
                     resp.sendError(403);
                     return;
                 }
@@ -85,16 +100,28 @@ public final class wiki_file_servlet extends HttpServlet {
                     return;
                 }
                 if (!canEdit) {
+                    ACTIVITY_LOGS.logWarning("wiki.file_request.denied", tenantUuid, actor, "", "", details("action", action));
                     resp.sendError(403);
                     return;
                 }
                 handleUploadAttachment(req, resp, tenantUuid, session);
                 return;
             }
+            ACTIVITY_LOGS.logWarning("wiki.file_request.invalid", tenantUuid, actor, "", "", details("action", action, "reason", "unknown_action"));
             writeError(resp, 404, "not_found", "Unknown action.");
         } catch (IllegalArgumentException ex) {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("action", action);
+            details.put("page_uuid", pageUuid);
+            details.put("reason", safe(ex.getMessage()));
+            ACTIVITY_LOGS.logWarning("wiki.file_request.invalid", tenantUuid, actor, "", "", details);
             writeError(resp, 400, "bad_request", safe(ex.getMessage()));
         } catch (Exception ex) {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("action", action);
+            details.put("page_uuid", pageUuid);
+            details.put("reason", safe(ex.getMessage()));
+            ACTIVITY_LOGS.logError("wiki.file_request.failed", tenantUuid, actor, "", "", details);
             writeError(resp, 500, "server_error", safe(ex.getMessage()));
         }
     }
@@ -132,6 +159,12 @@ public final class wiki_file_servlet extends HttpServlet {
         try (var in = Files.newInputStream(p)) {
             in.transferTo(resp.getOutputStream());
         }
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("page_uuid", pageUuid);
+        details.put("attachment_uuid", attachmentUuid);
+        details.put("file_name", fileName);
+        details.put("mime_type", contentType);
+        ACTIVITY_LOGS.logVerbose("wiki.attachment.downloaded", safe(tenantUuid).trim(), "", "", "", details);
     }
 
     private void handleDownloadRevision(HttpServletRequest req,
@@ -159,12 +192,22 @@ public final class wiki_file_servlet extends HttpServlet {
             resp.setContentType("text/plain; charset=UTF-8");
             resp.setHeader("Content-Disposition", "attachment; filename=\"" + fileBase + ".txt\"");
             resp.getOutputStream().write(txt.getBytes(StandardCharsets.UTF_8));
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("page_uuid", pageUuid);
+            details.put("revision_uuid", revisionUuid);
+            details.put("format", "txt");
+            ACTIVITY_LOGS.logVerbose("wiki.revision.downloaded", safe(tenantUuid).trim(), "", "", "", details);
             return;
         }
 
         resp.setContentType("text/html; charset=UTF-8");
         resp.setHeader("Content-Disposition", "attachment; filename=\"" + fileBase + ".html\"");
         resp.getOutputStream().write(safe(html).getBytes(StandardCharsets.UTF_8));
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("page_uuid", pageUuid);
+        details.put("revision_uuid", revisionUuid);
+        details.put("format", "html");
+        ACTIVITY_LOGS.logVerbose("wiki.revision.downloaded", safe(tenantUuid).trim(), "", "", "", details);
     }
 
     private void handleUploadAttachment(HttpServletRequest req,
@@ -207,6 +250,11 @@ public final class wiki_file_servlet extends HttpServlet {
         out.put("file_size_bytes", safe(rec.fileSizeBytes));
         out.put("download_url", downloadUrl);
         writeJson(resp, 200, out);
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("page_uuid", pageUuid);
+        details.put("attachment_uuid", safe(rec.uuid));
+        details.put("file_name", safe(rec.fileName));
+        ACTIVITY_LOGS.logVerbose("wiki.attachment.upload_request_completed", safe(tenantUuid).trim(), actor, "", "", details);
     }
 
     private void requirePagePermission(HttpSession session,
@@ -254,6 +302,19 @@ public final class wiki_file_servlet extends HttpServlet {
 
     private static String enc(String v) {
         return URLEncoder.encode(safe(v), StandardCharsets.UTF_8);
+    }
+
+    private static LinkedHashMap<String, String> details(String key, String value) {
+        LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
+        out.put(safe(key), safe(value));
+        return out;
+    }
+
+    private static LinkedHashMap<String, String> details(String key1, String value1, String key2, String value2) {
+        LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
+        out.put(safe(key1), safe(value1));
+        out.put(safe(key2), safe(value2));
+        return out;
     }
 
     private static void writeJson(HttpServletResponse resp, int status, Object payload) throws IOException {

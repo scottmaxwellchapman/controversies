@@ -613,7 +613,9 @@ public final class business_process_manager {
                 false,
                 List.of("to", "subject"),
                 List.of("body_text", "body_html", "cc", "bcc", "from_address", "from_name", "reply_to",
-                        "matter_uuid", "signature_link", "delivery_mode", "wait_for_confirmation",
+                        "matter_uuid", "document_uuid", "part_uuid", "version_uuid",
+                        "provider_key", "provider_request_id",
+                        "signature_link", "delivery_mode", "wait_for_confirmation",
                         "confirmation_title", "confirmation_instructions", "required_input_keys",
                         "assignee_user_uuid", "assignee_role_uuid", "queue_permission_key", "due_at", "on_error")
         ));
@@ -2715,6 +2717,50 @@ public final class business_process_manager {
                 context.put("vars.last_signature_notice_delivery_mode", "queue");
             }
             context.put("vars.last_signature_notice_email_uuid", emailUuid);
+
+            String providerKey = resolveTemplate(step.settings.get("provider_key"), context).trim();
+            if (providerKey.isBlank()) providerKey = "manual_notice";
+            String providerRequestId = resolveTemplate(step.settings.get("provider_request_id"), context).trim();
+            String documentUuid = resolveTemplate(step.settings.get("document_uuid"), context).trim();
+            if (documentUuid.isBlank()) documentUuid = safe(context.get("event.doc_uuid")).trim();
+            String partUuid = resolveTemplate(step.settings.get("part_uuid"), context).trim();
+            if (partUuid.isBlank()) partUuid = safe(context.get("event.part_uuid")).trim();
+            String versionUuid = resolveTemplate(step.settings.get("version_uuid"), context).trim();
+            if (versionUuid.isBlank()) versionUuid = safe(context.get("event.version_uuid")).trim();
+
+            esign_requests.CreateInput signatureReq = new esign_requests.CreateInput();
+            signatureReq.providerKey = providerKey;
+            signatureReq.providerRequestId = providerRequestId;
+            signatureReq.matterUuid = matterUuid;
+            signatureReq.documentUuid = documentUuid;
+            signatureReq.partUuid = partUuid;
+            signatureReq.versionUuid = versionUuid;
+            signatureReq.subject = subject;
+            signatureReq.toCsv = String.join(",", to);
+            signatureReq.ccCsv = ccCsv;
+            signatureReq.bccCsv = bccCsv;
+            signatureReq.signatureLink = signatureLink;
+            signatureReq.deliveryMode = deliveryMode;
+            signatureReq.requestedByUserUuid = actorUser;
+            signatureReq.status = "sent";
+
+            esign_requests.SignatureRequestRec createdSignature = esign_requests.defaultStore().createRequest(exec.tenantUuid, signatureReq);
+            context.put("vars.last_signature_request_uuid", safe(createdSignature == null ? "" : createdSignature.requestUuid));
+            context.put("vars.last_signature_provider_key", safe(createdSignature == null ? providerKey : createdSignature.providerKey));
+            context.put("vars.last_signature_status", safe(createdSignature == null ? "sent" : createdSignature.status));
+
+            try {
+                LinkedHashMap<String, Object> eventPayload = new LinkedHashMap<String, Object>();
+                eventPayload.put("request_uuid", safe(createdSignature == null ? "" : createdSignature.requestUuid));
+                eventPayload.put("provider_key", safe(createdSignature == null ? providerKey : createdSignature.providerKey));
+                eventPayload.put("status", safe(createdSignature == null ? "sent" : createdSignature.status));
+                eventPayload.put("matter_uuid", safe(createdSignature == null ? matterUuid : createdSignature.matterUuid));
+                eventPayload.put("document_uuid", safe(createdSignature == null ? documentUuid : createdSignature.documentUuid));
+                eventPayload.put("part_uuid", safe(createdSignature == null ? partUuid : createdSignature.partUuid));
+                eventPayload.put("version_uuid", safe(createdSignature == null ? versionUuid : createdSignature.versionUuid));
+                integration_webhooks.defaultStore().dispatchEvent(exec.tenantUuid, "esign.request.sent", eventPayload);
+            } catch (Exception ignored) {
+            }
 
             boolean waitForConfirmation = parseBool(resolveTemplate(step.settings.get("wait_for_confirmation"), context), false);
             if (!waitForConfirmation) {

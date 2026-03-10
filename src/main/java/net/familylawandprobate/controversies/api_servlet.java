@@ -355,6 +355,24 @@ public final class api_servlet extends HttpServlet {
         LinkedHashMap<String, Object> tasks = executeTasksOperation(operation, params, tenantUuid);
         if (tasks != null) return tasks;
 
+        LinkedHashMap<String, Object> mail = executeMailOperation(operation, params, tenantUuid);
+        if (mail != null) return mail;
+
+        LinkedHashMap<String, Object> leads = executeLeadsOperation(operation, params, tenantUuid);
+        if (leads != null) return leads;
+
+        LinkedHashMap<String, Object> billing = executeBillingOperation(operation, params, tenantUuid);
+        if (billing != null) return billing;
+
+        LinkedHashMap<String, Object> esign = executeEsignOperation(operation, params, tenantUuid);
+        if (esign != null) return esign;
+
+        LinkedHashMap<String, Object> integrations = executeIntegrationsOperation(operation, params, tenantUuid);
+        if (integrations != null) return integrations;
+
+        LinkedHashMap<String, Object> analytics = executeAnalyticsOperation(operation, params, tenantUuid);
+        if (analytics != null) return analytics;
+
         switch (operation) {
             case "auth.whoami": {
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
@@ -381,6 +399,7 @@ public final class api_servlet extends HttpServlet {
                     m.put("case_uuid", r.caseUuid);
                     m.put("document_uuid", r.documentUuid);
                     m.put("details", r.details);
+                    m.put("detail_map", new LinkedHashMap<String, String>(r.detailMap));
                     items.add(m);
                 }
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
@@ -1407,6 +1426,16 @@ public final class api_servlet extends HttpServlet {
                 out.put("image_width_px", rendered.imageWidthPx);
                 out.put("image_height_px", rendered.imageHeightPx);
                 out.put("image_png_base64", rendered.base64Png);
+                try {
+                    image_hash_tools.HashRec hash = image_hash_tools.compute(image_hash_tools.decodePngBase64(rendered.base64Png));
+                    out.put("image_hash_sha256_rgb", safe(hash == null ? "" : hash.sha256Rgb));
+                    out.put("image_hash_ahash64", safe(hash == null ? "" : hash.averageHash64));
+                    out.put("image_hash_dhash64", safe(hash == null ? "" : hash.differenceHash64));
+                } catch (Exception ignored) {
+                    out.put("image_hash_sha256_rgb", "");
+                    out.put("image_hash_ahash64", "");
+                    out.put("image_hash_dhash64", "");
+                }
                 out.put("warning", rendered.warning);
                 out.put("engine", rendered.engine);
                 out.put("page_text", rendered.pageText);
@@ -1423,6 +1452,75 @@ public final class api_servlet extends HttpServlet {
                     nav.add(m);
                 }
                 out.put("navigation", nav);
+                return out;
+            }
+
+            case "document.versions.find_similar": {
+                String matterUuid = str(params, "matter_uuid");
+                String docUuid = str(params, "doc_uuid");
+                String partUuid = str(params, "part_uuid");
+                String sourceVersionUuid = str(params, "source_version_uuid");
+                String scope = str(params, "scope");
+                if (!"tenant".equalsIgnoreCase(scope)) scope = "matter";
+                int maxResults = clampInt(intVal(params, "max_results", 20), 1, 200);
+                int maxHammingDistance = clampInt(intVal(params, "max_hamming_distance", 8), 0, 64);
+                boolean duplicatesOnly = boolVal(params, "duplicates_only", false);
+
+                List<part_versions.VersionRec> rows = part_versions.defaultStore().listAll(
+                        tenantUuid,
+                        matterUuid,
+                        docUuid,
+                        partUuid
+                );
+                part_versions.VersionRec source = findPartVersion(rows, sourceVersionUuid);
+                if (source == null) throw new IllegalArgumentException("Source version not found.");
+
+                ArrayList<version_image_similarity_service.SimilarityRec> similar = version_image_similarity_service.defaultService().findSimilarVersions(
+                        tenantUuid,
+                        matterUuid,
+                        docUuid,
+                        partUuid,
+                        source,
+                        scope,
+                        maxResults,
+                        maxHammingDistance
+                );
+
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (version_image_similarity_service.SimilarityRec row : similar) {
+                    if (row == null) continue;
+                    if (duplicatesOnly && !row.duplicateCandidate) continue;
+                    LinkedHashMap<String, Object> m = new LinkedHashMap<String, Object>();
+                    m.put("matter_uuid", row.matterUuid);
+                    m.put("matter_label", row.matterLabel);
+                    m.put("doc_uuid", row.documentUuid);
+                    m.put("document_title", row.documentTitle);
+                    m.put("part_uuid", row.partUuid);
+                    m.put("part_label", row.partLabel);
+                    m.put("version_uuid", row.versionUuid);
+                    m.put("version_label", row.versionLabel);
+                    m.put("source", row.source);
+                    m.put("mime_type", row.mimeType);
+                    m.put("created_at", row.createdAt);
+                    m.put("created_by", row.createdBy);
+                    m.put("source_pages", row.sourcePages);
+                    m.put("candidate_pages", row.candidatePages);
+                    m.put("exact_page_matches", row.exactPageMatches);
+                    m.put("near_page_matches", row.nearPageMatches);
+                    m.put("best_hamming_distance", row.bestHammingDistance);
+                    m.put("average_hamming_distance", row.averageHammingDistance);
+                    m.put("similarity_percent", row.similarityPercent);
+                    m.put("duplicate_candidate", row.duplicateCandidate);
+                    items.add(m);
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("source_version", versionMap(source));
+                out.put("scope", scope);
+                out.put("max_hamming_distance", maxHammingDistance);
+                out.put("duplicates_only", duplicatesOnly);
+                out.put("items", items);
+                out.put("count", items.size());
                 return out;
             }
 
@@ -2292,6 +2390,7 @@ public final class api_servlet extends HttpServlet {
                 ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
                 for (search_jobs_service.SearchTypeInfo row : rows) {
                     if (row == null) continue;
+                    if (!credentialHasPermission(credentialScope, safe(row.permissionKey))) continue;
                     items.add(searchTypeMap(row));
                 }
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
@@ -2302,10 +2401,13 @@ public final class api_servlet extends HttpServlet {
             }
 
             case "search.jobs.enqueue": {
-                String requestedBy = str(params, "requested_by");
-                if (requestedBy.isBlank()) requestedBy = safe(credentialId).trim();
-                if (requestedBy.isBlank()) requestedBy = safe(credentialLabel).trim();
-                if (requestedBy.isBlank()) requestedBy = "api_client";
+                String requestedBy = resolveSearchRequestedBy(
+                        params,
+                        credentialId,
+                        credentialLabel,
+                        credentialScope,
+                        operation
+                );
 
                 search_jobs_service.SearchJobRequest in = new search_jobs_service.SearchJobRequest();
                 in.tenantUuid = tenantUuid;
@@ -2338,10 +2440,13 @@ public final class api_servlet extends HttpServlet {
             }
 
             case "search.jobs.list": {
-                String requestedBy = str(params, "requested_by");
-                if (requestedBy.isBlank()) requestedBy = safe(credentialId).trim();
-                if (requestedBy.isBlank()) requestedBy = safe(credentialLabel).trim();
-                if (requestedBy.isBlank()) requestedBy = "api_client";
+                String requestedBy = resolveSearchRequestedBy(
+                        params,
+                        credentialId,
+                        credentialLabel,
+                        credentialScope,
+                        operation
+                );
 
                 int limit = clampInt(intVal(params, "limit", 20), 1, 100);
                 boolean includeResults = boolVal(params, "include_results", false);
@@ -2354,6 +2459,7 @@ public final class api_servlet extends HttpServlet {
                 ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
                 for (search_jobs_service.SearchJobSnapshot row : rows) {
                     if (row == null) continue;
+                    if (!searchJobVisibleToCredential(row, credentialScope)) continue;
                     items.add(searchJobMap(row, includeResults));
                 }
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
@@ -2364,10 +2470,13 @@ public final class api_servlet extends HttpServlet {
 
             case "search.jobs.get":
             case "search.jobs.status": {
-                String requestedBy = str(params, "requested_by");
-                if (requestedBy.isBlank()) requestedBy = safe(credentialId).trim();
-                if (requestedBy.isBlank()) requestedBy = safe(credentialLabel).trim();
-                if (requestedBy.isBlank()) requestedBy = "api_client";
+                String requestedBy = resolveSearchRequestedBy(
+                        params,
+                        credentialId,
+                        credentialLabel,
+                        credentialScope,
+                        operation
+                );
 
                 String jobId = str(params, "job_id");
                 boolean includeResults = boolVal(params, "include_results", true);
@@ -2378,6 +2487,7 @@ public final class api_servlet extends HttpServlet {
                         includeResults
                 );
                 if (row == null) throw new IllegalArgumentException("Search job not found.");
+                requireSearchJobVisibleToCredential(row, credentialScope, operation);
 
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
                 out.put("job", searchJobMap(row, includeResults));
@@ -2532,6 +2642,1344 @@ public final class api_servlet extends HttpServlet {
                     nav.add(m);
                 }
                 out.put("navigation", nav);
+                return out;
+            }
+
+            default:
+                throw new UnsupportedOperationException("Unknown operation: " + op);
+        }
+    }
+
+    private static LinkedHashMap<String, Object> executeLeadsOperation(String operation,
+                                                                        Map<String, Object> params,
+                                                                        String tenantUuid) throws Exception {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (!op.startsWith("leads.")) return null;
+
+        leads_crm store = leads_crm.defaultStore();
+
+        switch (op) {
+            case "leads.list": {
+                boolean includeArchived = boolVal(params, "include_archived", false);
+                String status = str(params, "status").toLowerCase(Locale.ROOT).trim();
+                String assignedUser = str(params, "assigned_user_uuid");
+                String source = str(params, "source").toLowerCase(Locale.ROOT).trim();
+                String q = str(params, "q").toLowerCase(Locale.ROOT).trim();
+
+                List<leads_crm.LeadRec> rows = store.listLeads(tenantUuid, includeArchived);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (leads_crm.LeadRec row : rows) {
+                    if (row == null) continue;
+                    if (!status.isBlank() && !status.equalsIgnoreCase(safe(row.status))) continue;
+                    if (!assignedUser.isBlank() && !assignedUser.equalsIgnoreCase(safe(row.assignedUserUuid))) continue;
+                    if (!source.isBlank() && !source.equalsIgnoreCase(safe(row.source))) continue;
+                    if (!q.isBlank()) {
+                        String hay = (safe(row.displayName) + " " + safe(row.company) + " "
+                                + safe(row.email) + " " + safe(row.phone) + " " + safe(row.notes)).toLowerCase(Locale.ROOT);
+                        if (!hay.contains(q)) continue;
+                    }
+                    items.add(leadMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                out.put("status_counts", store.statusCounts(tenantUuid, includeArchived));
+                return out;
+            }
+
+            case "leads.get": {
+                String leadUuid = str(params, "lead_uuid");
+                if (leadUuid.isBlank()) throw new IllegalArgumentException("lead_uuid is required.");
+                leads_crm.LeadRec row = store.getLead(tenantUuid, leadUuid);
+                if (row == null) throw new IllegalArgumentException("Lead not found.");
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("lead", leadMap(row));
+                if (boolVal(params, "include_notes", true)) {
+                    ArrayList<LinkedHashMap<String, Object>> notes = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (leads_crm.LeadNoteRec note : store.listNotes(tenantUuid, leadUuid)) {
+                        if (note == null) continue;
+                        notes.add(leadNoteMap(note));
+                    }
+                    out.put("notes", notes);
+                }
+                return out;
+            }
+
+            case "leads.create": {
+                Map<String, Object> raw = mapFrom(params.get("lead"), params);
+                leads_crm.LeadInput input = leadInputFromMap(raw);
+                leads_crm.LeadRec row = store.createLead(tenantUuid, input, str(params, "actor_user_uuid"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("lead", leadMap(row));
+                return out;
+            }
+
+            case "leads.update": {
+                String leadUuid = str(params, "lead_uuid");
+                if (leadUuid.isBlank()) throw new IllegalArgumentException("lead_uuid is required.");
+                leads_crm.LeadRec current = store.getLead(tenantUuid, leadUuid);
+                if (current == null) throw new IllegalArgumentException("Lead not found.");
+
+                Map<String, Object> patch = mapFrom(params.get("lead"), params);
+                leads_crm.LeadInput input = leadInputFromMap(patch);
+                if (!hasParam(patch, "status")) input.status = current.status;
+                if (!hasParam(patch, "source")) input.source = current.source;
+                if (!hasParam(patch, "intake_channel")) input.intakeChannel = current.intakeChannel;
+                if (!hasParam(patch, "referred_by")) input.referredBy = current.referredBy;
+                if (!hasParam(patch, "first_name")) input.firstName = current.firstName;
+                if (!hasParam(patch, "last_name")) input.lastName = current.lastName;
+                if (!hasParam(patch, "display_name")) input.displayName = current.displayName;
+                if (!hasParam(patch, "company")) input.company = current.company;
+                if (!hasParam(patch, "email")) input.email = current.email;
+                if (!hasParam(patch, "phone")) input.phone = current.phone;
+                if (!hasParam(patch, "notes")) input.notes = current.notes;
+                if (!hasParam(patch, "tags_csv") && !hasParam(patch, "tags")) input.tagsCsv = current.tagsCsv;
+                if (!hasParam(patch, "assigned_user_uuid")) input.assignedUserUuid = current.assignedUserUuid;
+                if (!hasParam(patch, "matter_uuid")) input.matterUuid = current.matterUuid;
+                if (!hasParam(patch, "archived")) input.archived = current.archived;
+
+                leads_crm.LeadRec row = store.updateLead(tenantUuid, leadUuid, input, str(params, "actor_user_uuid"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("lead", leadMap(row));
+                return out;
+            }
+
+            case "leads.set_archived": {
+                String leadUuid = str(params, "lead_uuid");
+                if (leadUuid.isBlank()) throw new IllegalArgumentException("lead_uuid is required.");
+                boolean archived = boolVal(params, "archived", true);
+                boolean changed = store.setArchived(tenantUuid, leadUuid, archived);
+                leads_crm.LeadRec row = store.getLead(tenantUuid, leadUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("lead", leadMap(row));
+                return out;
+            }
+
+            case "leads.notes.list": {
+                String leadUuid = str(params, "lead_uuid");
+                if (leadUuid.isBlank()) throw new IllegalArgumentException("lead_uuid is required.");
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (leads_crm.LeadNoteRec note : store.listNotes(tenantUuid, leadUuid)) {
+                    if (note == null) continue;
+                    items.add(leadNoteMap(note));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "leads.notes.add": {
+                String leadUuid = str(params, "lead_uuid");
+                if (leadUuid.isBlank()) throw new IllegalArgumentException("lead_uuid is required.");
+                leads_crm.LeadNoteRec note = store.addNote(
+                        tenantUuid,
+                        leadUuid,
+                        str(params, "body"),
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("note", leadNoteMap(note));
+                return out;
+            }
+
+            case "leads.convert_to_matter": {
+                String leadUuid = str(params, "lead_uuid");
+                if (leadUuid.isBlank()) throw new IllegalArgumentException("lead_uuid is required.");
+                leads_crm.LeadRec lead = store.getLead(tenantUuid, leadUuid);
+                if (lead == null) throw new IllegalArgumentException("Lead not found.");
+
+                String matterUuid = str(params, "matter_uuid");
+                matters.MatterRec matter;
+                if (!matterUuid.isBlank()) {
+                    matter = matters.defaultStore().getByUuid(tenantUuid, matterUuid);
+                    if (matter == null) throw new IllegalArgumentException("matter_uuid not found.");
+                } else {
+                    String label = str(params, "matter_label");
+                    if (label.isBlank()) label = safe(lead.displayName).trim();
+                    if (label.isBlank()) label = safe(lead.company).trim();
+                    if (label.isBlank()) label = "New Matter";
+                    matter = matters.defaultStore().create(tenantUuid, label, "", "", "", "", "");
+                }
+
+                leads_crm.LeadRec converted = store.convertToMatter(
+                        tenantUuid,
+                        leadUuid,
+                        safe(matter == null ? "" : matter.uuid).trim(),
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("lead", leadMap(converted));
+                out.put("matter", matterMap(matter));
+                return out;
+            }
+
+            default:
+                throw new UnsupportedOperationException("Unknown operation: " + op);
+        }
+    }
+
+    private static LinkedHashMap<String, Object> executeBillingOperation(String operation,
+                                                                          Map<String, Object> params,
+                                                                          String tenantUuid) throws Exception {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (!(op.startsWith("billing.")
+                || op.startsWith("invoices.")
+                || op.startsWith("payments.")
+                || op.startsWith("payment.")
+                || op.startsWith("trust.")
+                || op.startsWith("reconciliation."))) {
+            return null;
+        }
+
+        billing_accounting ledger = billing_runtime_registry.tenantLedger(tenantUuid);
+
+        switch (op) {
+            case "billing.overview": {
+                String matterUuid = str(params, "matter_uuid");
+                ArrayList<LinkedHashMap<String, Object>> matterSummaries = new ArrayList<LinkedHashMap<String, Object>>();
+                long invoiceOutstandingCents = 0L;
+                long invoicePaidCents = 0L;
+                long trustBalanceCents = 0L;
+                long paymentReceivedCents = 0L;
+                int invoiceCount = 0;
+
+                List<matters.MatterRec> matterRows;
+                if (!matterUuid.isBlank()) {
+                    matters.MatterRec selected = matters.defaultStore().getByUuid(tenantUuid, matterUuid);
+                    matterRows = selected == null ? List.of() : List.of(selected);
+                } else {
+                    matterRows = matters.defaultStore().listAll(tenantUuid);
+                }
+
+                for (matters.MatterRec matter : matterRows) {
+                    if (matter == null) continue;
+                    String mu = safe(matter.uuid).trim();
+                    if (mu.isBlank()) continue;
+
+                    List<billing_accounting.InvoiceRec> invoices = ledger.listInvoicesForMatter(mu);
+                    List<billing_accounting.PaymentRec> payments = ledger.listPaymentsForMatter(mu);
+                    long outstanding = 0L;
+                    long paid = 0L;
+                    for (billing_accounting.InvoiceRec inv : invoices) {
+                        if (inv == null) continue;
+                        outstanding += Math.max(0L, inv.outstandingCents);
+                        paid += Math.max(0L, inv.paidCents);
+                    }
+                    long received = 0L;
+                    for (billing_accounting.PaymentRec p : payments) {
+                        if (p == null) continue;
+                        received += Math.max(0L, p.amountCents);
+                    }
+                    long trust = Math.max(0L, ledger.matterTrustBalance(mu));
+
+                    LinkedHashMap<String, Object> row = new LinkedHashMap<String, Object>();
+                    row.put("matter_uuid", mu);
+                    row.put("matter_label", safe(matter.label));
+                    row.put("invoice_count", invoices.size());
+                    row.put("invoice_outstanding_cents", outstanding);
+                    row.put("invoice_paid_cents", paid);
+                    row.put("payment_received_cents", received);
+                    row.put("trust_balance_cents", trust);
+                    matterSummaries.add(row);
+
+                    invoiceOutstandingCents += outstanding;
+                    invoicePaidCents += paid;
+                    paymentReceivedCents += received;
+                    trustBalanceCents += trust;
+                    invoiceCount += invoices.size();
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("matters", matterSummaries);
+                out.put("matter_count", matterSummaries.size());
+                out.put("invoice_count", invoiceCount);
+                out.put("invoice_outstanding_cents", invoiceOutstandingCents);
+                out.put("invoice_paid_cents", invoicePaidCents);
+                out.put("payment_received_cents", paymentReceivedCents);
+                out.put("trust_balance_cents", trustBalanceCents);
+                return out;
+            }
+
+            case "billing.time_entries.create": {
+                String matterUuid = str(params, "matter_uuid");
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                int minutes = clampInt(intVal(params, "minutes", intVal(params, "duration_minutes", 0)), 0, 24 * 60 * 31);
+                long rateCents = moneyCents(params, "rate", "rate_cents");
+                if (minutes <= 0) throw new IllegalArgumentException("minutes must be > 0.");
+                if (rateCents < 0L) throw new IllegalArgumentException("rate must be >= 0.");
+
+                billing_accounting.TimeEntryRec row = ledger.createTimeEntry(
+                        matterUuid,
+                        str(params, "user_uuid"),
+                        str(params, "activity_code"),
+                        str(params, "note"),
+                        minutes,
+                        rateCents,
+                        str(params, "currency").isBlank() ? "USD" : str(params, "currency"),
+                        !boolVal(params, "non_billable", false),
+                        str(params, "worked_at")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("time_entry", billingTimeEntryMap(row));
+                return out;
+            }
+
+            case "billing.time_entries.list": {
+                String matterUuid = str(params, "matter_uuid");
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                List<billing_accounting.TimeEntryRec> rows = ledger.listTimeEntriesForMatter(matterUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (billing_accounting.TimeEntryRec row : rows) {
+                    if (row == null) continue;
+                    items.add(billingTimeEntryMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "billing.expense_entries.create": {
+                String matterUuid = str(params, "matter_uuid");
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                long amountCents = moneyCents(params, "amount", "amount_cents");
+                long taxCents = moneyCents(params, "tax", "tax_cents");
+                if (amountCents < 0L || taxCents < 0L) throw new IllegalArgumentException("amount/tax must be >= 0.");
+
+                billing_accounting.ExpenseEntryRec row = ledger.createExpenseEntry(
+                        matterUuid,
+                        str(params, "description"),
+                        amountCents,
+                        taxCents,
+                        str(params, "currency").isBlank() ? "USD" : str(params, "currency"),
+                        !boolVal(params, "non_billable", false),
+                        str(params, "incurred_at")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("expense_entry", billingExpenseEntryMap(row));
+                return out;
+            }
+
+            case "billing.expense_entries.list": {
+                String matterUuid = str(params, "matter_uuid");
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                List<billing_accounting.ExpenseEntryRec> rows = ledger.listExpenseEntriesForMatter(matterUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (billing_accounting.ExpenseEntryRec row : rows) {
+                    if (row == null) continue;
+                    items.add(billingExpenseEntryMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "invoices.list": {
+                String matterUuid = str(params, "matter_uuid");
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                List<billing_accounting.InvoiceRec> rows = ledger.listInvoicesForMatter(matterUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (billing_accounting.InvoiceRec row : rows) {
+                    if (row == null) continue;
+                    items.add(billingInvoiceMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "invoices.get": {
+                String invoiceUuid = str(params, "invoice_uuid");
+                if (invoiceUuid.isBlank()) throw new IllegalArgumentException("invoice_uuid is required.");
+                billing_accounting.InvoiceRec row = ledger.getInvoice(invoiceUuid);
+                if (row == null) throw new IllegalArgumentException("Invoice not found.");
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("invoice", billingInvoiceMap(row));
+                if (boolVal(params, "include_details", true)) {
+                    ArrayList<LinkedHashMap<String, Object>> paymentRows = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (billing_accounting.PaymentRec p : ledger.listPaymentsForInvoice(invoiceUuid)) {
+                        if (p == null) continue;
+                        paymentRows.add(billingPaymentMap(p));
+                    }
+                    ArrayList<LinkedHashMap<String, Object>> trustRows = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (billing_accounting.TrustTxnRec t : ledger.listTrustTransactionsForInvoice(invoiceUuid)) {
+                        if (t == null) continue;
+                        trustRows.add(billingTrustTxnMap(t));
+                    }
+                    out.put("payments", paymentRows);
+                    out.put("trust_transactions", trustRows);
+                }
+                return out;
+            }
+
+            case "invoices.draft": {
+                String matterUuid = str(params, "matter_uuid");
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                billing_accounting.InvoiceRec row = ledger.draftInvoiceForMatter(
+                        matterUuid,
+                        str(params, "issue_date"),
+                        str(params, "due_at"),
+                        str(params, "currency").isBlank() ? "USD" : str(params, "currency")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("invoice", billingInvoiceMap(row));
+                return out;
+            }
+
+            case "invoices.finalize": {
+                String invoiceUuid = str(params, "invoice_uuid");
+                if (invoiceUuid.isBlank()) throw new IllegalArgumentException("invoice_uuid is required.");
+                billing_accounting.InvoiceRec row = ledger.finalizeInvoice(invoiceUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("invoice", billingInvoiceMap(row));
+                return out;
+            }
+
+            case "invoices.link_external": {
+                String invoiceUuid = str(params, "invoice_uuid");
+                String clioBillId = str(params, "clio_bill_id");
+                if (invoiceUuid.isBlank() || clioBillId.isBlank()) {
+                    throw new IllegalArgumentException("invoice_uuid and clio_bill_id are required.");
+                }
+                billing_accounting.InvoiceRec row = ledger.linkInvoiceToClioBill(invoiceUuid, clioBillId);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("invoice", billingInvoiceMap(row));
+                return out;
+            }
+
+            case "payments.list": {
+                String matterUuid = str(params, "matter_uuid");
+                String invoiceUuid = str(params, "invoice_uuid");
+                List<billing_accounting.PaymentRec> rows = !invoiceUuid.isBlank()
+                        ? ledger.listPaymentsForInvoice(invoiceUuid)
+                        : ledger.listPaymentsForMatter(matterUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (billing_accounting.PaymentRec row : rows) {
+                    if (row == null) continue;
+                    items.add(billingPaymentMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "payments.record": {
+                String invoiceUuid = str(params, "invoice_uuid");
+                if (invoiceUuid.isBlank()) throw new IllegalArgumentException("invoice_uuid is required.");
+                long amountCents = moneyCents(params, "amount", "amount_cents");
+                if (amountCents <= 0L) throw new IllegalArgumentException("amount must be > 0.");
+                billing_accounting.PaymentRec row = ledger.recordOperatingPayment(
+                        invoiceUuid,
+                        amountCents,
+                        str(params, "posted_at"),
+                        str(params, "reference")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("payment", billingPaymentMap(row));
+                return out;
+            }
+
+            case "trust.deposits.record": {
+                String matterUuid = str(params, "matter_uuid");
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                long amountCents = moneyCents(params, "amount", "amount_cents");
+                if (amountCents <= 0L) throw new IllegalArgumentException("amount must be > 0.");
+                billing_accounting.TrustTxnRec row = ledger.recordTrustDeposit(
+                        matterUuid,
+                        amountCents,
+                        str(params, "currency").isBlank() ? "USD" : str(params, "currency"),
+                        str(params, "posted_at"),
+                        str(params, "reference")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("trust_transaction", billingTrustTxnMap(row));
+                return out;
+            }
+
+            case "trust.apply.record": {
+                String invoiceUuid = str(params, "invoice_uuid");
+                if (invoiceUuid.isBlank()) throw new IllegalArgumentException("invoice_uuid is required.");
+                long amountCents = moneyCents(params, "amount", "amount_cents");
+                if (amountCents <= 0L) throw new IllegalArgumentException("amount must be > 0.");
+                billing_accounting.TrustTxnRec row = ledger.applyTrustToInvoice(
+                        invoiceUuid,
+                        amountCents,
+                        str(params, "posted_at"),
+                        str(params, "reference")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("trust_transaction", billingTrustTxnMap(row));
+                return out;
+            }
+
+            case "trust.refunds.record": {
+                String matterUuid = str(params, "matter_uuid");
+                if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required.");
+                long amountCents = moneyCents(params, "amount", "amount_cents");
+                if (amountCents <= 0L) throw new IllegalArgumentException("amount must be > 0.");
+                billing_accounting.TrustTxnRec row = ledger.recordTrustRefund(
+                        matterUuid,
+                        amountCents,
+                        str(params, "currency").isBlank() ? "USD" : str(params, "currency"),
+                        str(params, "posted_at"),
+                        str(params, "reference")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("trust_transaction", billingTrustTxnMap(row));
+                return out;
+            }
+
+            case "trust.transactions.list": {
+                String matterUuid = str(params, "matter_uuid");
+                String invoiceUuid = str(params, "invoice_uuid");
+                List<billing_accounting.TrustTxnRec> rows = !invoiceUuid.isBlank()
+                        ? ledger.listTrustTransactionsForInvoice(invoiceUuid)
+                        : ledger.listTrustTransactionsForMatter(matterUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (billing_accounting.TrustTxnRec row : rows) {
+                    if (row == null) continue;
+                    items.add(billingTrustTxnMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "reconciliation.snapshot": {
+                long statementEndingBalanceCents = moneyCents(params, "statement_ending_balance", "statement_ending_balance_cents");
+                billing_accounting.TrustReconciliationRec rec = ledger.trustReconciliation(
+                        str(params, "statement_date"),
+                        statementEndingBalanceCents
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("snapshot", billingTrustReconciliationMap(rec));
+                return out;
+            }
+
+            case "reconciliation.compliance": {
+                long statementEndingBalanceCents = moneyCents(params, "statement_ending_balance", "statement_ending_balance_cents");
+                billing_accounting.ComplianceSnapshot rec = ledger.complianceSnapshot(
+                        str(params, "statement_date"),
+                        statementEndingBalanceCents
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("compliance", billingComplianceMap(rec));
+                return out;
+            }
+
+            case "payment.processors.list": {
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (online_payments.ProcessorInfo p : online_payments.defaultStore().listProcessors()) {
+                    if (p == null) continue;
+                    LinkedHashMap<String, Object> row = new LinkedHashMap<String, Object>();
+                    row.put("processor_key", safe(p.processorKey));
+                    row.put("label", safe(p.label));
+                    row.put("mode", safe(p.mode));
+                    items.add(row);
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "payment.checkout.create": {
+                Map<String, Object> raw = mapFrom(params.get("checkout"), params);
+                online_payments.CheckoutInput input = checkoutInputFromMap(raw);
+                online_payments.CheckoutResult created = online_payments.defaultStore().createCheckout(tenantUuid, input);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("transaction", paymentTransactionMap(created == null ? null : created.transaction));
+                out.put("checkout_url", safe(created == null ? "" : created.checkoutUrl));
+                return out;
+            }
+
+            case "payment.transactions.list": {
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (online_payments.PaymentTransactionRec tx : online_payments.defaultStore().listTransactions(
+                        tenantUuid,
+                        str(params, "matter_uuid"),
+                        str(params, "invoice_uuid"),
+                        str(params, "status")
+                )) {
+                    if (tx == null) continue;
+                    items.add(paymentTransactionMap(tx));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "payment.transactions.get": {
+                String transactionUuid = str(params, "transaction_uuid");
+                if (transactionUuid.isBlank()) throw new IllegalArgumentException("transaction_uuid is required.");
+                online_payments.PaymentTransactionRec tx = online_payments.defaultStore().getTransaction(tenantUuid, transactionUuid);
+                if (tx == null) throw new IllegalArgumentException("Transaction not found.");
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("transaction", paymentTransactionMap(tx));
+                return out;
+            }
+
+            case "payment.transactions.mark_paid": {
+                String transactionUuid = str(params, "transaction_uuid");
+                if (transactionUuid.isBlank()) throw new IllegalArgumentException("transaction_uuid is required.");
+                online_payments.PaymentTransactionRec tx = online_payments.defaultStore().markPaid(
+                        tenantUuid,
+                        transactionUuid,
+                        str(params, "provider_payment_id"),
+                        str(params, "reference"),
+                        str(params, "posted_at")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("transaction", paymentTransactionMap(tx));
+                return out;
+            }
+
+            case "payment.transactions.mark_failed": {
+                String transactionUuid = str(params, "transaction_uuid");
+                if (transactionUuid.isBlank()) throw new IllegalArgumentException("transaction_uuid is required.");
+                online_payments.PaymentTransactionRec tx = online_payments.defaultStore().markFailed(
+                        tenantUuid,
+                        transactionUuid,
+                        str(params, "error_message")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("transaction", paymentTransactionMap(tx));
+                return out;
+            }
+
+            case "payment.transactions.cancel": {
+                String transactionUuid = str(params, "transaction_uuid");
+                if (transactionUuid.isBlank()) throw new IllegalArgumentException("transaction_uuid is required.");
+                online_payments.PaymentTransactionRec tx = online_payments.defaultStore().setCancelled(
+                        tenantUuid,
+                        transactionUuid,
+                        str(params, "reason")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("transaction", paymentTransactionMap(tx));
+                return out;
+            }
+
+            default:
+                throw new UnsupportedOperationException("Unknown operation: " + op);
+        }
+    }
+
+    private static LinkedHashMap<String, Object> executeEsignOperation(String operation,
+                                                                        Map<String, Object> params,
+                                                                        String tenantUuid) throws Exception {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (!op.startsWith("esign.")) return null;
+
+        esign_requests store = esign_requests.defaultStore();
+
+        switch (op) {
+            case "esign.providers.list": {
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                items.add(esignProviderRow("manual_notice", "Manual Notice"));
+                items.add(esignProviderRow("docusign_stub", "DocuSign (Stub)"));
+                items.add(esignProviderRow("adobesign_stub", "Adobe Sign (Stub)"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "esign.requests.list": {
+                String matterUuid = str(params, "matter_uuid");
+                String status = str(params, "status").toLowerCase(Locale.ROOT).trim();
+                String provider = str(params, "provider_key").toLowerCase(Locale.ROOT).trim();
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (esign_requests.SignatureRequestRec row : store.listRequests(tenantUuid)) {
+                    if (row == null) continue;
+                    if (!matterUuid.isBlank() && !matterUuid.equalsIgnoreCase(safe(row.matterUuid))) continue;
+                    if (!status.isBlank() && !status.equalsIgnoreCase(safe(row.status))) continue;
+                    if (!provider.isBlank() && !provider.equalsIgnoreCase(safe(row.providerKey))) continue;
+                    items.add(signatureRequestMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "esign.requests.get": {
+                String requestUuid = str(params, "request_uuid");
+                if (requestUuid.isBlank()) throw new IllegalArgumentException("request_uuid is required.");
+                esign_requests.SignatureRequestRec row = store.getRequest(tenantUuid, requestUuid);
+                if (row == null) throw new IllegalArgumentException("Signature request not found.");
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("request", signatureRequestMap(row));
+                if (boolVal(params, "include_events", true)) {
+                    ArrayList<LinkedHashMap<String, Object>> events = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (esign_requests.SignatureEventRec e : store.listEvents(tenantUuid, requestUuid)) {
+                        if (e == null) continue;
+                        events.add(signatureEventMap(e));
+                    }
+                    out.put("events", events);
+                }
+                return out;
+            }
+
+            case "esign.requests.create": {
+                Map<String, Object> raw = mapFrom(params.get("request"), params);
+                esign_requests.CreateInput input = new esign_requests.CreateInput();
+                input.providerKey = str(raw, "provider_key");
+                input.providerRequestId = str(raw, "provider_request_id");
+                input.matterUuid = str(raw, "matter_uuid");
+                input.documentUuid = str(raw, "document_uuid");
+                input.partUuid = str(raw, "part_uuid");
+                input.versionUuid = str(raw, "version_uuid");
+                input.subject = str(raw, "subject");
+                input.toCsv = str(raw, "to");
+                input.ccCsv = str(raw, "cc");
+                input.bccCsv = str(raw, "bcc");
+                input.signatureLink = str(raw, "signature_link");
+                input.deliveryMode = str(raw, "delivery_mode");
+                input.requestedByUserUuid = str(raw, "actor_user_uuid");
+                input.status = str(raw, "status");
+
+                esign_requests.SignatureRequestRec created = store.createRequest(tenantUuid, input);
+                try {
+                    LinkedHashMap<String, Object> payload = new LinkedHashMap<String, Object>();
+                    payload.put("request_uuid", safe(created == null ? "" : created.requestUuid));
+                    payload.put("provider_key", safe(created == null ? "" : created.providerKey));
+                    payload.put("status", safe(created == null ? "" : created.status));
+                    payload.put("matter_uuid", safe(created == null ? "" : created.matterUuid));
+                    integration_webhooks.defaultStore().dispatchEvent(tenantUuid, "esign.request.created", payload);
+                } catch (Exception ignored) {
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("request", signatureRequestMap(created));
+                return out;
+            }
+
+            case "esign.requests.update_status": {
+                String requestUuid = str(params, "request_uuid");
+                if (requestUuid.isBlank()) throw new IllegalArgumentException("request_uuid is required.");
+                esign_requests.SignatureRequestRec updated = store.updateStatus(
+                        tenantUuid,
+                        requestUuid,
+                        str(params, "status"),
+                        str(params, "event_type"),
+                        str(params, "note"),
+                        str(params, "actor_user_uuid"),
+                        str(params, "provider_request_id")
+                );
+                try {
+                    LinkedHashMap<String, Object> payload = new LinkedHashMap<String, Object>();
+                    payload.put("request_uuid", safe(updated == null ? "" : updated.requestUuid));
+                    payload.put("provider_key", safe(updated == null ? "" : updated.providerKey));
+                    payload.put("status", safe(updated == null ? "" : updated.status));
+                    payload.put("matter_uuid", safe(updated == null ? "" : updated.matterUuid));
+                    integration_webhooks.defaultStore().dispatchEvent(tenantUuid, "esign.request.status_changed", payload);
+                } catch (Exception ignored) {
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("request", signatureRequestMap(updated));
+                return out;
+            }
+
+            case "esign.requests.events.list": {
+                String requestUuid = str(params, "request_uuid");
+                if (requestUuid.isBlank()) throw new IllegalArgumentException("request_uuid is required.");
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (esign_requests.SignatureEventRec e : store.listEvents(tenantUuid, requestUuid)) {
+                    if (e == null) continue;
+                    items.add(signatureEventMap(e));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            default:
+                throw new UnsupportedOperationException("Unknown operation: " + op);
+        }
+    }
+
+    private static LinkedHashMap<String, Object> executeIntegrationsOperation(String operation,
+                                                                               Map<String, Object> params,
+                                                                               String tenantUuid) throws Exception {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (!(op.startsWith("integrations.webhooks.") || "integrations.events.emit".equals(op))) return null;
+
+        integration_webhooks store = integration_webhooks.defaultStore();
+
+        switch (op) {
+            case "integrations.webhooks.list": {
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (integration_webhooks.EndpointRec row : store.listEndpoints(tenantUuid)) {
+                    if (row == null) continue;
+                    items.add(webhookEndpointMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "integrations.webhooks.get": {
+                String webhookUuid = str(params, "webhook_uuid");
+                if (webhookUuid.isBlank()) throw new IllegalArgumentException("webhook_uuid is required.");
+                integration_webhooks.EndpointRec row = store.getEndpoint(tenantUuid, webhookUuid);
+                if (row == null) throw new IllegalArgumentException("Webhook endpoint not found.");
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("webhook", webhookEndpointMap(row));
+                return out;
+            }
+
+            case "integrations.webhooks.create": {
+                Map<String, Object> raw = mapFrom(params.get("webhook"), params);
+                integration_webhooks.EndpointInput input = integrationWebhookInputFromMap(raw);
+                integration_webhooks.EndpointRec row = store.createEndpoint(tenantUuid, input);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("webhook", webhookEndpointMap(row));
+                return out;
+            }
+
+            case "integrations.webhooks.update": {
+                String webhookUuid = str(params, "webhook_uuid");
+                if (webhookUuid.isBlank()) throw new IllegalArgumentException("webhook_uuid is required.");
+                Map<String, Object> raw = mapFrom(params.get("webhook"), params);
+                integration_webhooks.EndpointInput input = integrationWebhookInputFromMap(raw);
+                integration_webhooks.EndpointRec row = store.updateEndpoint(tenantUuid, webhookUuid, input);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("webhook", webhookEndpointMap(row));
+                return out;
+            }
+
+            case "integrations.webhooks.delete": {
+                String webhookUuid = str(params, "webhook_uuid");
+                if (webhookUuid.isBlank()) throw new IllegalArgumentException("webhook_uuid is required.");
+                boolean deleted = store.deleteEndpoint(tenantUuid, webhookUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("deleted", deleted);
+                return out;
+            }
+
+            case "integrations.webhooks.deliveries.list": {
+                int limit = clampInt(intVal(params, "limit", 100), 1, 1000);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (integration_webhooks.DeliveryRec row : store.listDeliveries(tenantUuid, limit)) {
+                    if (row == null) continue;
+                    items.add(webhookDeliveryMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "integrations.events.emit": {
+                String eventType = str(params, "event_type").toLowerCase(Locale.ROOT).trim();
+                if (eventType.isBlank()) throw new IllegalArgumentException("event_type is required.");
+                Map<String, Object> payload = mapFrom(params.get("payload"), new LinkedHashMap<String, Object>());
+                integration_webhooks.DispatchResult result = store.dispatchEvent(tenantUuid, eventType, payload);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("event_type", eventType);
+                out.put("endpoint_count", result.endpointCount);
+                out.put("attempted_count", result.attemptedCount);
+                out.put("success_count", result.successCount);
+                out.put("failure_count", result.failureCount);
+                ArrayList<LinkedHashMap<String, Object>> deliveries = new ArrayList<LinkedHashMap<String, Object>>();
+                for (integration_webhooks.DeliveryRec row : result.deliveries) {
+                    if (row == null) continue;
+                    deliveries.add(webhookDeliveryMap(row));
+                }
+                out.put("deliveries", deliveries);
+                return out;
+            }
+
+            default:
+                throw new UnsupportedOperationException("Unknown operation: " + op);
+        }
+    }
+
+    private static LinkedHashMap<String, Object> executeAnalyticsOperation(String operation,
+                                                                            Map<String, Object> params,
+                                                                            String tenantUuid) throws Exception {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (!op.startsWith("analytics.")) return null;
+
+        kpi_analytics service = kpi_analytics.defaultService();
+        switch (op) {
+            case "analytics.kpis.summary": {
+                kpi_analytics.SummaryRec rec = service.summary(tenantUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("summary", analyticsSummaryMap(rec));
+                return out;
+            }
+
+            case "analytics.kpis.daily": {
+                int days = clampInt(intVal(params, "days", 30), 1, 366);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (kpi_analytics.DailyRec row : service.dailySeries(tenantUuid, days)) {
+                    if (row == null) continue;
+                    items.add(analyticsDailyMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("days", days);
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            default:
+                throw new UnsupportedOperationException("Unknown operation: " + op);
+        }
+    }
+
+    private static LinkedHashMap<String, Object> executeMailOperation(String operation,
+                                                                       Map<String, Object> params,
+                                                                       String tenantUuid) throws Exception {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (!op.startsWith("mail.")) return null;
+
+        postal_mail store = postal_mail.defaultStore();
+
+        switch (op) {
+            case "mail.items.list": {
+                boolean includeArchived = boolVal(params, "include_archived", false);
+                String matterFilter = str(params, "matter_uuid");
+                String directionFilter = str(params, "direction");
+                String statusFilter = str(params, "status");
+                String workflowFilter = str(params, "workflow");
+                String serviceFilter = str(params, "service");
+                String trackingFilter = str(params, "tracking_number");
+                String q = str(params, "q").toLowerCase(Locale.ROOT).trim();
+
+                List<postal_mail.MailItemRec> rows = store.listItems(tenantUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (postal_mail.MailItemRec row : rows) {
+                    if (row == null) continue;
+                    if (!includeArchived && row.archived) continue;
+                    if (!matterFilter.isBlank() && !matterFilter.equalsIgnoreCase(safe(row.matterUuid).trim())) continue;
+                    if (!directionFilter.isBlank() && !directionFilter.equalsIgnoreCase(safe(row.direction).trim())) continue;
+                    if (!statusFilter.isBlank() && !statusFilter.equalsIgnoreCase(safe(row.status).trim())) continue;
+                    if (!workflowFilter.isBlank() && !workflowFilter.equalsIgnoreCase(safe(row.workflow).trim())) continue;
+                    if (!serviceFilter.isBlank() && !serviceFilter.equalsIgnoreCase(safe(row.service).trim())) continue;
+                    if (!trackingFilter.isBlank() && !trackingFilter.equalsIgnoreCase(safe(row.trackingNumber).trim())) continue;
+                    if (!q.isBlank()) {
+                        String hay = (safe(row.subject) + " " + safe(row.notes) + " "
+                                + safe(row.providerReference) + " " + safe(row.trackingNumber)).toLowerCase(Locale.ROOT);
+                        if (!hay.contains(q)) continue;
+                    }
+                    items.add(mailItemMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "mail.items.get": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                postal_mail.MailItemRec row = store.getItem(tenantUuid, mailUuid);
+                if (row == null) throw new IllegalArgumentException("Mail item not found.");
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("mail", mailItemMap(row));
+
+                if (boolVal(params, "include_details", true)) {
+                    ArrayList<LinkedHashMap<String, Object>> parts = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (postal_mail.MailPartRec p : store.listParts(tenantUuid, mailUuid)) {
+                        if (p == null) continue;
+                        parts.add(mailPartMap(p));
+                    }
+
+                    ArrayList<LinkedHashMap<String, Object>> recipients = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (postal_mail.RecipientRec r : store.listRecipients(tenantUuid, mailUuid)) {
+                        if (r == null) continue;
+                        recipients.add(mailRecipientMap(r));
+                    }
+
+                    ArrayList<LinkedHashMap<String, Object>> trackingEvents = new ArrayList<LinkedHashMap<String, Object>>();
+                    for (postal_mail.TrackingEventRec e : store.listTrackingEvents(tenantUuid, mailUuid)) {
+                        if (e == null) continue;
+                        trackingEvents.add(mailTrackingEventMap(e));
+                    }
+
+                    out.put("parts", parts);
+                    out.put("recipients", recipients);
+                    out.put("tracking_events", trackingEvents);
+                }
+                return out;
+            }
+
+            case "mail.items.create": {
+                postal_mail.MailItemRec created = store.createItem(
+                        tenantUuid,
+                        str(params, "matter_uuid"),
+                        str(params, "direction"),
+                        str(params, "workflow"),
+                        str(params, "service"),
+                        str(params, "status"),
+                        str(params, "subject"),
+                        str(params, "notes"),
+                        str(params, "source_email_address"),
+                        str(params, "source_document_uuid"),
+                        str(params, "source_part_uuid"),
+                        str(params, "source_version_uuid"),
+                        str(params, "actor_user_uuid")
+                );
+
+                String mailUuid = safe(created == null ? "" : created.uuid).trim();
+                boolean allowInvalidAddress = boolVal(params, "allow_invalid_address", false);
+
+                List<Map<String, Object>> recipientRows = objectList(params.get("recipients"));
+                if (!recipientRows.isEmpty()) {
+                    ArrayList<postal_mail.RecipientRec> replacements = new ArrayList<postal_mail.RecipientRec>();
+                    for (Map<String, Object> rr : recipientRows) {
+                        if (rr == null) continue;
+                        replacements.add(mailRecipientInputFromMap(rr, tenantUuid));
+                    }
+                    store.replaceRecipients(tenantUuid, mailUuid, replacements, allowInvalidAddress);
+                }
+
+                List<Map<String, Object>> partRows = objectList(params.get("parts"));
+                for (Map<String, Object> pr : partRows) {
+                    if (pr == null) continue;
+                    store.addPart(
+                            tenantUuid,
+                            mailUuid,
+                            str(pr, "part_type"),
+                            str(pr, "label"),
+                            str(pr, "document_uuid"),
+                            str(pr, "part_uuid"),
+                            str(pr, "version_uuid"),
+                            str(pr, "notes"),
+                            str(params, "actor_user_uuid")
+                    );
+                }
+
+                if (hasParam(params, "tracking_number")
+                        || hasParam(params, "tracking_carrier")
+                        || hasParam(params, "tracking_status")) {
+                    store.updateTrackingSummary(
+                            tenantUuid,
+                            mailUuid,
+                            str(params, "tracking_carrier"),
+                            str(params, "tracking_number"),
+                            str(params, "tracking_status"),
+                            boolVal(params, "mark_sent_if_missing", true)
+                    );
+                }
+
+                List<Map<String, Object>> trackingRows = objectList(params.get("tracking_events"));
+                for (Map<String, Object> tr : trackingRows) {
+                    if (tr == null) continue;
+                    store.addTrackingEvent(
+                            tenantUuid,
+                            mailUuid,
+                            str(tr, "carrier"),
+                            str(tr, "tracking_number"),
+                            str(tr, "status"),
+                            str(tr, "location"),
+                            str(tr, "event_at"),
+                            str(tr, "notes"),
+                            str(tr, "source")
+                    );
+                }
+
+                if (hasParam(params, "archived")) {
+                    store.setArchived(tenantUuid, mailUuid, boolVal(params, "archived", false));
+                }
+
+                postal_mail.MailItemRec refreshed = store.getItem(tenantUuid, mailUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("mail", mailItemMap(refreshed));
+                return out;
+            }
+
+            case "mail.items.update": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                postal_mail.MailItemRec current = store.getItem(tenantUuid, mailUuid);
+                if (current == null) throw new IllegalArgumentException("Mail item not found.");
+
+                postal_mail.MailItemRec update = copyMailItem(current);
+                update.uuid = mailUuid;
+
+                if (hasParam(params, "matter_uuid")) update.matterUuid = str(params, "matter_uuid");
+                if (hasParam(params, "direction")) update.direction = str(params, "direction");
+                if (hasParam(params, "workflow")) update.workflow = str(params, "workflow");
+                if (hasParam(params, "service")) update.service = str(params, "service");
+                if (hasParam(params, "status")) update.status = str(params, "status");
+                if (hasParam(params, "subject")) update.subject = str(params, "subject");
+                if (hasParam(params, "notes")) update.notes = str(params, "notes");
+                if (hasParam(params, "source_email_address")) update.sourceEmailAddress = str(params, "source_email_address");
+                if (hasParam(params, "source_document_uuid")) update.sourceDocumentUuid = str(params, "source_document_uuid");
+                if (hasParam(params, "source_part_uuid")) update.sourcePartUuid = str(params, "source_part_uuid");
+                if (hasParam(params, "source_version_uuid")) update.sourceVersionUuid = str(params, "source_version_uuid");
+                if (hasParam(params, "filed_document_uuid")) update.filedDocumentUuid = str(params, "filed_document_uuid");
+                if (hasParam(params, "filed_part_uuid")) update.filedPartUuid = str(params, "filed_part_uuid");
+                if (hasParam(params, "filed_version_uuid")) update.filedVersionUuid = str(params, "filed_version_uuid");
+                if (hasParam(params, "tracking_carrier")) update.trackingCarrier = str(params, "tracking_carrier");
+                if (hasParam(params, "tracking_number")) update.trackingNumber = str(params, "tracking_number");
+                if (hasParam(params, "tracking_status")) update.trackingStatus = str(params, "tracking_status");
+                if (hasParam(params, "provider_reference")) update.providerReference = str(params, "provider_reference");
+                if (hasParam(params, "provider_message")) update.providerMessage = str(params, "provider_message");
+                if (hasParam(params, "provider_request_json")) update.providerRequestJson = str(params, "provider_request_json");
+                if (hasParam(params, "provider_response_json")) update.providerResponseJson = str(params, "provider_response_json");
+                if (hasParam(params, "address_validation_status")) update.addressValidationStatus = str(params, "address_validation_status");
+                if (hasParam(params, "received_at")) update.receivedAt = str(params, "received_at");
+                if (hasParam(params, "sent_at")) update.sentAt = str(params, "sent_at");
+                if (hasParam(params, "reviewed_by")) update.reviewedBy = str(params, "reviewed_by");
+                if (hasParam(params, "reviewed_at")) update.reviewedAt = str(params, "reviewed_at");
+                if (hasParam(params, "archived")) update.archived = boolVal(params, "archived", update.archived);
+
+                boolean changed = store.updateItem(tenantUuid, update);
+                postal_mail.MailItemRec refreshed = store.getItem(tenantUuid, mailUuid);
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("mail", mailItemMap(refreshed));
+                return out;
+            }
+
+            case "mail.items.set_archived": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                boolean archived = boolVal(params, "archived", true);
+                boolean changed = store.setArchived(tenantUuid, mailUuid, archived);
+                postal_mail.MailItemRec refreshed = store.getItem(tenantUuid, mailUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("mail", mailItemMap(refreshed));
+                return out;
+            }
+
+            case "mail.items.mark_reviewed": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                boolean changed = store.markReviewed(
+                        tenantUuid,
+                        mailUuid,
+                        str(params, "reviewed_by"),
+                        str(params, "review_notes")
+                );
+                postal_mail.MailItemRec refreshed = store.getItem(tenantUuid, mailUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("mail", mailItemMap(refreshed));
+                return out;
+            }
+
+            case "mail.items.link_document": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                boolean changed = store.linkFiledDocument(
+                        tenantUuid,
+                        mailUuid,
+                        str(params, "filed_document_uuid"),
+                        str(params, "filed_part_uuid"),
+                        str(params, "filed_version_uuid")
+                );
+                postal_mail.MailItemRec refreshed = store.getItem(tenantUuid, mailUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("mail", mailItemMap(refreshed));
+                return out;
+            }
+
+            case "mail.parts.list": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                boolean includeTrashed = boolVal(params, "include_trashed", false);
+                List<postal_mail.MailPartRec> rows = store.listParts(tenantUuid, mailUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (postal_mail.MailPartRec row : rows) {
+                    if (row == null) continue;
+                    if (!includeTrashed && row.trashed) continue;
+                    items.add(mailPartMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "mail.parts.add": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                Map<String, Object> nested = mapFrom(params.get("part"), params);
+                postal_mail.MailPartRec row = store.addPart(
+                        tenantUuid,
+                        mailUuid,
+                        str(nested, "part_type"),
+                        str(nested, "label"),
+                        str(nested, "document_uuid"),
+                        str(nested, "part_uuid"),
+                        str(nested, "version_uuid"),
+                        str(nested, "notes"),
+                        str(params, "actor_user_uuid")
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("part", mailPartMap(row));
+                return out;
+            }
+
+            case "mail.parts.set_trashed": {
+                String mailUuid = mailUuidParam(params);
+                String partUuid = str(params, "part_uuid");
+                if (mailUuid.isBlank() || partUuid.isBlank()) {
+                    throw new IllegalArgumentException("mail_uuid and part_uuid are required.");
+                }
+                boolean trashed = boolVal(params, "trashed", true);
+                boolean changed = store.setPartTrashed(tenantUuid, mailUuid, partUuid, trashed);
+                postal_mail.MailPartRec selected = null;
+                for (postal_mail.MailPartRec row : store.listParts(tenantUuid, mailUuid)) {
+                    if (row == null) continue;
+                    if (partUuid.equals(safe(row.uuid).trim())) {
+                        selected = row;
+                        break;
+                    }
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("part", mailPartMap(selected));
+                return out;
+            }
+
+            case "mail.recipients.list": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                List<postal_mail.RecipientRec> rows = store.listRecipients(tenantUuid, mailUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (postal_mail.RecipientRec row : rows) {
+                    if (row == null) continue;
+                    items.add(mailRecipientMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "mail.recipients.add": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                Map<String, Object> nested = mapFrom(params.get("recipient"), params);
+                postal_mail.RecipientRec input = mailRecipientInputFromMap(nested, tenantUuid);
+                postal_mail.RecipientRec row = store.addRecipient(
+                        tenantUuid,
+                        mailUuid,
+                        input,
+                        boolVal(params, "allow_invalid_address", false)
+                );
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("recipient", mailRecipientMap(row));
+                return out;
+            }
+
+            case "mail.recipients.replace": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                List<Map<String, Object>> rows = objectList(params.get("recipients"));
+                ArrayList<postal_mail.RecipientRec> replacements = new ArrayList<postal_mail.RecipientRec>();
+                for (Map<String, Object> row : rows) {
+                    if (row == null) continue;
+                    replacements.add(mailRecipientInputFromMap(row, tenantUuid));
+                }
+                boolean changed = store.replaceRecipients(
+                        tenantUuid,
+                        mailUuid,
+                        replacements,
+                        boolVal(params, "allow_invalid_address", false)
+                );
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (postal_mail.RecipientRec row : store.listRecipients(tenantUuid, mailUuid)) {
+                    if (row == null) continue;
+                    items.add(mailRecipientMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "mail.addresses.validate": {
+                Map<String, Object> nested = mapFrom(params.get("address"), params);
+                postal_mail.RecipientRec input = mailRecipientInputFromMap(nested, tenantUuid);
+                postal_mail.AddressInput address = mailAddressInputFromRecipient(input);
+                postal_mail.AddressValidationResult result = store.validateAddress(address);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("validation", mailAddressValidationMap(result));
+                out.put("valid", result.valid);
+                return out;
+            }
+
+            case "mail.tracking.validate": {
+                postal_mail.TrackingValidationResult result = postal_mail.validateTrackingNumber(str(params, "tracking_number"));
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("tracking", mailTrackingValidationMap(result));
+                out.put("valid", result.valid);
+                return out;
+            }
+
+            case "mail.tracking.list": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                List<postal_mail.TrackingEventRec> rows = store.listTrackingEvents(tenantUuid, mailUuid);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (postal_mail.TrackingEventRec row : rows) {
+                    if (row == null) continue;
+                    items.add(mailTrackingEventMap(row));
+                }
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                return out;
+            }
+
+            case "mail.tracking.add_event": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                Map<String, Object> nested = mapFrom(params.get("event"), params);
+                postal_mail.TrackingEventRec event = store.addTrackingEvent(
+                        tenantUuid,
+                        mailUuid,
+                        str(nested, "carrier"),
+                        str(nested, "tracking_number"),
+                        str(nested, "status"),
+                        str(nested, "location"),
+                        str(nested, "event_at"),
+                        str(nested, "notes"),
+                        str(nested, "source")
+                );
+                postal_mail.MailItemRec mail = store.getItem(tenantUuid, mailUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("event", mailTrackingEventMap(event));
+                out.put("mail", mailItemMap(mail));
+                return out;
+            }
+
+            case "mail.tracking.update_summary": {
+                String mailUuid = mailUuidParam(params);
+                if (mailUuid.isBlank()) throw new IllegalArgumentException("mail_uuid is required.");
+                boolean changed = store.updateTrackingSummary(
+                        tenantUuid,
+                        mailUuid,
+                        str(params, "tracking_carrier"),
+                        str(params, "tracking_number"),
+                        str(params, "tracking_status"),
+                        boolVal(params, "mark_sent_if_missing", true)
+                );
+                postal_mail.MailItemRec mail = store.getItem(tenantUuid, mailUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("updated", changed);
+                out.put("mail", mailItemMap(mail));
                 return out;
             }
 
@@ -3952,6 +5400,78 @@ public final class api_servlet extends HttpServlet {
         ops.put("tasks.round_robin.next_assignee", "Choose next assignee from task round-robin queue");
         ops.put("tasks.report.refresh", "Regenerate matter-linked task PDF report");
 
+        ops.put("leads.list", "List intake/CRM leads");
+        ops.put("leads.get", "Get one lead");
+        ops.put("leads.create", "Create lead intake/CRM record");
+        ops.put("leads.update", "Update lead intake/CRM record");
+        ops.put("leads.set_archived", "Archive/restore lead");
+        ops.put("leads.notes.list", "List lead notes/history entries");
+        ops.put("leads.notes.add", "Append lead note/history entry");
+        ops.put("leads.convert_to_matter", "Convert lead to retained matter");
+
+        ops.put("billing.overview", "Billing/trust overview across matters");
+        ops.put("billing.time_entries.list", "List billing time entries for matter");
+        ops.put("billing.time_entries.create", "Create billing time entry");
+        ops.put("billing.expense_entries.list", "List billing expense entries for matter");
+        ops.put("billing.expense_entries.create", "Create billing expense entry");
+        ops.put("invoices.list", "List invoices for matter");
+        ops.put("invoices.get", "Get invoice with optional payment/trust details");
+        ops.put("invoices.draft", "Draft invoice from unbilled time/expenses");
+        ops.put("invoices.finalize", "Finalize drafted invoice");
+        ops.put("invoices.link_external", "Link invoice to external bill identifier");
+        ops.put("payments.list", "List ledger payments by matter or invoice");
+        ops.put("payments.record", "Record operating payment against invoice");
+        ops.put("trust.deposits.record", "Record trust deposit");
+        ops.put("trust.apply.record", "Apply trust funds to invoice");
+        ops.put("trust.refunds.record", "Record trust refund");
+        ops.put("trust.transactions.list", "List trust transactions by matter or invoice");
+        ops.put("reconciliation.snapshot", "Generate trust three-way reconciliation snapshot");
+        ops.put("reconciliation.compliance", "Generate trust compliance snapshot");
+        ops.put("payment.processors.list", "List configured payment processor options");
+        ops.put("payment.checkout.create", "Create payment checkout transaction");
+        ops.put("payment.transactions.list", "List online payment transactions");
+        ops.put("payment.transactions.get", "Get one online payment transaction");
+        ops.put("payment.transactions.mark_paid", "Mark online payment transaction as paid and post to ledger");
+        ops.put("payment.transactions.mark_failed", "Mark online payment transaction as failed");
+        ops.put("payment.transactions.cancel", "Cancel online payment transaction");
+
+        ops.put("esign.providers.list", "List e-sign provider options");
+        ops.put("esign.requests.list", "List signature requests");
+        ops.put("esign.requests.get", "Get one signature request");
+        ops.put("esign.requests.create", "Create signature request");
+        ops.put("esign.requests.update_status", "Update signature request lifecycle status");
+        ops.put("esign.requests.events.list", "List signature request lifecycle events");
+
+        ops.put("integrations.webhooks.list", "List webhook integration endpoints");
+        ops.put("integrations.webhooks.get", "Get webhook integration endpoint");
+        ops.put("integrations.webhooks.create", "Create webhook integration endpoint");
+        ops.put("integrations.webhooks.update", "Update webhook integration endpoint");
+        ops.put("integrations.webhooks.delete", "Delete webhook integration endpoint");
+        ops.put("integrations.webhooks.deliveries.list", "List webhook delivery attempts");
+        ops.put("integrations.events.emit", "Emit integration event to webhook subscribers");
+
+        ops.put("analytics.kpis.summary", "Firm-level KPI summary");
+        ops.put("analytics.kpis.daily", "Daily KPI trend series");
+
+        ops.put("mail.items.list", "List inbound/outbound postal mail items");
+        ops.put("mail.items.get", "Get one postal mail item with recipients/parts/tracking");
+        ops.put("mail.items.create", "Create postal mail intake/outbound record (supports custom carriers/APIs)");
+        ops.put("mail.items.update", "Update postal mail metadata/provider fields (supports custom carriers/APIs)");
+        ops.put("mail.items.set_archived", "Archive/restore a postal mail item");
+        ops.put("mail.items.mark_reviewed", "Mark inbound mail as reviewed");
+        ops.put("mail.items.link_document", "Link reviewed mail to filed case document references");
+        ops.put("mail.parts.list", "List mail parts (envelope, letter, receipt, proof, tracking)");
+        ops.put("mail.parts.add", "Add a file/reference part to a mail item");
+        ops.put("mail.parts.set_trashed", "Trash/restore a mail part");
+        ops.put("mail.recipients.list", "List outbound recipients for a mail item");
+        ops.put("mail.recipients.add", "Add one recipient (manual or contact-derived)");
+        ops.put("mail.recipients.replace", "Replace all recipients for a mail item");
+        ops.put("mail.addresses.validate", "Validate/normalize recipient address payload");
+        ops.put("mail.tracking.validate", "Validate tracking number format (includes custom carrier fallback)");
+        ops.put("mail.tracking.list", "List tracking events for a mail item");
+        ops.put("mail.tracking.add_event", "Append tracking event and update summary");
+        ops.put("mail.tracking.update_summary", "Update mail tracking carrier/number/status summary");
+
         ops.put("case.attributes.list", "List case attribute definitions");
         ops.put("case.attributes.save", "Save case attribute definitions");
         ops.put("case.fields.get", "Read case fields");
@@ -3984,6 +5504,7 @@ public final class api_servlet extends HttpServlet {
         ops.put("document.versions.list", "List part versions");
         ops.put("document.versions.create", "Create part version metadata");
         ops.put("document.versions.render_page", "Render source PDF/word-processor version page as PNG base64 + text + navigation");
+        ops.put("document.versions.find_similar", "Find similar/duplicate document versions using tracked page/photo image hashes");
         ops.put("document.versions.redact", "Redact source PDF version and create new redacted version");
         ops.put("search.types", "List configured search types and operators");
         ops.put("search.jobs.enqueue", "Queue asynchronous search job");
@@ -4083,19 +5604,76 @@ public final class api_servlet extends HttpServlet {
         );
     }
 
+    private static boolean credentialHasPermission(String credentialScope, String permissionKey) {
+        String key = safe(permissionKey).trim().toLowerCase(Locale.ROOT);
+        if (key.isBlank()) return true;
+        CredentialScope resolved = resolveCredentialScopePermissions(credentialScope);
+        if (resolved.fullAccess) return true;
+        if (resolved.permissionKeys.contains("tenant_admin")) return true;
+        return resolved.permissionKeys.contains(key);
+    }
+
     private static void requireCredentialPermission(String credentialScope,
                                                     String permissionKey,
                                                     String operation) {
         String key = safe(permissionKey).trim().toLowerCase(Locale.ROOT);
-        if (key.isBlank()) return;
-        CredentialScope resolved = resolveCredentialScopePermissions(credentialScope);
-        if (resolved.fullAccess) return;
-        if (resolved.permissionKeys.contains("tenant_admin")) return;
-        if (resolved.permissionKeys.contains(key)) return;
+        if (credentialHasPermission(credentialScope, key)) return;
         throw new SecurityException(
                 "Credential scope does not allow operation '" + safe(operation).trim().toLowerCase(Locale.ROOT)
                         + "'. Required permission: " + key
         );
+    }
+
+    private static String defaultSearchRequestedBy(String credentialId, String credentialLabel) {
+        String requestedBy = safe(credentialId).trim();
+        if (requestedBy.isBlank()) requestedBy = safe(credentialLabel).trim();
+        if (requestedBy.isBlank()) requestedBy = "api_client";
+        return requestedBy;
+    }
+
+    private static String resolveSearchRequestedBy(Map<String, Object> params,
+                                                   String credentialId,
+                                                   String credentialLabel,
+                                                   String credentialScope,
+                                                   String operation) {
+        String fallback = defaultSearchRequestedBy(credentialId, credentialLabel);
+        String requestedBy = str(params, "requested_by");
+        if (requestedBy.isBlank()) return fallback;
+        if (requestedBy.equalsIgnoreCase(fallback)) return fallback;
+
+        String label = safe(credentialLabel).trim();
+        if (!label.isBlank() && requestedBy.equalsIgnoreCase(label)) {
+            return fallback;
+        }
+
+        requireCredentialPermission(credentialScope, "security.manage", operation);
+        return requestedBy;
+    }
+
+    private static boolean searchJobVisibleToCredential(search_jobs_service.SearchJobSnapshot row,
+                                                        String credentialScope) {
+        if (row == null) return false;
+        search_jobs_service.SearchTypeInfo type = search_jobs_service.defaultService().getSearchType(row.searchType);
+        if (type == null) return credentialHasPermission(credentialScope, "security.manage");
+        return credentialHasPermission(credentialScope, safe(type.permissionKey));
+    }
+
+    private static void requireSearchJobVisibleToCredential(search_jobs_service.SearchJobSnapshot row,
+                                                            String credentialScope,
+                                                            String operation) {
+        if (row == null) throw new IllegalArgumentException("Search job not found.");
+        search_jobs_service.SearchTypeInfo type = search_jobs_service.defaultService().getSearchType(row.searchType);
+        String permissionKey = safe(type == null ? "" : type.permissionKey).trim();
+        if (!permissionKey.isBlank()) {
+            requireCredentialPermission(credentialScope, permissionKey, operation);
+            return;
+        }
+        if (!credentialHasPermission(credentialScope, "security.manage")) {
+            throw new SecurityException(
+                    "Credential scope does not allow operation '" + safe(operation).trim().toLowerCase(Locale.ROOT)
+                            + "'."
+            );
+        }
     }
 
     private static List<String> requiredPermissionKeys(String operation) {
@@ -4120,6 +5698,22 @@ public final class api_servlet extends HttpServlet {
 
         if (op.startsWith("task.attributes.")) return List.of("attributes.manage");
         if (op.startsWith("task.fields.") || op.startsWith("tasks.")) return List.of("tasks.access");
+        if (op.startsWith("leads.")) return List.of("cases.access");
+
+        if (op.startsWith("billing.")
+                || op.startsWith("invoices.")
+                || op.startsWith("payments.")
+                || op.startsWith("payment.")
+                || op.startsWith("trust.")
+                || op.startsWith("reconciliation.")) return List.of("cases.access");
+
+        if (op.startsWith("esign.")) return List.of("forms.access", "cases.access");
+        if (op.startsWith("integrations.webhooks.") || "integrations.events.emit".equals(op)) {
+            return List.of("integrations.manage");
+        }
+        if (op.startsWith("analytics.")) return List.of("logs.view", "cases.access");
+
+        if (op.startsWith("mail.")) return List.of("mail.access");
 
         if (op.startsWith("case.attributes.")) return List.of("attributes.manage");
         if (op.startsWith("case.fields.") || op.startsWith("case.list_items.")) return List.of("case_fields.access");
@@ -4304,6 +5898,7 @@ curl -k -X POST "%s/execute" \\
 - Case conflicts XML scan/list/search management
 - Facts case plans (Claims->Elements->Facts), source document linkage, landscape report refresh
 - Tasks (custom attributes/fields, subtasks, associations, notes, assignments, round-robin, task report refresh)
+- Postal mail module (inbound/outbound workflow, recipients, multi-part artifacts, address validation, tracking, custom carriers/APIs)
 - Document taxonomy, attributes, documents, parts, versions
 - PDF version rendering and redaction
 - Templates, template tools, assembly, assembled forms
@@ -4336,6 +5931,388 @@ When features are added or changed in the application, matching API operations s
         m.put("last_used_from_ip", r.lastUsedFromIp);
         m.put("revoked", r.revoked);
         return m;
+    }
+
+    private static leads_crm.LeadInput leadInputFromMap(Map<String, Object> raw) {
+        leads_crm.LeadInput out = new leads_crm.LeadInput();
+        if (raw == null) return out;
+        out.status = str(raw, "status");
+        out.source = str(raw, "source");
+        out.intakeChannel = str(raw, "intake_channel");
+        out.referredBy = str(raw, "referred_by");
+        out.firstName = str(raw, "first_name");
+        out.lastName = str(raw, "last_name");
+        out.displayName = str(raw, "display_name");
+        out.company = str(raw, "company");
+        out.email = str(raw, "email");
+        out.phone = str(raw, "phone");
+        out.notes = str(raw, "notes");
+        out.tagsCsv = hasParam(raw, "tags_csv") ? str(raw, "tags_csv") : String.join(",", csvOrList(raw.get("tags")));
+        out.assignedUserUuid = str(raw, "assigned_user_uuid");
+        out.matterUuid = str(raw, "matter_uuid");
+        out.archived = boolVal(raw, "archived", false);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> leadMap(leads_crm.LeadRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("lead_uuid", safe(r.leadUuid));
+        out.put("status", safe(r.status));
+        out.put("source", safe(r.source));
+        out.put("intake_channel", safe(r.intakeChannel));
+        out.put("referred_by", safe(r.referredBy));
+        out.put("first_name", safe(r.firstName));
+        out.put("last_name", safe(r.lastName));
+        out.put("display_name", safe(r.displayName));
+        out.put("company", safe(r.company));
+        out.put("email", safe(r.email));
+        out.put("phone", safe(r.phone));
+        out.put("notes", safe(r.notes));
+        out.put("tags_csv", safe(r.tagsCsv));
+        out.put("tags", csvOrList(safe(r.tagsCsv)));
+        out.put("assigned_user_uuid", safe(r.assignedUserUuid));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("archived", r.archived);
+        out.put("converted_at", safe(r.convertedAt));
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> leadNoteMap(leads_crm.LeadNoteRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("note_uuid", safe(r.noteUuid));
+        out.put("lead_uuid", safe(r.leadUuid));
+        out.put("body", safe(r.body));
+        out.put("author_user_uuid", safe(r.authorUserUuid));
+        out.put("created_at", safe(r.createdAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> billingTimeEntryMap(billing_accounting.TimeEntryRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("time_entry_uuid", safe(r.uuid));
+        out.put("source", safe(r.source));
+        out.put("source_id", safe(r.sourceId));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("user_uuid", safe(r.userUuid));
+        out.put("activity_code", safe(r.activityCode));
+        out.put("note", safe(r.note));
+        out.put("minutes", r.minutes);
+        out.put("rate_cents", r.rateCents);
+        out.put("currency", safe(r.currency));
+        out.put("billable", r.billable);
+        out.put("worked_at", safe(r.workedAt));
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("billed_invoice_uuid", safe(r.billedInvoiceUuid));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> billingExpenseEntryMap(billing_accounting.ExpenseEntryRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("expense_entry_uuid", safe(r.uuid));
+        out.put("source", safe(r.source));
+        out.put("source_id", safe(r.sourceId));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("description", safe(r.description));
+        out.put("amount_cents", r.amountCents);
+        out.put("tax_cents", r.taxCents);
+        out.put("currency", safe(r.currency));
+        out.put("billable", r.billable);
+        out.put("incurred_at", safe(r.incurredAt));
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("billed_invoice_uuid", safe(r.billedInvoiceUuid));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> billingInvoiceLineMap(billing_accounting.InvoiceLineRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("line_uuid", safe(r.uuid));
+        out.put("kind", safe(r.type));
+        out.put("type", safe(r.type));
+        out.put("source_uuid", safe(r.sourceUuid));
+        out.put("description", safe(r.description));
+        out.put("quantity", r.quantity);
+        out.put("unit_amount_cents", r.unitAmountCents);
+        out.put("tax_cents", r.taxCents);
+        out.put("total_cents", r.totalCents);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> billingInvoiceMap(billing_accounting.InvoiceRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("invoice_uuid", safe(r.uuid));
+        out.put("source", safe(r.source));
+        out.put("source_id", safe(r.sourceId));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("status", safe(r.status));
+        out.put("currency", safe(r.currency));
+        out.put("issued_at", safe(r.issuedAt));
+        out.put("due_at", safe(r.dueAt));
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("subtotal_cents", r.subtotalCents);
+        out.put("tax_cents", r.taxCents);
+        out.put("total_cents", r.totalCents);
+        out.put("paid_cents", r.paidCents);
+        out.put("outstanding_cents", r.outstandingCents);
+        out.put("source_time_entry_uuids", new ArrayList<String>(r.sourceTimeEntryUuids));
+        out.put("source_expense_entry_uuids", new ArrayList<String>(r.sourceExpenseEntryUuids));
+        out.put("void_reason", safe(r.voidReason));
+        ArrayList<LinkedHashMap<String, Object>> lines = new ArrayList<LinkedHashMap<String, Object>>();
+        for (billing_accounting.InvoiceLineRec line : r.lines) {
+            if (line == null) continue;
+            lines.add(billingInvoiceLineMap(line));
+        }
+        out.put("lines", lines);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> billingPaymentMap(billing_accounting.PaymentRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("payment_uuid", safe(r.uuid));
+        out.put("source", safe(r.source));
+        out.put("source_id", safe(r.sourceId));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("invoice_uuid", safe(r.invoiceUuid));
+        out.put("kind", safe(r.kind));
+        out.put("amount_cents", r.amountCents);
+        out.put("currency", safe(r.currency));
+        out.put("posted_at", safe(r.postedAt));
+        out.put("reference", safe(r.reference));
+        out.put("created_at", safe(r.createdAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> billingTrustTxnMap(billing_accounting.TrustTxnRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("trust_txn_uuid", safe(r.uuid));
+        out.put("source", safe(r.source));
+        out.put("source_id", safe(r.sourceId));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("invoice_uuid", safe(r.invoiceUuid));
+        out.put("kind", safe(r.kind));
+        out.put("type", safe(r.kind));
+        out.put("amount_cents", r.amountCents);
+        out.put("currency", safe(r.currency));
+        out.put("posted_at", safe(r.postedAt));
+        out.put("reference", safe(r.reference));
+        out.put("created_at", safe(r.createdAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> billingTrustReconciliationMap(billing_accounting.TrustReconciliationRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("statement_date", safe(r.statementDate));
+        out.put("statement_ending_balance_cents", r.statementEndingBalanceCents);
+        out.put("book_trust_bank_balance_cents", r.bookTrustBankBalanceCents);
+        out.put("client_ledger_total_cents", r.clientLedgerTotalCents);
+        out.put("trust_liability_balance_cents", r.trustLiabilityBalanceCents);
+        out.put("bank_vs_book_delta_cents", r.bankVsBookDeltaCents);
+        out.put("book_vs_client_delta_cents", r.bookVsClientLedgerDeltaCents);
+        out.put("book_vs_liability_delta_cents", r.bookVsTrustLiabilityDeltaCents);
+        out.put("balanced", r.balanced);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> billingComplianceMap(billing_accounting.ComplianceSnapshot r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("reconciliation", billingTrustReconciliationMap(r.trustReconciliation));
+        out.put("violations", new ArrayList<String>(r.violations));
+        out.put("violation_count", r.violations == null ? 0 : r.violations.size());
+        return out;
+    }
+
+    private static online_payments.CheckoutInput checkoutInputFromMap(Map<String, Object> raw) {
+        online_payments.CheckoutInput out = new online_payments.CheckoutInput();
+        if (raw == null) return out;
+        out.invoiceUuid = str(raw, "invoice_uuid");
+        out.processorKey = str(raw, "processor_key");
+        out.currency = str(raw, "currency");
+        out.amountCents = moneyCents(raw, "amount", "amount_cents");
+        out.payerName = str(raw, "payer_name");
+        out.payerEmail = str(raw, "payer_email");
+        out.returnUrl = str(raw, "return_url");
+        out.cancelUrl = str(raw, "cancel_url");
+        out.metadataJson = str(raw, "metadata_json");
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> paymentTransactionMap(online_payments.PaymentTransactionRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("transaction_uuid", safe(r.transactionUuid));
+        out.put("processor_key", safe(r.processorKey));
+        out.put("status", safe(r.status));
+        out.put("invoice_uuid", safe(r.invoiceUuid));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("currency", safe(r.currency));
+        out.put("amount_cents", r.amountCents);
+        out.put("checkout_url", safe(r.checkoutUrl));
+        out.put("provider_checkout_id", safe(r.providerCheckoutId));
+        out.put("provider_payment_id", safe(r.providerPaymentId));
+        out.put("payer_name", safe(r.payerName));
+        out.put("payer_email", safe(r.payerEmail));
+        out.put("reference", safe(r.reference));
+        out.put("error_message", safe(r.errorMessage));
+        out.put("metadata_json", safe(r.metadataJson));
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("paid_at", safe(r.paidAt));
+        out.put("failed_at", safe(r.failedAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> esignProviderRow(String key, String label) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        out.put("provider_key", safe(key).trim().toLowerCase(Locale.ROOT));
+        out.put("label", safe(label).trim());
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> signatureRequestMap(esign_requests.SignatureRequestRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("request_uuid", safe(r.requestUuid));
+        out.put("provider_key", safe(r.providerKey));
+        out.put("provider_request_id", safe(r.providerRequestId));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("document_uuid", safe(r.documentUuid));
+        out.put("part_uuid", safe(r.partUuid));
+        out.put("version_uuid", safe(r.versionUuid));
+        out.put("subject", safe(r.subject));
+        out.put("to", safe(r.toCsv));
+        out.put("cc", safe(r.ccCsv));
+        out.put("bcc", safe(r.bccCsv));
+        out.put("signature_link", safe(r.signatureLink));
+        out.put("delivery_mode", safe(r.deliveryMode));
+        out.put("status", safe(r.status));
+        out.put("requested_by_user_uuid", safe(r.requestedByUserUuid));
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("sent_at", safe(r.sentAt));
+        out.put("completed_at", safe(r.completedAt));
+        out.put("last_event_at", safe(r.lastEventAt));
+        out.put("last_event_type", safe(r.lastEventType));
+        out.put("last_event_note", safe(r.lastEventNote));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> signatureEventMap(esign_requests.SignatureEventRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("event_uuid", safe(r.eventUuid));
+        out.put("request_uuid", safe(r.requestUuid));
+        out.put("event_type", safe(r.eventType));
+        out.put("status", safe(r.status));
+        out.put("note", safe(r.note));
+        out.put("actor_user_uuid", safe(r.actorUserUuid));
+        out.put("provider_request_id", safe(r.providerRequestId));
+        out.put("created_at", safe(r.createdAt));
+        return out;
+    }
+
+    private static integration_webhooks.EndpointInput integrationWebhookInputFromMap(Map<String, Object> raw) {
+        integration_webhooks.EndpointInput out = new integration_webhooks.EndpointInput();
+        if (raw == null) return out;
+        out.label = str(raw, "label");
+        out.url = str(raw, "url");
+        out.eventFilterCsv = hasParam(raw, "event_filter_csv")
+                ? str(raw, "event_filter_csv")
+                : String.join(",", csvOrList(raw.get("events")));
+        out.signingSecret = str(raw, "signing_secret");
+        out.enabled = boolVal(raw, "enabled", true);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> webhookEndpointMap(integration_webhooks.EndpointRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("webhook_uuid", safe(r.webhookUuid));
+        out.put("label", safe(r.label));
+        out.put("url", safe(r.url));
+        out.put("event_filter_csv", safe(r.eventFilterCsv));
+        out.put("signing_secret_masked", safe(r.signingSecretMasked));
+        out.put("enabled", r.enabled);
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("last_attempt_at", safe(r.lastAttemptAt));
+        out.put("last_success_at", safe(r.lastSuccessAt));
+        out.put("last_error", safe(r.lastError));
+        out.put("last_status_code", r.lastStatusCode);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> webhookDeliveryMap(integration_webhooks.DeliveryRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("delivery_uuid", safe(r.deliveryUuid));
+        out.put("webhook_uuid", safe(r.webhookUuid));
+        out.put("event_type", safe(r.eventType));
+        out.put("success", r.success);
+        out.put("status_code", r.statusCode);
+        out.put("request_body_sha256", safe(r.requestBodySha256));
+        out.put("error", safe(r.error));
+        out.put("attempted_at", safe(r.attemptedAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> analyticsSummaryMap(kpi_analytics.SummaryRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("generated_at", safe(r.generatedAt));
+        out.put("matters_total", r.mattersTotal);
+        out.put("matters_active", r.mattersActive);
+        out.put("leads_total", r.leadsTotal);
+        out.put("leads_new", r.leadsNew);
+        out.put("leads_qualified", r.leadsQualified);
+        out.put("leads_consult_scheduled", r.leadsConsultScheduled);
+        out.put("leads_retained", r.leadsRetained);
+        out.put("leads_closed_lost", r.leadsClosedLost);
+        out.put("lead_conversion_rate", r.leadConversionRate);
+        out.put("tasks_total", r.tasksTotal);
+        out.put("tasks_open", r.tasksOpen);
+        out.put("tasks_completed", r.tasksCompleted);
+        out.put("tasks_overdue", r.tasksOverdue);
+        out.put("invoices_total", r.invoicesTotal);
+        out.put("invoices_issued", r.invoicesIssued);
+        out.put("invoices_paid", r.invoicesPaid);
+        out.put("invoice_outstanding_cents", r.invoiceOutstandingCents);
+        out.put("invoice_paid_cents", r.invoicePaidCents);
+        out.put("trust_balance_total_cents", r.trustBalanceTotalCents);
+        out.put("payments_received_cents", r.paymentsReceivedCents);
+        out.put("payment_transactions_pending", r.paymentTransactionsPending);
+        out.put("payment_transactions_paid", r.paymentTransactionsPaid);
+        out.put("payment_transactions_failed", r.paymentTransactionsFailed);
+        out.put("signatures_total", r.signaturesTotal);
+        out.put("signatures_pending", r.signaturesPending);
+        out.put("signatures_signed", r.signaturesSigned);
+        out.put("signatures_declined", r.signaturesDeclined);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> analyticsDailyMap(kpi_analytics.DailyRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("date", safe(r.date));
+        out.put("leads_created", r.leadsCreated);
+        out.put("leads_converted", r.leadsConverted);
+        out.put("payments_collected_cents", r.paymentsCollectedCents);
+        out.put("signatures_completed", r.signaturesCompleted);
+        out.put("tasks_completed", r.tasksCompleted);
+        return out;
     }
 
     private static LinkedHashMap<String, Object> roleMap(users_roles.RoleRec r) {
@@ -4470,6 +6447,254 @@ When features are added or changed in the application, matching API operations s
             linkRows.add(row);
         }
         out.put("matter_links", linkRows);
+        return out;
+    }
+
+    private static postal_mail.MailItemRec copyMailItem(postal_mail.MailItemRec in) {
+        postal_mail.MailItemRec out = new postal_mail.MailItemRec();
+        if (in == null) return out;
+        out.uuid = safe(in.uuid);
+        out.matterUuid = safe(in.matterUuid);
+        out.direction = safe(in.direction);
+        out.workflow = safe(in.workflow);
+        out.service = safe(in.service);
+        out.status = safe(in.status);
+        out.subject = safe(in.subject);
+        out.notes = safe(in.notes);
+        out.sourceEmailAddress = safe(in.sourceEmailAddress);
+        out.sourceDocumentUuid = safe(in.sourceDocumentUuid);
+        out.sourcePartUuid = safe(in.sourcePartUuid);
+        out.sourceVersionUuid = safe(in.sourceVersionUuid);
+        out.filedDocumentUuid = safe(in.filedDocumentUuid);
+        out.filedPartUuid = safe(in.filedPartUuid);
+        out.filedVersionUuid = safe(in.filedVersionUuid);
+        out.trackingCarrier = safe(in.trackingCarrier);
+        out.trackingNumber = safe(in.trackingNumber);
+        out.trackingStatus = safe(in.trackingStatus);
+        out.providerReference = safe(in.providerReference);
+        out.providerMessage = safe(in.providerMessage);
+        out.providerRequestJson = safe(in.providerRequestJson);
+        out.providerResponseJson = safe(in.providerResponseJson);
+        out.addressValidationStatus = safe(in.addressValidationStatus);
+        out.createdBy = safe(in.createdBy);
+        out.createdAt = safe(in.createdAt);
+        out.updatedAt = safe(in.updatedAt);
+        out.receivedAt = safe(in.receivedAt);
+        out.sentAt = safe(in.sentAt);
+        out.reviewedBy = safe(in.reviewedBy);
+        out.reviewedAt = safe(in.reviewedAt);
+        out.archived = in.archived;
+        return out;
+    }
+
+    private static postal_mail.RecipientRec mailRecipientInputFromMap(Map<String, Object> raw, String tenantUuid) throws Exception {
+        postal_mail.RecipientRec out = new postal_mail.RecipientRec();
+        Map<String, Object> row = raw == null ? new LinkedHashMap<String, Object>() : raw;
+
+        out.uuid = str(row, "recipient_uuid");
+        if (out.uuid.isBlank()) out.uuid = str(row, "uuid");
+        out.contactUuid = str(row, "contact_uuid");
+
+        if (!out.contactUuid.isBlank()) {
+            contacts.ContactRec contact = contacts.defaultStore().getByUuid(tenantUuid, out.contactUuid);
+            if (contact == null) throw new IllegalArgumentException("Recipient contact not found: " + out.contactUuid);
+            applyMailRecipientContactDefaults(out, contact, intVal(row, "address_slot", 1));
+        }
+
+        if (hasParam(row, "display_name")) out.displayName = str(row, "display_name");
+        if (hasParam(row, "company_name")) out.companyName = str(row, "company_name");
+
+        if (hasParam(row, "address_line_1")) out.addressLine1 = str(row, "address_line_1");
+        else if (hasParam(row, "street")) out.addressLine1 = str(row, "street");
+        if (hasParam(row, "address_line_2")) out.addressLine2 = str(row, "address_line_2");
+        if (hasParam(row, "city")) out.city = str(row, "city");
+        if (hasParam(row, "state")) out.state = str(row, "state");
+        if (hasParam(row, "postal_code")) out.postalCode = str(row, "postal_code");
+        else if (hasParam(row, "zip")) out.postalCode = str(row, "zip");
+        if (hasParam(row, "country")) out.country = str(row, "country");
+        if (hasParam(row, "email_address")) out.emailAddress = str(row, "email_address");
+        else if (hasParam(row, "email")) out.emailAddress = str(row, "email");
+        if (hasParam(row, "phone")) out.phone = str(row, "phone");
+        return out;
+    }
+
+    private static void applyMailRecipientContactDefaults(postal_mail.RecipientRec recipient,
+                                                          contacts.ContactRec contact,
+                                                          int addressSlot) {
+        if (recipient == null || contact == null) return;
+        recipient.displayName = safe(contact.displayName).trim();
+        if (recipient.displayName.isBlank()) {
+            recipient.displayName = (safe(contact.givenName) + " " + safe(contact.surname)).trim();
+        }
+        recipient.companyName = safe(contact.companyName).trim();
+
+        int slot = clampInt(addressSlot, 1, 3);
+        if (slot == 2) {
+            recipient.addressLine1 = safe(contact.streetSecondary).trim();
+            recipient.city = safe(contact.citySecondary).trim();
+            recipient.state = safe(contact.stateSecondary).trim();
+            recipient.postalCode = safe(contact.postalCodeSecondary).trim();
+            recipient.country = safe(contact.countrySecondary).trim();
+        } else if (slot == 3) {
+            recipient.addressLine1 = safe(contact.streetTertiary).trim();
+            recipient.city = safe(contact.cityTertiary).trim();
+            recipient.state = safe(contact.stateTertiary).trim();
+            recipient.postalCode = safe(contact.postalCodeTertiary).trim();
+            recipient.country = safe(contact.countryTertiary).trim();
+        } else {
+            recipient.addressLine1 = safe(contact.street).trim();
+            recipient.city = safe(contact.city).trim();
+            recipient.state = safe(contact.state).trim();
+            recipient.postalCode = safe(contact.postalCode).trim();
+            recipient.country = safe(contact.country).trim();
+        }
+
+        recipient.emailAddress = firstNonBlank(contact.emailPrimary, contact.emailSecondary, contact.emailTertiary);
+        recipient.phone = firstNonBlank(contact.businessPhone, contact.mobilePhone, contact.homePhone, contact.otherPhone, contact.businessPhone2);
+    }
+
+    private static postal_mail.AddressInput mailAddressInputFromRecipient(postal_mail.RecipientRec recipient) {
+        postal_mail.AddressInput out = new postal_mail.AddressInput();
+        if (recipient == null) return out;
+        out.displayName = safe(recipient.displayName);
+        out.companyName = safe(recipient.companyName);
+        out.addressLine1 = safe(recipient.addressLine1);
+        out.addressLine2 = safe(recipient.addressLine2);
+        out.city = safe(recipient.city);
+        out.state = safe(recipient.state);
+        out.postalCode = safe(recipient.postalCode);
+        out.country = safe(recipient.country);
+        out.emailAddress = safe(recipient.emailAddress);
+        out.phone = safe(recipient.phone);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> mailItemMap(postal_mail.MailItemRec row) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (row == null) return out;
+        out.put("uuid", safe(row.uuid));
+        out.put("mail_uuid", safe(row.uuid));
+        out.put("matter_uuid", safe(row.matterUuid));
+        out.put("direction", safe(row.direction));
+        out.put("workflow", safe(row.workflow));
+        out.put("service", safe(row.service));
+        out.put("status", safe(row.status));
+        out.put("subject", safe(row.subject));
+        out.put("notes", safe(row.notes));
+        out.put("source_email_address", safe(row.sourceEmailAddress));
+        out.put("source_document_uuid", safe(row.sourceDocumentUuid));
+        out.put("source_part_uuid", safe(row.sourcePartUuid));
+        out.put("source_version_uuid", safe(row.sourceVersionUuid));
+        out.put("filed_document_uuid", safe(row.filedDocumentUuid));
+        out.put("filed_part_uuid", safe(row.filedPartUuid));
+        out.put("filed_version_uuid", safe(row.filedVersionUuid));
+        out.put("tracking_carrier", safe(row.trackingCarrier));
+        out.put("tracking_number", safe(row.trackingNumber));
+        out.put("tracking_status", safe(row.trackingStatus));
+        out.put("provider_reference", safe(row.providerReference));
+        out.put("provider_message", safe(row.providerMessage));
+        out.put("provider_request_json", safe(row.providerRequestJson));
+        out.put("provider_response_json", safe(row.providerResponseJson));
+        out.put("address_validation_status", safe(row.addressValidationStatus));
+        out.put("created_by", safe(row.createdBy));
+        out.put("created_at", safe(row.createdAt));
+        out.put("updated_at", safe(row.updatedAt));
+        out.put("received_at", safe(row.receivedAt));
+        out.put("sent_at", safe(row.sentAt));
+        out.put("reviewed_by", safe(row.reviewedBy));
+        out.put("reviewed_at", safe(row.reviewedAt));
+        out.put("archived", row.archived);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> mailPartMap(postal_mail.MailPartRec row) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (row == null) return out;
+        out.put("uuid", safe(row.uuid));
+        out.put("mail_part_uuid", safe(row.uuid));
+        out.put("part_uuid", safe(row.partUuid));
+        out.put("mail_uuid", safe(row.mailUuid));
+        out.put("part_type", safe(row.partType));
+        out.put("label", safe(row.label));
+        out.put("document_uuid", safe(row.documentUuid));
+        out.put("linked_part_uuid", safe(row.partUuid));
+        out.put("version_uuid", safe(row.versionUuid));
+        out.put("notes", safe(row.notes));
+        out.put("created_by", safe(row.createdBy));
+        out.put("created_at", safe(row.createdAt));
+        out.put("updated_at", safe(row.updatedAt));
+        out.put("trashed", row.trashed);
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> mailRecipientMap(postal_mail.RecipientRec row) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (row == null) return out;
+        out.put("uuid", safe(row.uuid));
+        out.put("recipient_uuid", safe(row.uuid));
+        out.put("mail_uuid", safe(row.mailUuid));
+        out.put("contact_uuid", safe(row.contactUuid));
+        out.put("display_name", safe(row.displayName));
+        out.put("company_name", safe(row.companyName));
+        out.put("address_line_1", safe(row.addressLine1));
+        out.put("address_line_2", safe(row.addressLine2));
+        out.put("city", safe(row.city));
+        out.put("state", safe(row.state));
+        out.put("postal_code", safe(row.postalCode));
+        out.put("country", safe(row.country));
+        out.put("email_address", safe(row.emailAddress));
+        out.put("phone", safe(row.phone));
+        out.put("validated", row.validated);
+        out.put("validation_message", safe(row.validationMessage));
+        out.put("created_at", safe(row.createdAt));
+        out.put("updated_at", safe(row.updatedAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> mailTrackingEventMap(postal_mail.TrackingEventRec row) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (row == null) return out;
+        out.put("uuid", safe(row.uuid));
+        out.put("event_uuid", safe(row.uuid));
+        out.put("mail_uuid", safe(row.mailUuid));
+        out.put("carrier", safe(row.carrier));
+        out.put("tracking_number", safe(row.trackingNumber));
+        out.put("status", safe(row.status));
+        out.put("location", safe(row.location));
+        out.put("event_at", safe(row.eventAt));
+        out.put("notes", safe(row.notes));
+        out.put("source", safe(row.source));
+        out.put("created_at", safe(row.createdAt));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> mailAddressValidationMap(postal_mail.AddressValidationResult row) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (row == null) return out;
+        out.put("valid", row.valid);
+        out.put("message", safe(row.message));
+        out.put("display_name", safe(row.normalizedDisplayName));
+        out.put("company_name", safe(row.normalizedCompanyName));
+        out.put("address_line_1", safe(row.normalizedAddressLine1));
+        out.put("address_line_2", safe(row.normalizedAddressLine2));
+        out.put("city", safe(row.normalizedCity));
+        out.put("state", safe(row.normalizedState));
+        out.put("postal_code", safe(row.normalizedPostalCode));
+        out.put("country", safe(row.normalizedCountry));
+        out.put("email_address", safe(row.normalizedEmailAddress));
+        out.put("phone", safe(row.normalizedPhone));
+        out.put("errors", new ArrayList<String>(row.errors == null ? List.of() : row.errors));
+        out.put("warnings", new ArrayList<String>(row.warnings == null ? List.of() : row.warnings));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> mailTrackingValidationMap(postal_mail.TrackingValidationResult row) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (row == null) return out;
+        out.put("valid", row.valid);
+        out.put("message", safe(row.message));
+        out.put("tracking_number", safe(row.normalizedTrackingNumber));
+        out.put("carrier_hint", safe(row.carrierHint));
         return out;
     }
 
@@ -5219,10 +7444,26 @@ When features are added or changed in the application, matching API operations s
         return params.containsKey(key);
     }
 
+    private static String mailUuidParam(Map<String, Object> params) {
+        String id = str(params, "mail_uuid");
+        if (id.isBlank()) id = str(params, "item_uuid");
+        if (id.isBlank()) id = str(params, "uuid");
+        return id;
+    }
+
     private static String threadUuidParam(Map<String, Object> params) {
         String id = str(params, "thread_uuid");
         if (id.isBlank()) id = str(params, "ticket_uuid");
         return id;
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null || values.length == 0) return "";
+        for (String value : values) {
+            String v = safe(value).trim();
+            if (!v.isBlank()) return v;
+        }
+        return "";
     }
 
     private static boolean csvContains(String csv, String wanted) {
@@ -5253,6 +7494,32 @@ When features are added or changed in the application, matching API operations s
         if (raw instanceof Number n) return n.intValue();
         try {
             return Integer.parseInt(safe(asString(raw)).trim());
+        } catch (Exception ignored) {
+            return def;
+        }
+    }
+
+    private static long moneyCents(Map<String, Object> params, String decimalKey, String centsKey) {
+        if (params == null) return 0L;
+        if (!safe(centsKey).trim().isBlank() && hasParam(params, centsKey)) {
+            return longVal(params.get(centsKey), 0L);
+        }
+        if (safe(decimalKey).trim().isBlank()) return 0L;
+        String raw = str(params, decimalKey).replace("$", "").replace(",", "").trim();
+        if (raw.isBlank()) return 0L;
+        try {
+            java.math.BigDecimal bd = new java.math.BigDecimal(raw);
+            return bd.multiply(java.math.BigDecimal.valueOf(100L)).setScale(0, java.math.RoundingMode.HALF_UP).longValueExact();
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    private static long longVal(Object raw, long def) {
+        if (raw == null) return def;
+        if (raw instanceof Number n) return n.longValue();
+        try {
+            return Long.parseLong(safe(asString(raw)).trim());
         } catch (Exception ignored) {
             return def;
         }

@@ -27,6 +27,7 @@ public final class search_jobs_servlet extends HttpServlet {
     private static final String S_TENANT_UUID = "tenant.uuid";
     private static final String S_USER_UUID = users_roles.S_USER_UUID;
     private static final String S_USER_EMAIL = users_roles.S_USER_EMAIL;
+    private static final activity_log ACTIVITY_LOGS = activity_log.defaultStore();
 
     private final search_jobs_service service = search_jobs_service.defaultService();
 
@@ -42,6 +43,9 @@ public final class search_jobs_servlet extends HttpServlet {
 
     private void handle(HttpServletRequest req, HttpServletResponse resp, String method) throws IOException {
         String requestId = UUID.randomUUID().toString();
+        String tenantUuid = "";
+        String requestedBy = "";
+        String action = "";
         try {
             HttpSession sess = req.getSession(false);
             security.sec_bind(req, resp, null, sess);
@@ -53,16 +57,20 @@ public final class search_jobs_servlet extends HttpServlet {
             }
 
             sess = req.getSession(false);
-            String tenantUuid = safe(sess == null ? "" : (String) sess.getAttribute(S_TENANT_UUID)).trim();
+            tenantUuid = safe(sess == null ? "" : (String) sess.getAttribute(S_TENANT_UUID)).trim();
             String userUuid = safe(sess == null ? "" : (String) sess.getAttribute(S_USER_UUID)).trim();
             String userEmail = safe(sess == null ? "" : (String) sess.getAttribute(S_USER_EMAIL)).trim();
-            String requestedBy = !userEmail.isBlank() ? userEmail : userUuid;
+            requestedBy = !userEmail.isBlank() ? userEmail : userUuid;
             if (tenantUuid.isBlank() || requestedBy.isBlank()) {
+                LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+                details.put("request_id", requestId);
+                details.put("reason", "missing_authenticated_context");
+                ACTIVITY_LOGS.logWarning("search.job.request_unauthorized", tenantUuid, requestedBy, "", "", details);
                 writeError(resp, 401, "unauthorized", "Authenticated tenant/user context is required.", requestId);
                 return;
             }
 
-            String action = safe(req.getParameter("action")).trim().toLowerCase(Locale.ROOT);
+            action = safe(req.getParameter("action")).trim().toLowerCase(Locale.ROOT);
             if (action.isBlank()) action = safe(req.getHeader("X-Search-Action")).trim().toLowerCase(Locale.ROOT);
             if (action.isBlank()) action = "list";
 
@@ -84,11 +92,26 @@ public final class search_jobs_servlet extends HttpServlet {
             }
             handleList(req, resp, tenantUuid, requestedBy, requestId);
         } catch (IllegalArgumentException ex) {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("request_id", requestId);
+            details.put("action", safe(action));
+            details.put("reason", safe(ex.getMessage()));
+            ACTIVITY_LOGS.logWarning("search.job.request_invalid", tenantUuid, requestedBy, "", "", details);
             writeError(resp, 400, "bad_request", safe(ex.getMessage()), requestId);
         } catch (IllegalStateException ex) {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("request_id", requestId);
+            details.put("action", safe(action));
+            details.put("reason", safe(ex.getMessage()));
+            ACTIVITY_LOGS.logWarning("search.job.request_conflict", tenantUuid, requestedBy, "", "", details);
             writeError(resp, 409, "conflict", safe(ex.getMessage()), requestId);
         } catch (Exception ex) {
             LOG.log(Level.WARNING, "Search jobs request failed [" + requestId + "]: " + safe(ex.getMessage()), ex);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("request_id", requestId);
+            details.put("action", safe(action));
+            details.put("reason", safe(ex.getMessage()));
+            ACTIVITY_LOGS.logError("search.job.request_failed", tenantUuid, requestedBy, "", "", details);
             writeError(resp, 500, "server_error", safe(ex.getMessage()), requestId);
         }
     }
@@ -180,10 +203,22 @@ public final class search_jobs_servlet extends HttpServlet {
         search_jobs_service.SearchTypeInfo type = service.getSearchType(in.searchType);
         if (type == null) throw new IllegalArgumentException("Unknown search type.");
         String permission = safe(type.permissionKey).trim();
-        if (!permission.isBlank() && !security.require_permission(permission)) return;
+        if (!permission.isBlank() && !security.require_permission(permission)) {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("request_id", requestId);
+            details.put("search_type", safe(in.searchType));
+            details.put("required_permission", permission);
+            ACTIVITY_LOGS.logWarning("search.job.request_permission_denied", tenantUuid, requestedBy, "", "", details);
+            return;
+        }
 
         String jobId = service.enqueue(in);
         search_jobs_service.SearchJobSnapshot snapshot = service.getJob(tenantUuid, requestedBy, jobId, false);
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("request_id", requestId);
+        details.put("job_id", safe(jobId));
+        details.put("search_type", safe(in.searchType));
+        ACTIVITY_LOGS.logVerbose("search.job.request_enqueued", tenantUuid, requestedBy, "", "", details);
 
         LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
         out.put("ok", true);

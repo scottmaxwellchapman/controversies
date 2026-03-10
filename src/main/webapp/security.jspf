@@ -48,6 +48,8 @@
     __requiredPerm = "case_fields.access";
   } else if (__path.endsWith("/contacts.jsp") || __path.endsWith("contacts.jsp")) {
     __requiredPerm = "contacts.access";
+  } else if (__path.endsWith("/mail.jsp") || __path.endsWith("mail.jsp")) {
+    __requiredPerm = "mail.access";
   } else if (__path.endsWith("/documents.jsp") || __path.endsWith("documents.jsp")
           || __path.endsWith("/document_preview.jsp") || __path.endsWith("document_preview.jsp")
           || __path.endsWith("/parts.jsp") || __path.endsWith("parts.jsp")
@@ -66,6 +68,8 @@
     __requiredPerm = "tasks.access";
   } else if (__path.endsWith("/deadline_calculator.jsp") || __path.endsWith("deadline_calculator.jsp")) {
     __requiredPerm = "tasks.access";
+  } else if (__path.endsWith("/billing.jsp") || __path.endsWith("billing.jsp")) {
+    __requiredPerm = "tasks.access";
   } else if (__path.endsWith("/omnichannel.jsp") || __path.endsWith("omnichannel.jsp")
           || __path.endsWith("/omnichannel_manifest.jsp") || __path.endsWith("omnichannel_manifest.jsp")) {
     __requiredPerm = "threads.access";
@@ -76,14 +80,14 @@
   } else if (__path.endsWith("/forms.jsp") || __path.endsWith("forms.jsp")
           || __path.endsWith("/assembled_forms.jsp") || __path.endsWith("assembled_forms.jsp")
           || __path.endsWith("/template_library.jsp") || __path.endsWith("template_library.jsp")
-          || __path.endsWith("/template_editor.jsp") || __path.endsWith("template_editor.jsp")) {
+          || __path.endsWith("/template_editor.jsp") || __path.endsWith("template_editor.jsp")
+          || __path.endsWith("/token_guide.jsp") || __path.endsWith("token_guide.jsp")) {
     __requiredPerm = "forms.access";
   } else if (__path.endsWith("/user_settings.jsp") || __path.endsWith("user_settings.jsp")
           || __path.endsWith("/change_email.jsp") || __path.endsWith("change_email.jsp")
           || __path.endsWith("/change_password.jsp") || __path.endsWith("change_password.jsp")) {
     __requiredPerm = "user_settings.access";
   } else if (__path.endsWith("/help_center.jsp") || __path.endsWith("help_center.jsp")
-          || __path.endsWith("/token_guide.jsp") || __path.endsWith("token_guide.jsp")
           || __path.endsWith("/markup_notation.jsp") || __path.endsWith("markup_notation.jsp")
           || __path.endsWith("/help_permissions.jsp") || __path.endsWith("help_permissions.jsp")
           || __path.contains("/help_")) {

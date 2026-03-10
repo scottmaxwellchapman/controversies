@@ -4,11 +4,16 @@
   <item label="Cases" href="/cases.jsp" />
   <item label="Case Conflicts" href="/case_conflicts.jsp" />
   <item label="Contacts" href="/contacts.jsp" />
+  <item label="Leads CRM" href="/leads.jsp" />
   <item label="Documents" href="/documents.jsp" />
+  <item label="Mail" href="/mail.jsp" />
   <item label="Search" href="/search.jsp" />
+  <item label="Analytics Dashboard" href="/analytics_dashboard.jsp" />
   <item label="Facts Case Plan" href="/facts.jsp" />
   <item label="Tasks" href="/tasks.jsp" />
   <item label="Deadline Calculator" href="/deadline_calculator.jsp" />
+  <item label="Billing &amp; Accounting" href="/billing.jsp" />
+  <item label="Online Payments" href="/online_payments.jsp" />
   <item label="Omnichannel Threads" href="/omnichannel.jsp" />
   <item label="Knowledge Wiki" href="/wiki.jsp" />
   <item label="Texas Law" href="/texas_law.jsp" />
@@ -17,6 +22,7 @@
   <item label="Form Assembler">
     <item label="Assemble a Form" href="/forms.jsp" />
     <item label="View the Assembled Forms" href="/assembled_forms.jsp" />
+    <item label="E-Sign Requests" href="/esign_requests.jsp" />
     <item label="Template Library" href="/template_library.jsp" />
     <item label="Template Editor" href="/template_editor.jsp" />
   </item>
@@ -36,7 +42,22 @@
     <item label="Business Processes" href="/business_processes.jsp" />
     <item label="BPM Reviews" href="/business_process_reviews.jsp" />
     <item label="Tenant Settings" href="/tenant_settings.jsp" />
+    <item label="Integration Webhooks" href="/integrations_webhooks.jsp" />
     <item label="Plugin Manager" href="/plugin_manager.jsp" />
+    <item label="Entity Recognition Lab" href="/entity_recognition_lab.jsp" />
+    <item label="Search Operator Lab" href="/search_operator_lab.jsp" />
+    <item label="Version Similarity Lab" href="/version_similarity_lab.jsp" />
+    <item label="Image Hash Lab" href="/image_hash_lab.jsp" />
+    <item label="OCR Companion Lab" href="/ocr_companion_lab.jsp" />
+    <item label="Storage Backend Lab" href="/storage_backend_lab.jsp" />
+    <item label="Scheduler Control" href="/scheduler_control.jsp" />
+    <item label="API Console" href="/api_console.jsp" />
+    <item label="Clio Billing Mapper Lab" href="/clio_billing_mapper_lab.jsp" />
+    <item label="Leads CRM Lab" href="/leads_crm_lab.jsp" />
+    <item label="E-Sign Requests Lab" href="/esign_requests_lab.jsp" />
+    <item label="Integration Webhooks Lab" href="/integration_webhooks_lab.jsp" />
+    <item label="Online Payments Lab" href="/online_payments_lab.jsp" />
+    <item label="KPI Analytics Lab" href="/analytics_kpi_lab.jsp" />
     <item label="Logs" href="/log_viewer.jsp" />
   </item>
 

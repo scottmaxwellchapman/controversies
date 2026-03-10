@@ -34,11 +34,11 @@ String csrfToken = csrfForRender(request);
 <jsp:include page="header.jsp" />
 
 <section class="card">
-  <h1 style="margin:0;">Search</h1>
-  <div class="meta" style="margin-top:6px;">Queue asynchronous search jobs across built-in search types (including document versions and case conflicts) with selectable operators and case sensitivity.</div>
+  <h1 class="u-m-0">Search</h1>
+  <div class="meta u-mt-6">Queue asynchronous search jobs across built-in search types (including document versions and case conflicts) with selectable operators and case sensitivity.</div>
 </section>
 
-<section class="card" style="margin-top:12px;">
+<section class="card section-gap-12">
   <form id="searchForm" class="form" onsubmit="return false;">
     <div class="grid grid-3">
       <div>
@@ -59,8 +59,8 @@ String csrfToken = csrfForRender(request);
     </div>
     <div>
       <label>Criteria</label>
-      <div id="criteriaRows" style="display:grid; gap:8px;"></div>
-      <div style="margin-top:8px;">
+      <div id="criteriaRows" class="search-criteria-rows"></div>
+      <div class="u-mt-8">
         <button id="btnAddCriterion" class="btn btn-ghost" type="button">Add Criterion</button>
       </div>
     </div>
@@ -75,19 +75,19 @@ String csrfToken = csrfForRender(request);
         <label><input id="caseSensitive" type="checkbox" /> Case Sensitive</label>
       </div>
     </div>
-    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <div class="u-flex u-gap-8 u-items-center u-wrap">
       <button id="btnQueueSearch" class="btn" type="button">Queue Search Job</button>
       <span id="searchQueueStatus" class="meta" aria-live="polite"></span>
     </div>
   </form>
 </section>
 
-<section class="card" style="margin-top:12px;">
-  <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
-    <h2 style="margin:0;">Search Jobs</h2>
+<section class="card section-gap-12">
+  <div class="u-flex u-justify-between u-items-center u-gap-8 u-wrap">
+    <h2 class="u-m-0">Search Jobs</h2>
     <div class="meta" id="searchEngineStatus">Loading search types...</div>
   </div>
-  <div class="table-wrap" style="margin-top:8px;">
+  <div class="table-wrap table-wrap-tight">
     <table class="table">
       <thead>
       <tr>
@@ -107,10 +107,10 @@ String csrfToken = csrfForRender(request);
   </div>
 </section>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin:0;">Job Results</h2>
-  <div class="meta" id="jobDetailMeta" style="margin-top:6px;">Select a completed job to inspect matches.</div>
-  <div class="table-wrap" style="margin-top:8px;">
+<section class="card section-gap-12">
+  <h2 class="u-m-0">Job Results</h2>
+  <div class="meta u-mt-6" id="jobDetailMeta">Select a completed job to inspect matches.</div>
+  <div class="table-wrap table-wrap-tight">
     <table class="table">
       <thead>
       <tr>
@@ -171,7 +171,7 @@ String csrfToken = csrfForRender(request);
 
   function setQueueStatus(message, isError){
     queueStatusEl.textContent = String(message || "");
-    queueStatusEl.style.color = isError ? "#b91c1c" : "";
+    queueStatusEl.classList.toggle("is-error", !!isError);
   }
 
   function operatorOptionsForType(){
@@ -203,10 +203,7 @@ String csrfToken = csrfForRender(request);
   function addCriterionRow(initial){
     var data = initial || {};
     var row = document.createElement("div");
-    row.style.display = "grid";
-    row.style.gap = "8px";
-    row.style.gridTemplateColumns = "minmax(120px, 0.8fr) minmax(140px, 0.9fr) minmax(0, 2fr) auto";
-    row.style.alignItems = "end";
+    row.className = "search-criterion-row";
 
     var scopeWrap = document.createElement("div");
     scopeWrap.innerHTML = "<label>Scope</label>";

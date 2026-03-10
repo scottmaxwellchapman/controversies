@@ -791,27 +791,27 @@
       <div class="alert alert-ok">
         Installation is already complete, so this page is locked.
       </div>
-      <div style="height:12px;"></div>
+      <div class="spacer-12"></div>
       <div class="meta">
         Completed at: <strong><%= esc(installCompletedAt.isBlank() ? "(unknown)" : installCompletedAt) %></strong><br/>
         Administrator: <strong><%= esc(installCompletedAdmin.isBlank() ? "(unknown)" : installCompletedAdmin) %></strong>
       </div>
-      <div class="actions" style="margin-top:12px;">
+      <div class="actions u-mt-12">
         <a class="btn" href="<%= ctx %>/tenant_login.jsp">Go to Sign In</a>
       </div>
     <% } else { %>
       <% if (message != null && !message.isBlank()) { %>
         <div class="alert alert-ok"><%= esc(message) %></div>
-        <div style="height:12px;"></div>
+        <div class="spacer-12"></div>
       <% } %>
       <% if (error != null && !error.isBlank()) { %>
         <div class="alert alert-error"><%= esc(error) %></div>
-        <div style="height:12px;"></div>
+        <div class="spacer-12"></div>
       <% } %>
 
-      <div class="card" style="margin:0 0 12px 0;">
+      <div class="card u-m-0 u-mb-12">
         <div class="meta">Step <strong><%= step %></strong> of 5</div>
-        <div class="meta" style="margin-top:6px;">
+        <div class="meta u-mt-6">
           1) Tenant profile <%= step1Done ? "✓" : "" %> •
           2) Administrator credentials <%= step2Done ? "✓" : "" %> •
           3) Security defaults (optional) <%= step3Done ? "✓" : "" %> •
@@ -927,7 +927,7 @@
         <form class="form" method="post" action="<%= ctx %>/install.jsp?step=4">
           <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
 
-          <h2 style="margin:0;">Storage</h2>
+          <h2 class="u-m-0">Storage</h2>
           <label>
             <span>Storage Backend</span>
             <select name="storageBackend">
@@ -987,7 +987,7 @@
             TLS defaults to automatic self-signed cert generation. Optional certbot mode can be enabled later from Tenant Settings &rarr; Operations &rarr; TLS/SSL Runtime, or via runtime options: <code>CONTROVERSIES_SSL_MODE=certbot</code> plus either <code>CONTROVERSIES_CERTBOT_DOMAIN</code> (for <code>/etc/letsencrypt/live/&lt;domain&gt;</code>) or <code>CONTROVERSIES_CERTBOT_LIVE_DIR</code>. Optional overrides: <code>CONTROVERSIES_CERTBOT_OPENSSL_CMD</code> and <code>CONTROVERSIES_CERTBOT_FORCE_REBUILD=true</code>. Restart the app after TLS mode changes.
           </div>
 
-          <h2 style="margin:12px 0 0 0;">External Backup / Restore (optional)</h2>
+          <h2 class="u-mt-12">External Backup / Restore (optional)</h2>
           <label>
             <span>Initialization Action</span>
             <select name="externalDataAction">
@@ -1011,7 +1011,7 @@
             <div class="meta">No existing snapshot detected for this external storage source.</div>
           <% } %>
 
-          <h2 style="margin:12px 0 0 0;">Clio Integration</h2>
+          <h2 class="u-mt-12">Clio Integration</h2>
           <label class="inline">
             <input type="checkbox" name="clioEnabled" value="1" <%= clioEnabled ? "checked" : "" %> />
             <span>Enable Clio integration</span>
@@ -1044,7 +1044,7 @@
             <input type="text" name="clioPrivateRelayUrl" value="<%= esc(clioPrivateRelayUrl) %>" />
           </label>
 
-          <h2 style="margin:12px 0 0 0;">Notification Email</h2>
+          <h2 class="u-mt-12">Notification Email</h2>
           <label>
             <span>Email Provider</span>
             <select name="emailProvider">
@@ -1112,7 +1112,7 @@
             <input type="email" name="emailGraphSenderUser" value="<%= esc(emailGraphSenderUser) %>" />
           </label>
 
-          <h2 style="margin:12px 0 0 0;">Automatic Self-Upgrade</h2>
+          <h2 class="u-mt-12">Automatic Self-Upgrade</h2>
           <label class="inline">
             <input type="checkbox" name="selfUpgradeEnabled" value="1" <%= selfUpgradeEnabled ? "checked" : "" %> />
             <span>Enable weekly GitHub update, rebuild, and restart (default on)</span>
@@ -1174,18 +1174,18 @@
       <% } %>
 
       <% if (step == 5) { %>
-        <div class="card" style="margin:0;">
-          <h2 style="margin-top:0;">Review</h2>
+        <div class="card u-m-0">
+          <h2 class="u-mt-0">Review</h2>
           <div class="meta">
             Tenant: <strong><%= esc(tenantLabel.isBlank() ? "(unnamed)" : tenantLabel) %></strong><br/>
             Administrator: <strong><%= esc(configuredAdminEmail.isBlank() ? "(not set)" : configuredAdminEmail) %></strong><br/>
             Security defaults: <strong><%= esc(step3Done ? "saved/skipped" : "pending") %></strong><br/>
             Integrations/storage: <strong><%= esc(step4Done ? "saved/skipped" : "pending") %></strong>
           </div>
-          <div class="help" style="margin-top:10px;">
+          <div class="help u-mt-10">
             After completion, <code>install.jsp</code> is locked and can no longer be used.
           </div>
-          <form class="form" method="post" action="<%= ctx %>/install.jsp?step=5" style="margin-top:10px;">
+          <form class="form u-mt-10" method="post" action="<%= ctx %>/install.jsp?step=5">
             <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
             <input type="hidden" name="action" value="finish_install" />
             <div class="actions">

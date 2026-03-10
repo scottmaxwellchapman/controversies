@@ -254,9 +254,11 @@
     Otherwise they are treated as plain text and standard token replacement continues unchanged.
   </div>
   <ul style="margin:0; padding-left:18px; line-height:1.5;">
-    <li><code>{{#if kv.child_support}}...{{/if}}</code> – include enclosed text only when the referenced token is truthy.</li>
-    <li><code>{{#each case.parties}}Party: {{this}}&#10;{{/each}}</code> – repeat enclosed text for each list item (newline, pipe, or comma separated values).</li>
-    <li><code>{{format.date case.filing_date "MM/dd/yyyy"}}</code> – render a date token with a specific output format.</li>
+    <li><code>&#123;&#123;#if kv.child_support&#125;&#125;...&#123;&#123;else&#125;&#125;...&#123;&#123;/if&#125;&#125;</code> – include one branch when the token is truthy and the other when false/blank.</li>
+    <li><code>&#123;&#123;#each case.parties&#125;&#125;#&#123;&#123;@number&#125;&#125; &#123;&#123;this&#125;&#125;&#123;&#123;else&#125;&#125;No parties listed&#123;&#123;/each&#125;&#125;</code> – repeat per row with <code>&#123;&#123;@index&#125;&#125;</code>, <code>&#123;&#123;@number&#125;&#125;</code>, <code>&#123;&#123;@first&#125;&#125;</code>, and <code>&#123;&#123;@last&#125;&#125;</code> loop metadata.</li>
+    <li><code>&#123;&#123;#each case.service_rows&#125;&#125;&#123;&#123;item.name&#125;&#125; | &#123;&#123;item.address&#125;&#125;&#123;&#123;/each&#125;&#125;</code> – XML row values expose <code>&#123;&#123;item.*&#125;&#125;</code> fields.</li>
+    <li><code>&#123;&#123;default case.county "County Pending"&#125;&#125;</code> – fallback helper when a token is blank/missing.</li>
+    <li><code>&#123;&#123;format.date case.filing_date "MM/dd/yyyy"&#125;&#125;</code> (or comma form) – render a date token with a specific output format.</li>
   </ul>
   <div class="meta" style="margin-top:10px;">
     Optional strict mode (<code>advanced_assembly_strict_mode</code>) records unresolved directives/tokens in activity logs and still produces the document.

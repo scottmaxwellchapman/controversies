@@ -278,12 +278,12 @@
                 includeImaginary,
                 tenantUuid
         );
-        class_dealine_calculator.ActionDateInfo[] out = class_dealine_calculator.calculateDeadlines(
+        class_dealine_calculator.ActionDateInfo[] calculatedRows = class_dealine_calculator.calculateDeadlines(
                 new ByteArrayInputStream(effectiveXml.getBytes(StandardCharsets.UTF_8)),
                 options
         );
-        for (int i = 0; i < out.length; i++) results.add(out[i]);
-        message = "Calculated " + out.length + " deadline date(s).";
+        for (int i = 0; i < calculatedRows.length; i++) results.add(calculatedRows[i]);
+        message = "Calculated " + calculatedRows.length + " deadline date(s).";
       } catch (Exception ex) {
         error = "Unable to calculate deadlines: " + safe(ex.getMessage());
       }

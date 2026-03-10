@@ -25,6 +25,7 @@
 <%@ page import="net.familylawandprobate.controversies.document_attributes" %>
 <%@ page import="net.familylawandprobate.controversies.task_attributes" %>
 <%@ page import="net.familylawandprobate.controversies.two_factor_auth" %>
+<%@ page import="net.familylawandprobate.controversies.activity_log" %>
 <%@ include file="security.jspf" %>
 
 <%
@@ -231,6 +232,22 @@
     private static void clearFailures(ServletContext app, String ip) {
         if (ip == null) return;
         failMap(app).remove(ip);
+    }
+
+    private static void authLog(String level,
+                                String action,
+                                String tenantUuid,
+                                String userUuid,
+                                String matterUuid,
+                                String documentUuid,
+                                Map<String, String> details) {
+        try {
+            activity_log logs = activity_log.defaultStore();
+            String lv = safe(level).trim().toLowerCase(Locale.ROOT);
+            if ("error".equals(lv)) logs.logError(action, tenantUuid, userUuid, matterUuid, documentUuid, details);
+            else if ("warning".equals(lv)) logs.logWarning(action, tenantUuid, userUuid, matterUuid, documentUuid, details);
+            else logs.logVerbose(action, tenantUuid, userUuid, matterUuid, documentUuid, details);
+        } catch (Exception ignored) {}
     }
 
     private static String formatRemaining(Instant until) {
@@ -584,6 +601,18 @@
     if ("POST".equalsIgnoreCase(request.getMethod()) && "cancel_2fa".equalsIgnoreCase(action)) {
         if (pending2fa) {
             try { tfa.invalidateChallenge(pendingTenantUuid, pendingChallengeId); } catch (Exception ignored) {}
+            authLog(
+                    "warning",
+                    "auth.two_factor.cancelled",
+                    pendingTenantUuid,
+                    pendingUserUuid,
+                    "",
+                    "",
+                    Map.of(
+                            "challenge_id", pendingChallengeId,
+                            "client_ip", safe(clientIp)
+                    )
+            );
         }
         clearPending2fa(session);
         pending2fa = false;
@@ -592,17 +621,32 @@
 
     if ("POST".equalsIgnoreCase(request.getMethod()) && "resend_2fa".equalsIgnoreCase(action)) {
         if (!pending2fa) {
+            authLog("warning", "auth.two_factor.resend_without_pending", pendingTenantUuid, pendingUserUuid, "", "", Map.of("client_ip", safe(clientIp)));
             error = "No pending verification challenge was found. Please sign in again.";
         } else {
             try {
                 users_roles.UserRec pendingUser = ur.getUserByUuid(pendingTenantUuid, pendingUserUuid);
                 if (pendingUser == null || !pendingUser.enabled) {
+                    authLog("warning", "auth.two_factor.resend_user_missing", pendingTenantUuid, pendingUserUuid, "", "", Map.of("challenge_id", pendingChallengeId));
                     clearPending2fa(session);
                     pending2fa = false;
                     error = "User session changed. Please sign in again.";
                 } else {
                     two_factor_auth.ChallengeStartResult resend = tfa.startChallenge(pendingTenantUuid, pendingUser, pendingUser.uuid, pendingClientIp.isBlank() ? clientIp : pendingClientIp);
                     if (!resend.success || resend.challengeId.isBlank()) {
+                        authLog(
+                                "warning",
+                                "auth.two_factor.resend_failed",
+                                pendingTenantUuid,
+                                pendingUserUuid,
+                                "",
+                                "",
+                                Map.of(
+                                        "challenge_id", pendingChallengeId,
+                                        "issue", safe(resend.issue),
+                                        "client_ip", safe(clientIp)
+                                )
+                        );
                         error = resend.issue.isBlank() ? "Unable to resend verification code." : resend.issue;
                     } else {
                         session.setAttribute(S_2FA_CHALLENGE_ID, resend.challengeId);
@@ -611,10 +655,37 @@
                         pendingChallengeId = resend.challengeId;
                         pendingEngine = resend.engine;
                         pendingMaskedDestination = resend.maskedDestination;
+                        authLog(
+                                "verbose",
+                                "auth.two_factor.resent",
+                                pendingTenantUuid,
+                                pendingUserUuid,
+                                "",
+                                "",
+                                Map.of(
+                                        "challenge_id", resend.challengeId,
+                                        "engine", safe(resend.engine),
+                                        "destination", safe(resend.maskedDestination),
+                                        "client_ip", safe(clientIp)
+                                )
+                        );
                         message = "A new verification code was sent via " + engineLabel(resend.engine) + ".";
                     }
                 }
             } catch (Exception ex) {
+                authLog(
+                        "error",
+                        "auth.two_factor.resend_error",
+                        pendingTenantUuid,
+                        pendingUserUuid,
+                        "",
+                        "",
+                        Map.of(
+                                "challenge_id", pendingChallengeId,
+                                "error", safe(ex.getMessage()),
+                                "client_ip", safe(clientIp)
+                        )
+                );
                 error = "Unable to resend verification code.";
             }
         }
@@ -622,6 +693,7 @@
 
     if ("POST".equalsIgnoreCase(request.getMethod()) && "verify_2fa".equalsIgnoreCase(action)) {
         if (!pending2fa) {
+            authLog("warning", "auth.two_factor.verify_without_pending", pendingTenantUuid, pendingUserUuid, "", "", Map.of("client_ip", safe(clientIp)));
             error = "No pending verification challenge was found. Please sign in again.";
         } else {
             String code = safe(request.getParameter("verificationCode"));
@@ -635,12 +707,14 @@
                 try {
                     users_roles.UserRec u = ur.getUserByUuid(pendingTenantUuid, pendingUserUuid);
                     if (u == null || !u.enabled) {
+                        authLog("warning", "auth.login.failed_user_inactive", pendingTenantUuid, pendingUserUuid, "", "", Map.of("client_ip", safe(clientIp)));
                         clearPending2fa(session);
                         pending2fa = false;
                         error = "User is no longer active. Please contact your tenant administrator.";
                     } else {
                         users_roles.RoleRec r = ur.getRoleByUuid(pendingTenantUuid, u.roleUuid);
                         if (r == null || !r.enabled) {
+                            authLog("warning", "auth.login.failed_role_unavailable", pendingTenantUuid, pendingUserUuid, "", "", Map.of("client_ip", safe(clientIp)));
                             clearPending2fa(session);
                             pending2fa = false;
                             error = "User role is unavailable. Please contact your tenant administrator.";
@@ -694,11 +768,35 @@
                                 );
                             } catch (Exception ignored) {}
 
+                            authLog(
+                                    "verbose",
+                                    "auth.login.success",
+                                    pendingTenantUuid,
+                                    finalAr.user.uuid,
+                                    "",
+                                    "",
+                                    Map.of(
+                                            "method", "password_plus_two_factor",
+                                            "engine", safe(pendingEngine),
+                                            "next", safe(pendingNext),
+                                            "client_ip", safe(finalClientIp)
+                                    )
+                            );
+
                             response.sendRedirect(finalRedirect);
                             return;
                         }
                     }
                 } catch (Exception ex) {
+                    authLog(
+                            "error",
+                            "auth.login.finalize_error",
+                            pendingTenantUuid,
+                            pendingUserUuid,
+                            "",
+                            "",
+                            Map.of("error", safe(ex.getMessage()), "client_ip", safe(clientIp))
+                    );
                     error = "Unable to finalize sign-in.";
                 }
             } else {
@@ -706,6 +804,15 @@
                     clearPending2fa(session);
                     pending2fa = false;
                 }
+                LinkedHashMap<String, String> failedDetails = new LinkedHashMap<String, String>();
+                failedDetails.put("challenge_id", pendingChallengeId);
+                failedDetails.put("client_ip", safe(clientIp));
+                if (vr != null) {
+                    failedDetails.put("remaining_attempts", String.valueOf(Math.max(0, vr.remainingAttempts)));
+                    failedDetails.put("expired", vr.expired ? "true" : "false");
+                    failedDetails.put("issue", safe(vr.issue));
+                }
+                authLog("warning", "auth.two_factor.verify_failed", pendingTenantUuid, pendingUserUuid, "", "", failedDetails);
                 String baseError = (vr == null || vr.issue.isBlank()) ? "Verification code is invalid." : vr.issue;
                 if (vr != null && !vr.success && vr.remainingAttempts > 0 && !vr.expired) {
                     error = baseError + " " + vr.remainingAttempts + " attempt(s) remaining.";
@@ -734,6 +841,11 @@
                     Optional<Instant> ex = lists.getTempBanExpiryIfAny(clientIp);
                     if (ex != null && ex.isPresent()) until = ex.get();
                 } catch (Exception ignored) {}
+                LinkedHashMap<String, String> banDetails = new LinkedHashMap<String, String>();
+                banDetails.put("client_ip", safe(clientIp));
+                banDetails.put("selected_tenant_uuid", safe(selectedTenantUuid));
+                if (until != null) banDetails.put("banned_until", until.toString());
+                authLog("warning", "auth.login.blocked_temp_ban", safe(selectedTenantUuid), "", "", "", banDetails);
                 error = "Too many login attempts. Please try again in " + formatRemaining(until) + ".";
             } else if (selectedTenantUuid.isBlank()) {
                 error = "Please select a tenant.";
@@ -754,6 +866,19 @@
 
                     if (found == null) {
                         int c = noteFailure(application, clientIp);
+                        authLog(
+                                "warning",
+                                "auth.login.failed",
+                                safe(selectedTenantUuid),
+                                "",
+                                "",
+                                "",
+                                Map.of(
+                                        "reason", "tenant_not_found",
+                                        "fail_count", String.valueOf(Math.max(0, c)),
+                                        "client_ip", safe(clientIp)
+                                )
+                        );
                         error = "Invalid tenant, email, or password.";
                         if (!isLocalhostIp(clientIp)) {
                             try {
@@ -781,6 +906,19 @@
 
                         if (ar == null || ar.user == null || ar.role == null) {
                             int c = noteFailure(application, clientIp);
+                            authLog(
+                                    "warning",
+                                    "auth.login.failed",
+                                    found.uuid,
+                                    "",
+                                    "",
+                                    "",
+                                    Map.of(
+                                            "reason", "invalid_credentials",
+                                            "fail_count", String.valueOf(Math.max(0, c)),
+                                            "client_ip", safe(clientIp)
+                                    )
+                            );
                             error = "Invalid tenant, email, or password.";
                             if (!isLocalhostIp(clientIp)) {
                                 try {
@@ -798,6 +936,19 @@
                             two_factor_auth.Requirement req = tfa.resolveRequirement(found.uuid, ar.user);
                             if (req.required) {
                                 if (!req.issue.isBlank()) {
+                                    authLog(
+                                            "warning",
+                                            "auth.two_factor.requirement_blocked",
+                                            found.uuid,
+                                            ar.user.uuid,
+                                            "",
+                                            "",
+                                            Map.of(
+                                                    "engine", safe(req.engine),
+                                                    "issue", safe(req.issue),
+                                                    "client_ip", safe(clientIp)
+                                            )
+                                    );
                                     error = req.issue;
                                 } else {
                                     two_factor_auth.ChallengeStartResult sr;
@@ -807,6 +958,19 @@
                                         sr = new two_factor_auth.ChallengeStartResult(false, true, "", req.engine, "", "Unable to start two-factor verification.");
                                     }
                                     if (!sr.success || sr.challengeId.isBlank()) {
+                                        authLog(
+                                                "warning",
+                                                "auth.two_factor.challenge_start_failed",
+                                                found.uuid,
+                                                ar.user.uuid,
+                                                "",
+                                                "",
+                                                Map.of(
+                                                        "engine", safe(req.engine),
+                                                        "issue", safe(sr.issue),
+                                                        "client_ip", safe(clientIp)
+                                                )
+                                        );
                                         error = sr.issue.isBlank() ? "Unable to start two-factor verification." : sr.issue;
                                     } else {
                                         session.setAttribute(S_2FA_CHALLENGE_ID, sr.challengeId);
@@ -827,6 +991,22 @@
                                         pendingMaskedDestination = sr.maskedDestination;
                                         pendingClientIp = clientIp;
                                         pendingNext = next;
+
+                                        authLog(
+                                                "verbose",
+                                                "auth.login.two_factor_pending",
+                                                found.uuid,
+                                                ar.user.uuid,
+                                                "",
+                                                "",
+                                                Map.of(
+                                                        "challenge_id", safe(sr.challengeId),
+                                                        "engine", safe(sr.engine),
+                                                        "destination", safe(sr.maskedDestination),
+                                                        "next", safe(next),
+                                                        "client_ip", safe(clientIp)
+                                                )
+                                        );
 
                                         selectedTenantUuid = found.uuid;
                                         email = ar.user.emailAddress;
@@ -869,6 +1049,20 @@
                                             newUserBind
                                     );
                                 } catch (Exception ignored) {}
+
+                                authLog(
+                                        "verbose",
+                                        "auth.login.success",
+                                        found.uuid,
+                                        ar.user.uuid,
+                                        "",
+                                        "",
+                                        Map.of(
+                                                "method", "password",
+                                                "next", safe(next),
+                                                "client_ip", safe(clientIp)
+                                        )
+                                );
 
                                 response.sendRedirect(redirectTo);
                                 return;
@@ -918,19 +1112,19 @@
 
     <% if (message != null) { %>
       <div class="alert alert-ok"><%= esc(message) %></div>
-      <div style="height:12px;"></div>
+      <div class="spacer-12" aria-hidden="true"></div>
     <% } %>
 
     <% if (error != null) { %>
       <div class="alert alert-error"><%= esc(error) %></div>
-      <div style="height:12px;"></div>
+      <div class="spacer-12" aria-hidden="true"></div>
     <% } %>
 
     <% if (enabledTenants.isEmpty()) { %>
       <div class="alert alert-warn">
         No enabled tenants are available. Create or enable a tenant in <strong>Tenants</strong> first.
       </div>
-      <div style="height:12px;"></div>
+      <div class="spacer-12" aria-hidden="true"></div>
     <% } %>
 
     <% if (pending2fa) { %>
@@ -938,7 +1132,7 @@
         <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
         <input type="hidden" name="next" value="<%= esc(pendingNext) %>" />
 
-        <div class="alert alert-ok" style="margin-bottom:12px;">
+        <div class="alert alert-ok u-mb-12">
           Enter the 6-digit code sent via <strong><%= esc(engineLabel(pendingEngine)) %></strong>
           to <strong><%= esc(pendingMaskedDestination) %></strong>.
         </div>
@@ -998,7 +1192,7 @@
           <a class="btn btn-ghost" href="<%= ctx %>/index.jsp">Cancel</a>
         </div>
 
-        <div style="margin-top:8px;">
+        <div class="u-mt-8">
           <a href="<%= ctx %>/forgot_password.jsp">Forgot password?</a>
         </div>
 

@@ -92,7 +92,14 @@ import org.xml.sax.InputSource;
 public final class document_assembler {
     private static final Logger LOG = Logger.getLogger(document_assembler.class.getName());
     private static final int MAX_TOKEN_BODY_LEN = 600;
-    private static final Pattern FORMAT_DATE_PATTERN = Pattern.compile("\\{\\{\\s*format\\.date\\s+([^\\s}]+)\\s+\"([^\"]+)\"\\s*}}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern FORMAT_DATE_PATTERN = Pattern.compile("\\{\\{\\s*format\\.date\\s+([^\\s},]+)\\s*(?:,\\s*)?\"([^\"]+)\"\\s*}}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern DEFAULT_VALUE_PATTERN = Pattern.compile("\\{\\{\\s*default\\s+([^\\s},]+)\\s+\"([^\"]*)\"\\s*}}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern EACH_ITEM_FIELD_PATTERN = Pattern.compile("\\{\\{\\s*item\\.([A-Za-z0-9_.-]+)\\s*}}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern EACH_META_INDEX_PATTERN = Pattern.compile("\\{\\{\\s*@index\\s*}}");
+    private static final Pattern EACH_META_NUMBER_PATTERN = Pattern.compile("\\{\\{\\s*@number\\s*}}");
+    private static final Pattern EACH_META_FIRST_PATTERN = Pattern.compile("\\{\\{\\s*@first\\s*}}");
+    private static final Pattern EACH_META_LAST_PATTERN = Pattern.compile("\\{\\{\\s*@last\\s*}}");
+    private static final Pattern EACH_THIS_PATTERN = Pattern.compile("\\{\\{\\s*this\\s*}}", Pattern.CASE_INSENSITIVE);
 
     public static final class PreviewResult {
         public final String sourceText;
@@ -2258,6 +2265,32 @@ public final class document_assembler {
         }
     }
 
+    private static final class DirectiveBlockMatch {
+        final int blockStart;
+        final int openTagEnd;
+        final int elseTagStart;
+        final int elseTagEnd;
+        final int closeTagStart;
+        final int closeTagEnd;
+        final String expression;
+
+        DirectiveBlockMatch(int blockStart,
+                            int openTagEnd,
+                            int elseTagStart,
+                            int elseTagEnd,
+                            int closeTagStart,
+                            int closeTagEnd,
+                            String expression) {
+            this.blockStart = Math.max(0, blockStart);
+            this.openTagEnd = Math.max(this.blockStart, openTagEnd);
+            this.elseTagStart = elseTagStart;
+            this.elseTagEnd = elseTagEnd;
+            this.closeTagStart = Math.max(this.openTagEnd, closeTagStart);
+            this.closeTagEnd = Math.max(this.closeTagStart, closeTagEnd);
+            this.expression = safe(expression).trim();
+        }
+    }
+
     private static TokenScan scanTokens(String source, Map<String, String> values) {
         return scanTokens(source, values, optionsFromValues(values));
     }
@@ -2312,6 +2345,7 @@ public final class document_assembler {
 
         text = applyIfBlocks(text, values, unresolved);
         text = applyEachBlocks(text, values, unresolved);
+        text = applyDefaultValue(text, values);
         text = applyFormatDate(text, values, unresolved);
         return new DirectiveScan(text, unresolved);
     }
@@ -2321,24 +2355,23 @@ public final class document_assembler {
         int guard = 0;
         while (guard < 1000) {
             guard++;
-            int start = out.indexOf("{{#if ");
+            int start = out.indexOf("{{#if");
             if (start < 0) break;
-            int closeOpen = out.indexOf("}}", start);
-            if (closeOpen < 0) break;
-            int end = out.indexOf("{{/if}}", closeOpen + 2);
-            if (end < 0) {
+            DirectiveBlockMatch block = findDirectiveBlock(out, start, "if");
+            if (block == null) {
                 unresolved.add("unclosed_if_directive");
                 break;
             }
 
-            String expr = safe(out.substring(start + 6, closeOpen)).trim();
-            String body = out.substring(closeOpen + 2, end);
+            String expr = block.expression;
+            String bodyTrue = out.substring(block.openTagEnd, block.elseTagStart >= 0 ? block.elseTagStart : block.closeTagStart);
+            String bodyFalse = block.elseTagEnd >= 0 ? out.substring(block.elseTagEnd, block.closeTagStart) : "";
             String value = lookupValue(values, expr, normalizeLooseKey(expr));
             if (value == null) unresolved.add("if:" + expr);
             boolean truthy = isTruthy(value);
 
-            String replacement = truthy ? body : "";
-            out = out.substring(0, start) + replacement + out.substring(end + 7);
+            String replacement = truthy ? bodyTrue : bodyFalse;
+            out = out.substring(0, block.blockStart) + replacement + out.substring(block.closeTagEnd);
         }
         return out;
     }
@@ -2348,32 +2381,128 @@ public final class document_assembler {
         int guard = 0;
         while (guard < 1000) {
             guard++;
-            int start = out.indexOf("{{#each ");
+            int start = out.indexOf("{{#each");
             if (start < 0) break;
-            int closeOpen = out.indexOf("}}", start);
-            if (closeOpen < 0) break;
-            int end = out.indexOf("{{/each}}", closeOpen + 2);
-            if (end < 0) {
+            DirectiveBlockMatch block = findDirectiveBlock(out, start, "each");
+            if (block == null) {
                 unresolved.add("unclosed_each_directive");
                 break;
             }
 
-            String expr = safe(out.substring(start + 8, closeOpen)).trim();
-            String body = out.substring(closeOpen + 2, end);
+            String expr = block.expression;
+            String body = out.substring(block.openTagEnd, block.elseTagStart >= 0 ? block.elseTagStart : block.closeTagStart);
+            String elseBody = block.elseTagEnd >= 0 ? out.substring(block.elseTagEnd, block.closeTagStart) : "";
             String rawList = lookupValue(values, expr, normalizeLooseKey(expr));
             if (rawList == null) unresolved.add("each:" + expr);
             ArrayList<EachItem> items = splitEachItems(rawList);
 
             StringBuilder repeated = new StringBuilder();
-            for (EachItem item : items) {
-                String chunk = body.replace("{{this}}", item == null ? "" : safe(item.text));
-                chunk = replaceEachFields(chunk, item);
-                repeated.append(chunk);
+            if (items.isEmpty()) {
+                repeated.append(elseBody);
+            } else {
+                for (int i = 0; i < items.size(); i++) {
+                    EachItem item = items.get(i);
+                    String chunk = EACH_THIS_PATTERN.matcher(body).replaceAll(Matcher.quoteReplacement(item == null ? "" : safe(item.text)));
+                    chunk = applyEachMetaTokens(chunk, i, items.size());
+                    chunk = replaceEachFields(chunk, item);
+                    repeated.append(chunk);
+                }
             }
-            int suffixStart = end + 9;
+            int suffixStart = block.closeTagEnd;
             if (endsWithLineBreak(repeated)) suffixStart = consumeLeadingLineBreak(out, suffixStart);
-            out = out.substring(0, start) + repeated + out.substring(suffixStart);
+            out = out.substring(0, block.blockStart) + repeated + out.substring(suffixStart);
         }
+        return out;
+    }
+
+    private static String applyDefaultValue(String text, Map<String, String> values) {
+        String src = safe(text);
+        Matcher m = DEFAULT_VALUE_PATTERN.matcher(src);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String key = safe(m.group(1)).trim();
+            String fallback = safe(m.group(2));
+            String raw = lookupValue(values, key, normalizeLooseKey(key));
+            String replacement = raw == null || raw.isBlank() ? fallback : raw;
+            m.appendReplacement(sb, Matcher.quoteReplacement(safe(replacement)));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    private static DirectiveBlockMatch findDirectiveBlock(String text, int openStart, String directiveName) {
+        String src = safe(text);
+        String name = safe(directiveName).trim().toLowerCase(Locale.ROOT);
+        if (src.isBlank() || name.isBlank()) return null;
+        if (openStart < 0 || openStart >= src.length()) return null;
+
+        int openClose = src.indexOf("}}", openStart);
+        if (openClose < 0) return null;
+
+        String openTag = safe(src.substring(openStart + 2, openClose)).trim();
+        String expr = extractDirectiveExpression(openTag, name);
+        if (expr.isBlank()) return null;
+
+        int depth = 1;
+        int elseStart = -1;
+        int elseEnd = -1;
+        int cursor = openClose + 2;
+        while (cursor < src.length()) {
+            int tagStart = src.indexOf("{{", cursor);
+            if (tagStart < 0) break;
+            int tagEnd = src.indexOf("}}", tagStart + 2);
+            if (tagEnd < 0) break;
+
+            String tag = safe(src.substring(tagStart + 2, tagEnd)).trim();
+            String lowerTag = tag.toLowerCase(Locale.ROOT);
+            if (lowerTag.startsWith("#" + name + " ")) {
+                depth++;
+            } else if (lowerTag.equals("#" + name)) {
+                depth++;
+            } else if (lowerTag.equals("/" + name)) {
+                depth--;
+                if (depth == 0) {
+                    return new DirectiveBlockMatch(
+                            openStart,
+                            openClose + 2,
+                            elseStart,
+                            elseEnd,
+                            tagStart,
+                            tagEnd + 2,
+                            expr
+                    );
+                }
+            } else if ("else".equals(lowerTag) && depth == 1 && elseStart < 0) {
+                elseStart = tagStart;
+                elseEnd = tagEnd + 2;
+            }
+
+            cursor = tagEnd + 2;
+        }
+        return null;
+    }
+
+    private static String extractDirectiveExpression(String openTag, String directiveName) {
+        String tag = safe(openTag).trim();
+        String name = safe(directiveName).trim().toLowerCase(Locale.ROOT);
+        if (tag.isBlank() || name.isBlank()) return "";
+
+        String lowerTag = tag.toLowerCase(Locale.ROOT);
+        if (!lowerTag.startsWith("#" + name)) return "";
+        if (tag.length() <= name.length() + 1) return "";
+        char sep = tag.charAt(name.length() + 1);
+        if (!Character.isWhitespace(sep)) return "";
+        return safe(tag.substring(name.length() + 1)).trim();
+    }
+
+    private static String applyEachMetaTokens(String body, int index, int total) {
+        String out = safe(body);
+        boolean isFirst = total > 0 && index == 0;
+        boolean isLast = total > 0 && index == total - 1;
+        out = EACH_META_INDEX_PATTERN.matcher(out).replaceAll(String.valueOf(index));
+        out = EACH_META_NUMBER_PATTERN.matcher(out).replaceAll(String.valueOf(index + 1));
+        out = EACH_META_FIRST_PATTERN.matcher(out).replaceAll(isFirst ? "true" : "false");
+        out = EACH_META_LAST_PATTERN.matcher(out).replaceAll(isLast ? "true" : "false");
         return out;
     }
 
@@ -2431,13 +2560,29 @@ public final class document_assembler {
     private static String replaceEachFields(String body, EachItem item) {
         String out = safe(body);
         if (item == null || item.fields.isEmpty()) return out;
-        for (Map.Entry<String, String> e : item.fields.entrySet()) {
-            if (e == null) continue;
-            String key = normalizeLooseKey(e.getKey());
-            if (key.isBlank()) continue;
-            out = out.replace("{{item." + key + "}}", safe(e.getValue()));
+        Matcher m = EACH_ITEM_FIELD_PATTERN.matcher(out);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String rawKey = safe(m.group(1)).trim();
+            String key = normalizeLooseKey(rawKey);
+            String replacement = m.group(0);
+            if (!key.isBlank()) {
+                String value = item.fields.get(key);
+                if (value == null) {
+                    for (Map.Entry<String, String> e : item.fields.entrySet()) {
+                        if (e == null) continue;
+                        if (key.equalsIgnoreCase(normalizeLooseKey(e.getKey()))) {
+                            value = e.getValue();
+                            break;
+                        }
+                    }
+                }
+                if (value != null) replacement = safe(value);
+            }
+            m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
         }
-        return out;
+        m.appendTail(sb);
+        return sb.toString();
     }
 
     private static ArrayList<EachItem> splitEachItems(String rawList) {
@@ -2565,7 +2710,10 @@ public final class document_assembler {
 
     private static boolean containsDirectiveSyntax(String text) {
         String src = safe(text);
-        return src.contains("{{#if") || src.contains("{{#each") || src.contains("{{format.date");
+        return src.contains("{{#if")
+                || src.contains("{{#each")
+                || src.contains("{{format.date")
+                || src.contains("{{default");
     }
 
     private static boolean isTruthy(String value) {

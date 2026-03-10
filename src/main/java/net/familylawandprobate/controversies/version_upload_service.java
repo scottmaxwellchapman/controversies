@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -19,6 +20,7 @@ public final class version_upload_service {
 
     private static final document_parts PARTS = document_parts.defaultStore();
     private static final part_versions VERSIONS = part_versions.defaultStore();
+    private static final activity_log LOGS = activity_log.defaultStore();
 
     public static version_upload_service defaultService() {
         return new version_upload_service();
@@ -73,6 +75,19 @@ public final class version_upload_service {
         String actualSha = sha256(chunkBytes);
         String expectedSha = safe(expectedChunkSha256).trim().toLowerCase(Locale.ROOT);
         if (!expectedSha.isBlank() && !expectedSha.equals(actualSha)) {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("part_uuid", safe(partUuid).trim());
+            details.put("upload_id", safe(uploadId).trim());
+            details.put("chunk_index", String.valueOf(chunkIndex));
+            details.put("total_chunks", String.valueOf(totalChunks));
+            LOGS.logWarning(
+                    "document.version_upload.chunk_integrity_failed",
+                    safe(tenantUuid).trim(),
+                    "",
+                    safe(caseUuid).trim(),
+                    safe(docUuid).trim(),
+                    details
+            );
             throw new IllegalArgumentException("Chunk integrity check failed at chunk " + chunkIndex + ".");
         }
 
@@ -135,10 +150,35 @@ public final class version_upload_service {
         String expectedSha = safe(req.expectedFileSha256).trim().toLowerCase(Locale.ROOT);
         if (!expectedSha.isBlank() && !expectedSha.equals(finalSha)) {
             Files.deleteIfExists(outputPath);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("part_uuid", safe(partUuid).trim());
+            details.put("upload_id", uploadId);
+            details.put("total_chunks", String.valueOf(totalChunks));
+            LOGS.logWarning(
+                    "document.version_upload.file_integrity_failed",
+                    safe(tenantUuid).trim(),
+                    safe(req.createdBy).trim(),
+                    safe(caseUuid).trim(),
+                    safe(docUuid).trim(),
+                    details
+            );
             throw new IllegalArgumentException("File integrity check failed after assembly.");
         }
         if (req.expectedBytes > 0L && req.expectedBytes != assembledSize) {
             Files.deleteIfExists(outputPath);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("part_uuid", safe(partUuid).trim());
+            details.put("upload_id", uploadId);
+            details.put("expected_bytes", String.valueOf(req.expectedBytes));
+            details.put("assembled_bytes", String.valueOf(assembledSize));
+            LOGS.logWarning(
+                    "document.version_upload.file_size_mismatch",
+                    safe(tenantUuid).trim(),
+                    safe(req.createdBy).trim(),
+                    safe(caseUuid).trim(),
+                    safe(docUuid).trim(),
+                    details
+            );
             throw new IllegalArgumentException("File size check failed after assembly.");
         }
 
@@ -164,6 +204,23 @@ public final class version_upload_service {
         out.checksum = finalSha;
         out.assembledBytes = assembledSize;
         out.storagePath = outputPath;
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("part_uuid", safe(partUuid).trim());
+        details.put("upload_id", uploadId);
+        details.put("total_chunks", String.valueOf(totalChunks));
+        details.put("assembled_bytes", String.valueOf(assembledSize));
+        details.put("checksum", safe(finalSha));
+        details.put("version_uuid", safe(created == null ? "" : created.uuid).trim());
+        details.put("version_label", safe(created == null ? req.versionLabel : created.versionLabel));
+        details.put("mime_type", safe(created == null ? req.mimeType : created.mimeType));
+        LOGS.logVerbose(
+                "document.version_upload.committed",
+                safe(tenantUuid).trim(),
+                safe(req.createdBy).trim(),
+                safe(caseUuid).trim(),
+                safe(docUuid).trim(),
+                details
+        );
         return out;
     }
 

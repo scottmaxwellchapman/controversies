@@ -27,6 +27,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 public final class matter_conflicts {
 
     private static final ConcurrentHashMap<String, ReentrantReadWriteLock> LOCKS = new ConcurrentHashMap<String, ReentrantReadWriteLock>();
+    private static final activity_log ACTIVITY_LOGS = activity_log.defaultStore();
 
     public static matter_conflicts defaultStore() {
         return new matter_conflicts();
@@ -149,6 +150,13 @@ public final class matter_conflicts {
             rec.entries = new ArrayList<ConflictEntry>(map.values());
             rec.updatedAt = Instant.now().toString();
             writeAllLocked(conflictsPath(tu, mu), rec);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("entry_uuid", safe(merged.uuid).trim());
+            details.put("entity_type", safe(merged.entityType).trim());
+            details.put("display_name", safe(merged.displayName).trim());
+            details.put("source_tags", safe(merged.sourceTags).trim());
+            details.put("source_refs", safe(merged.sourceRefs).trim());
+            ACTIVITY_LOGS.logVerbose("conflicts.entry.upserted", tu, "", mu, "", details);
             return merged;
         } finally {
             lock.writeLock().unlock();
@@ -180,6 +188,9 @@ public final class matter_conflicts {
             rec.entries = next;
             rec.updatedAt = Instant.now().toString();
             writeAllLocked(conflictsPath(tu, mu), rec);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("entry_uuid", eu);
+            ACTIVITY_LOGS.logVerbose("conflicts.entry.deleted", tu, "", mu, "", details);
             return true;
         } finally {
             lock.writeLock().unlock();

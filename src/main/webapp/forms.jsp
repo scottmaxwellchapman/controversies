@@ -718,6 +718,42 @@
     align-items: stretch;
   }
 
+  .forms-selection-grid {
+    display: grid;
+    grid-template-columns: 2fr 2fr auto;
+    gap: 12px;
+  }
+
+  .forms-picker-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .forms-inline-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+
+  .forms-title-inline {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .forms-workspace-hidden-input {
+    position: absolute;
+    left: -10000px;
+    top: auto;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+  }
+
   .forms-side-card,
   .forms-preview-card {
     min-height: 520px;
@@ -730,6 +766,8 @@
   }
 
   .forms-side-card {
+    position: sticky;
+    top: calc(var(--header-h) + 0.75rem);
     background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
     border-color: var(--border);
   }
@@ -1027,6 +1065,22 @@
     margin: 0;
   }
 
+  .forms-replace-hint {
+    margin-top: 6px;
+    display: none;
+  }
+
+  .forms-missing-alert {
+    margin: 0;
+    border-radius: 12px;
+  }
+
+  .forms-missing-actions {
+    margin-top: 8px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
   #contextPreviewViewport {
     flex: 1 1 auto;
     height: 100%;
@@ -1211,6 +1265,13 @@
     display: block;
   }
 
+  .forms-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin: 0;
+  }
+
   @media (max-width: 1400px) {
     .forms-workbench-split {
       grid-template-columns: minmax(300px, 34fr) minmax(0, 66fr);
@@ -1229,6 +1290,13 @@
       padding-bottom: 0.5rem;
     }
     .forms-workbench-split {
+      grid-template-columns: 1fr;
+    }
+    .forms-side-card {
+      position: static;
+      top: auto;
+    }
+    .forms-selection-grid {
       grid-template-columns: 1fr;
     }
     .forms-toolbar-actions {
@@ -1253,7 +1321,7 @@
 <section class="card">
   <div class="section-head">
     <div>
-      <h1 style="margin:0;">Form Assembly</h1>
+      <h1 class="u-m-0">Form Assembly</h1>
     </div>
     <% if (templateLoaded) { %>
       <a
@@ -1266,19 +1334,19 @@
   </div>
 
   <% if (message != null) { %>
-    <div class="alert alert-ok" style="margin-top:12px;"><%= esc(message) %></div>
+    <div class="alert alert-ok u-mt-12"><%= esc(message) %></div>
   <% } %>
   <% if (error != null) { %>
-    <div class="alert alert-error" style="margin-top:12px;"><%= esc(error) %></div>
+    <div class="alert alert-error u-mt-12"><%= esc(error) %></div>
   <% } %>
 </section>
 
 <% if (!templateLoaded) { %>
-<section class="card forms-load-pane" style="margin-top:12px;">
+<section class="card forms-load-pane section-gap-12">
   <form class="form" method="get" action="<%= ctx %>/forms.jsp" id="formsSelectionForm">
     <input type="hidden" name="render_preview" value="<%= renderPreview ? "1" : "0" %>" />
 
-    <div class="grid" style="display:grid; grid-template-columns: 2fr 2fr auto; gap:12px;">
+    <div class="forms-selection-grid">
       <label>
         <span>Case</span>
         <select name="matter_uuid">
@@ -1307,7 +1375,7 @@
             <%= esc(selectedTemplateDisplayPath) %> (<%= esc(safe(selectedTemplate.fileExt).toUpperCase(Locale.ROOT)) %>)
           <% } %>
         </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <div class="forms-picker-actions">
           <button class="btn btn-ghost" type="button" id="btnOpenTemplatePicker" <%= templates.isEmpty() ? "disabled" : "" %>>Choose Template</button>
           <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Manage Templates</a>
           <a class="btn btn-ghost" href="<%= ctx %>/template_editor.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Template Editor</a>
@@ -1320,7 +1388,7 @@
       </label>
     </div>
 
-    <div class="actions" style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+    <div class="forms-inline-actions">
       <% if (selectedTemplate != null) { %>
         <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>&focus=1<%= renderPreviewQs %><%= assemblyQs %>">Start Focus Mode</a>
       <% } %>
@@ -1343,13 +1411,13 @@
     <div class="template-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="templatePickerTitle">
       <div class="template-modal-head">
         <div>
-          <h3 id="templatePickerTitle" style="margin:0;">Select Template</h3>
+          <h3 id="templatePickerTitle" class="u-m-0">Select Template</h3>
           <div class="meta">Browse folders and subfolders, then choose one template.</div>
         </div>
         <button type="button" class="btn btn-ghost" id="btnCloseTemplatePicker">Close</button>
       </div>
 
-      <label style="margin:0;">
+      <label class="u-m-0">
         <span>Search</span>
         <input type="text" id="templatePickerSearch" placeholder="Search path, name, or extension" />
       </label>
@@ -1413,20 +1481,20 @@
         <% } %>
       </div>
 
-      <div class="actions" style="display:flex; justify-content:flex-end; gap:8px; margin:0;">
+      <div class="actions forms-modal-actions">
         <button type="button" class="btn btn-ghost" data-template-modal-close="1">Done</button>
       </div>
     </div>
   </div>
 </section>
 <% } else if (focusMode) { %>
-<section class="card" style="margin-top:12px;">
-  <div style="display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap;">
+<section class="card section-gap-12">
+  <div class="forms-title-inline">
     <div>
-      <h2 style="margin:0;">Assembly Focus Mode</h2>
+      <h2 class="u-m-0">Assembly Focus Mode</h2>
       <div class="meta">Setup panels are hidden so the user can focus on navigating and replacing text in the working document.</div>
     </div>
-    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <div class="forms-inline-actions u-mt-0">
       <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= renderPreviewQs %><%= assemblyQs %>">Exit Focus Mode</a>
       <a class="btn btn-ghost" href="<%= ctx %>/template_library.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Template Library</a>
       <a class="btn btn-ghost" href="<%= ctx %>/case_fields.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %>">Case Fields</a>
@@ -1444,7 +1512,7 @@
 <div class="forms-workbench-split">
 <aside class="card forms-side-card">
   <div class="forms-side-head">
-    <h2 style="margin:0;">Assembly Controls</h2>
+    <h2 class="u-m-0">Assembly Controls</h2>
     <div class="meta">Token-first controls, replacements, and missing-value prompts.</div>
   </div>
   <div class="forms-side-scroll">
@@ -1468,7 +1536,7 @@
 
     <div class="forms-tabs" role="tablist" aria-label="Assembly controls tabs">
       <button type="button" class="forms-tab-btn is-active" id="formsTabReplace" data-forms-tab-target="replace" role="tab" aria-selected="true" aria-controls="formsPanelReplace">Replace</button>
-      <button type="button" class="forms-tab-btn" id="formsTabMissing" data-forms-tab-target="missing" role="tab" aria-selected="false" aria-controls="formsPanelMissing">Missing <span class="forms-tab-pill" id="formsMissingCountPill" style="display:none;">0</span></button>
+      <button type="button" class="forms-tab-btn" id="formsTabMissing" data-forms-tab-target="missing" role="tab" aria-selected="false" aria-controls="formsPanelMissing">Missing <span class="forms-tab-pill u-hidden" id="formsMissingCountPill">0</span></button>
       <button type="button" class="forms-tab-btn" id="formsTabTokens" data-forms-tab-target="tokens" role="tab" aria-selected="false" aria-controls="formsPanelTokens">Tokens</button>
     </div>
 
@@ -1517,7 +1585,7 @@
                   </div>
                 </div>
               </div>
-              <div class="meta" id="replaceControlHint" style="margin-top:6px; display:none;"></div>
+              <div class="meta forms-replace-hint" id="replaceControlHint"></div>
             </label>
           </div>
           <div class="forms-toolbar-actions">
@@ -1544,8 +1612,7 @@
       <section class="forms-tab-panel" id="formsPanelMissing" data-forms-tab-panel="missing" role="tabpanel" aria-labelledby="formsTabMissing">
         <div
           id="missingValuesAlert"
-          class="<%= missingTokens.isEmpty() ? "meta" : "alert alert-warn" %>"
-          style="margin:0;<%= missingTokens.isEmpty() ? "display:none;" : "" %>">
+          class="forms-missing-alert <%= missingTokens.isEmpty() ? "meta u-hidden" : "alert alert-warn" %>">
           <div id="missingValuesText">
             <% if (!missingTokens.isEmpty()) { %>
               Missing values for:
@@ -1554,17 +1621,17 @@
           </div>
           <div
             id="missingValuesActions"
-            style="margin-top:8px; gap:8px; flex-wrap:wrap;<%= missingTokens.isEmpty() ? "display:none;" : "display:flex;" %>">
+            class="forms-missing-actions <%= missingTokens.isEmpty() ? "u-hidden" : "u-flex" %>">
             <button type="button" class="btn btn-ghost" id="btnPromptMissingSave">Prompt Missing + Save</button>
             <button type="button" class="btn btn-ghost" id="btnPromptMissingAssemble">Prompt Missing + Save + Assemble</button>
             <a class="btn btn-ghost" id="btnOpenCaseLists" href="<%= ctx %>/case_lists.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= assemblyQs %><%= focusQs %><%= renderPreviewQs %>">Open List/Grid Editor</a>
           </div>
         </div>
-        <div id="missingValuesEmpty" class="meta" style="<%= missingTokens.isEmpty() ? "" : "display:none;" %>">No unresolved scalar values. List/grid datasets are prompted only when focused.</div>
+        <div id="missingValuesEmpty" class="meta <%= missingTokens.isEmpty() ? "" : "u-hidden" %>">No unresolved scalar values. List/grid datasets are prompted only when focused.</div>
       </section>
 
       <section class="forms-tab-panel" id="formsPanelTokens" data-forms-tab-panel="tokens" role="tabpanel" aria-labelledby="formsTabTokens">
-        <div class="forms-side-meta" style="margin-top:0;">
+        <div class="forms-side-meta u-mt-0">
           <div class="meta">
             Tokens found: <%= workspaceTokenDefaults.size() %>
           </div>
@@ -1583,17 +1650,17 @@
 
 <section class="card forms-preview-card">
   <div class="forms-preview-head">
-    <h2 style="margin:0;">Interactive Preview Workspace</h2>
+    <h2 class="u-m-0">Interactive Preview Workspace</h2>
     <div class="meta">Live document preview and token navigation context.</div>
-    <div class="meta" id="tokenMatchMeta" style="margin-top:6px;">Select a token to navigate matches. Replacements also apply inside table cells and tolerate common delimiter mistakes (smart quotes/full-width brackets).</div>
+    <div class="meta u-mt-6" id="tokenMatchMeta">Select a token to navigate matches. Replacements also apply inside table cells and tolerate common delimiter mistakes (smart quotes/full-width brackets).</div>
   </div>
 
   <div class="forms-preview-scroll">
     <% if (!renderPreview) { %>
-      <div class="meta" style="margin-bottom:8px;">Rendered image preview is disabled.</div>
+      <div class="meta u-mb-8">Rendered image preview is disabled.</div>
       <a class="btn btn-ghost" href="<%= ctx %>/forms.jsp?matter_uuid=<%= enc(selectedMatterUuid) %>&template_uuid=<%= enc(selectedTemplateUuid) %><%= focusQs %>&render_preview=1<%= assemblyQs %>">Enable Image Preview</a>
     <% } else { %>
-      <div class="meta" id="renderedPreviewMeta" style="margin-bottom:8px;">
+      <div class="meta u-mb-8" id="renderedPreviewMeta">
         <% if (!safe(imagePreviewEngine).isBlank()) { %>
           Engine: <strong><%= esc(imagePreviewEngine) %></strong>. Context preview shows 1.5 inches above and below the highlighted match.
         <% } else { %>
@@ -1602,17 +1669,17 @@
       </div>
       <div id="renderedPreviewWarning">
         <% if (!safe(imagePreviewWarning).isBlank()) { %>
-          <div class="alert alert-warn" style="margin-bottom:10px;"><%= esc(imagePreviewWarning) %></div>
+          <div class="alert alert-warn u-mb-12"><%= esc(imagePreviewWarning) %></div>
         <% } %>
       </div>
       <div id="contextPreviewViewport">
         <img id="contextPreviewImage" alt="Focused token preview image" />
       </div>
-      <div class="meta" id="contextPreviewMeta" style="margin-top:8px;">Navigate tokens to focus image context.</div>
+      <div class="meta u-mt-8" id="contextPreviewMeta">Navigate tokens to focus image context.</div>
       <% if (!renderedAvailable) { %>
-        <div class="muted" style="margin-top:8px;">Rendered preview is unavailable for this template right now.</div>
+        <div class="muted u-mt-8">Rendered preview is unavailable for this template right now.</div>
       <% } %>
-      <div id="renderedPreviewPages" style="display:none;">
+      <div id="renderedPreviewPages" class="u-hidden">
         <% for (int pi = 0; pi < imagePreviewPages.size(); pi++) {
              document_image_preview.PageImage pageImg = imagePreviewPages.get(pi);
              if (pageImg == null) continue;
@@ -1631,7 +1698,7 @@
   </div>
 </section>
 </div>
-<textarea id="workspaceText" rows="2" style="position:absolute; left:-10000px; top:auto; width:1px; height:1px; opacity:0;"><%= esc(sourcePreviewText) %></textarea>
+<textarea id="workspaceText" rows="2" class="forms-workspace-hidden-input"><%= esc(sourcePreviewText) %></textarea>
 </div>
 
 <div class="template-modal" id="typedPromptModal" hidden>
@@ -1639,7 +1706,7 @@
   <div class="template-modal-dialog typed-prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="typedPromptTitle">
     <div class="template-modal-head">
       <div>
-        <h3 id="typedPromptTitle" style="margin:0;">Missing Value Prompt</h3>
+        <h3 id="typedPromptTitle" class="u-m-0">Missing Value Prompt</h3>
         <div class="meta" id="typedPromptTokenMeta"></div>
       </div>
       <button type="button" class="btn btn-ghost" id="btnTypedPromptCancelTop">Cancel</button>
@@ -1755,7 +1822,7 @@
   var initialMissingKeys = [
     <% int mki = 0; for (String t : missingTokens) { if (mki > 0) { %>, <% } %>"<%= js(t) %>"<% mki++; } %>
   ];
-  var templateHasAdvancedDirectives = <%= sourcePreviewText.contains("{{#if") || sourcePreviewText.contains("{{#each") || sourcePreviewText.contains("{{format.date") ? "true" : "false" %>;
+  var templateHasAdvancedDirectives = <%= sourcePreviewText.contains("{{#if") || sourcePreviewText.contains("{{#each") || sourcePreviewText.contains("{{format.date") || sourcePreviewText.contains("{{default") ? "true" : "false" %>;
   var previewRefreshTimer = null;
   var previewRequestSeq = 0;
   var draftSaveTimer = null;
@@ -1765,6 +1832,8 @@
   var eachDirectiveKeys = Object.create(null);
   var formsLeftTab = "replace";
   var formsLeftTabInitialized = false;
+  var templatePickerReturnFocus = null;
+  var typedPromptReturnFocus = null;
 
   var btnFirstToken = document.getElementById("btnFirstToken");
   var btnPrevToken = document.getElementById("btnPrevToken");
@@ -3068,8 +3137,11 @@
     var ifRe = /\{\{\s*#if\s+([A-Za-z0-9_.-]+)\s*\}\}/g;
     while ((m = ifRe.exec(src)) !== null) addExpr(m[1]);
 
-    var fmtRe = /\{\{\s*format\.date\s+([A-Za-z0-9_.-]+)\s*,[^}]*\}\}/g;
+    var fmtRe = /\{\{\s*format\.date\s+([A-Za-z0-9_.-]+)\s*(?:,\s*)?\"[^\"]*\"\s*\}\}/g;
     while ((m = fmtRe.exec(src)) !== null) addExpr(m[1]);
+
+    var defaultRe = /\{\{\s*default\s+([A-Za-z0-9_.-]+)\s+\"[^\"]*\"\s*\}\}/g;
+    while ((m = defaultRe.exec(src)) !== null) addExpr(m[1]);
 
     return out;
   }
@@ -3197,14 +3269,61 @@
     }
   }
 
+  function focusableElements(root) {
+    if (!root || !root.querySelectorAll) return [];
+    var nodes = root.querySelectorAll(
+      "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+    );
+    var out = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (!el) continue;
+      if (el.getAttribute && el.getAttribute("aria-hidden") === "true") continue;
+      if (el.offsetParent === null && el !== document.activeElement) continue;
+      out.push(el);
+    }
+    return out;
+  }
+
+  function trapModalFocus(ev, modalEl, onEscape) {
+    if (!ev || !modalEl || modalEl.hidden) return;
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      if (typeof onEscape === "function") onEscape();
+      return;
+    }
+    if (ev.key !== "Tab") return;
+    var focusables = focusableElements(modalEl);
+    if (!focusables.length) return;
+    var first = focusables[0];
+    var last = focusables[focusables.length - 1];
+    var active = document.activeElement;
+    if (ev.shiftKey) {
+      if (active === first || !modalEl.contains(active)) {
+        ev.preventDefault();
+        last.focus();
+      }
+      return;
+    }
+    if (active === last || !modalEl.contains(active)) {
+      ev.preventDefault();
+      first.focus();
+    }
+  }
+
   function closeTemplatePicker() {
     if (!templatePickerModal || templatePickerModal.hidden) return;
     templatePickerModal.hidden = true;
-    if (btnOpenTemplatePicker) btnOpenTemplatePicker.focus();
+    var target = templatePickerReturnFocus && templatePickerReturnFocus.focus ? templatePickerReturnFocus : btnOpenTemplatePicker;
+    if (target && target.focus) {
+      try { target.focus(); } catch (ignored) {}
+    }
+    templatePickerReturnFocus = null;
   }
 
   function openTemplatePicker() {
     if (!templatePickerModal) return;
+    templatePickerReturnFocus = document.activeElement;
     templatePickerModal.hidden = false;
     if (templatePickerSearch) templatePickerSearch.value = "";
     updateTemplatePickerSelectionUi();
@@ -3522,6 +3641,10 @@
 
   function closeTypedPrompt(result) {
     if (typedPromptModal) typedPromptModal.hidden = true;
+    if (typedPromptReturnFocus && typedPromptReturnFocus.focus) {
+      try { typedPromptReturnFocus.focus(); } catch (ignored) {}
+    }
+    typedPromptReturnFocus = null;
     var resolve = typedPromptResolver;
     typedPromptResolver = null;
     typedPromptState = null;
@@ -3545,6 +3668,7 @@
 
     if (!typedPromptControlPack) typedPromptControlPack = buildControlPack("typedPrompt");
     typedPromptState = { token: token, fieldType: type };
+    typedPromptReturnFocus = document.activeElement;
 
     if (typedPromptTokenMeta) typedPromptTokenMeta.textContent = token;
     if (typedPromptHelp) typedPromptHelp.textContent = "Provide a value and click Apply. Skip leaves this token unresolved.";
@@ -4049,6 +4173,22 @@
         var target = String(btn.getAttribute("data-forms-tab-target") || "").toLowerCase();
         setFormsLeftTab(target, { focusTabButton: false });
       });
+      btn.addEventListener("keydown", function (ev) {
+        if (!ev) return;
+        var key = String(ev.key || "");
+        if (key !== "ArrowLeft" && key !== "ArrowRight" && key !== "Home" && key !== "End") return;
+        ev.preventDefault();
+        var idx = formsTabButtons.indexOf(btn);
+        if (idx < 0) idx = 0;
+        if (key === "Home") idx = 0;
+        else if (key === "End") idx = formsTabButtons.length - 1;
+        else if (key === "ArrowRight") idx = (idx + 1) % formsTabButtons.length;
+        else idx = (idx - 1 + formsTabButtons.length) % formsTabButtons.length;
+        var nextBtn = formsTabButtons[idx];
+        if (!nextBtn) return;
+        var nextTarget = String(nextBtn.getAttribute("data-forms-tab-target") || "").toLowerCase();
+        setFormsLeftTab(nextTarget, { focusTabButton: true });
+      });
     })();
   }
 
@@ -4151,6 +4291,19 @@
   }
   if (templatePickerSearch) {
     templatePickerSearch.addEventListener("input", filterTemplatePickerList);
+  }
+
+  if (templatePickerModal) {
+    templatePickerModal.addEventListener("keydown", function (ev) {
+      trapModalFocus(ev, templatePickerModal, closeTemplatePicker);
+    });
+  }
+  if (typedPromptModal) {
+    typedPromptModal.addEventListener("keydown", function (ev) {
+      trapModalFocus(ev, typedPromptModal, function () {
+        closeTypedPrompt({ action: "cancel" });
+      });
+    });
   }
 
   replaceControlPack = buildControlPack("replace");

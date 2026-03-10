@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 
@@ -17,6 +18,7 @@ public final class document_parts {
 
     private static final String CATEGORY_LEAD = "lead";
     private static final String CATEGORY_ATTACHMENT = "attachment";
+    private static final activity_log LOGS = activity_log.defaultStore();
 
     public static final class PartRec {
         public String uuid;
@@ -63,8 +65,8 @@ public final class document_parts {
     public boolean setTrashed(String tenantUuid, String matterUuid, String docUuid, String partUuid, boolean trashed) throws Exception {
         documents.defaultStore().requireEditable(tenantUuid, matterUuid, docUuid);
         List<PartRec> all = listAll(tenantUuid, matterUuid, docUuid);
+        PartRec target = null;
         if (!trashed) {
-            PartRec target = null;
             for (PartRec rec : all) {
                 if (document_workflow_support.safe(partUuid).trim().equals(document_workflow_support.safe(rec.uuid).trim())) {
                     target = rec;
@@ -79,11 +81,30 @@ public final class document_parts {
         boolean changed = false;
         for (PartRec rec : all) {
             if (!document_workflow_support.safe(partUuid).trim().equals(document_workflow_support.safe(rec.uuid).trim())) continue;
+            target = rec;
             rec.trashed = trashed;
             rec.updatedAt = Instant.now().toString();
             changed = true;
         }
-        if (changed) writeAll(tenantUuid, matterUuid, docUuid, all);
+        if (changed) {
+            writeAll(tenantUuid, matterUuid, docUuid, all);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("part_uuid", document_workflow_support.safe(partUuid).trim());
+            details.put("trashed", trashed ? "true" : "false");
+            if (target != null) {
+                details.put("part_label", document_workflow_support.safe(target.label).trim());
+                details.put("part_type", canonicalCategory(target.partType));
+                details.put("sequence", document_workflow_support.safe(target.sequence).trim());
+            }
+            LOGS.logVerbose(
+                    trashed ? "document.part.archived" : "document.part.restored",
+                    document_workflow_support.safe(tenantUuid).trim(),
+                    "",
+                    document_workflow_support.safe(matterUuid).trim(),
+                    document_workflow_support.safe(docUuid).trim(),
+                    details
+            );
+        }
         return changed;
     }
 
@@ -202,6 +223,21 @@ public final class document_parts {
         all.add(rec);
         writeAll(tenantUuid, matterUuid, docUuid, all);
         Files.createDirectories(partFolder(tenantUuid, matterUuid, docUuid, rec.uuid));
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("part_uuid", rec.uuid);
+        details.put("part_label", rec.label);
+        details.put("part_type", rec.partType);
+        details.put("sequence", rec.sequence);
+        details.put("confidentiality", rec.confidentiality);
+        details.put("sync_mode", enforceEditable ? "interactive" : "external_sync");
+        LOGS.logVerbose(
+                "document.part.created",
+                document_workflow_support.safe(tenantUuid).trim(),
+                document_workflow_support.safe(author).trim(),
+                document_workflow_support.safe(matterUuid).trim(),
+                document_workflow_support.safe(docUuid).trim(),
+                details
+        );
         return rec;
     }
 }

@@ -13,6 +13,7 @@
 <%@ page import="net.familylawandprobate.controversies.tenant_settings" %>
 <%@ page import="net.familylawandprobate.controversies.custom_objects" %>
 <%@ page import="net.familylawandprobate.controversies.permission_layers" %>
+<%@ page import="net.familylawandprobate.controversies.matters" %>
 
 <%!
     // -----------------------------
@@ -34,6 +35,15 @@
         MenuGroup(String label) { this.label = label; }
     }
 
+    private static final class BreadcrumbRec {
+        final String label;
+        final String href;
+        BreadcrumbRec(String label, String href) {
+            this.label = label;
+            this.href = href;
+        }
+    }
+
     private static String safe(String s) { return s == null ? "" : s; }
 
     private static String esc(String s) {
@@ -43,6 +53,16 @@
                 .replace(">","&gt;")
                 .replace("\"","&quot;")
                 .replace("'","&#39;");
+    }
+
+    private static String js(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\r", "")
+                .replace("\n", "\\n")
+                .replace("<", "\\u003c")
+                .replace(">", "\\u003e");
     }
 
     private static String normalizeHref(String href) {
@@ -69,68 +89,141 @@
     }
 
     private static String menuIconName(String label, String href, boolean hasChildren) {
-        String h = normalizeHref(href).toLowerCase(Locale.ROOT);
-        int query = h.indexOf('?');
-        if (query >= 0) h = h.substring(0, query);
+        String hRaw = normalizeHref(href).toLowerCase(Locale.ROOT);
+        String hPath = hRaw;
+        String hTopic = "";
+        int query = hRaw.indexOf('?');
+        if (query >= 0) {
+            hPath = hRaw.substring(0, query);
+            String queryString = hRaw.substring(query + 1);
+            String[] queryParts = queryString.split("&");
+            for (int i = 0; i < queryParts.length; i++) {
+                String part = queryParts[i];
+                if (part.startsWith("topic=") && part.length() > 6) {
+                    hTopic = part.substring(6);
+                    break;
+                }
+            }
+        }
+
+        String h = hPath;
+        if ("/help_browser.jsp".equals(hPath) && !hTopic.isBlank()) {
+            h = hPath + "?topic=" + hTopic;
+        }
         String l = normalizeMenuKey(label);
 
-        // Path-first mapping keeps menu and page heading icons consistent.
+        // Path-first mapping keeps menu and page heading icons consistent
+        // and avoids icon re-use across menu targets.
         if ("/index.jsp".equals(h)) return "home";
-        if ("/cases.jsp".equals(h) || "/case_lists.jsp".equals(h) || "/case_focus.jsp".equals(h) || "/case_conflicts.jsp".equals(h)) return "cases";
+        if ("/cases.jsp".equals(h)) return "cases";
+        if ("/case_lists.jsp".equals(h)) return "case-lists";
+        if ("/case_focus.jsp".equals(h)) return "case-focus";
+        if ("/case_conflicts.jsp".equals(h)) return "case-conflicts";
         if ("/contacts.jsp".equals(h)) return "contacts";
-        if ("/documents.jsp".equals(h) || "/parts.jsp".equals(h) || "/versions.jsp".equals(h) || "/pdf_redact.jsp".equals(h) || "/search.jsp".equals(h)) return "documents";
+        if ("/mail.jsp".equals(h)) return "email";
+        if ("/search.jsp".equals(h)) return "search";
+        if ("/documents.jsp".equals(h)) return "documents";
+        if ("/document_preview.jsp".equals(h)) return "document-preview";
+        if ("/parts.jsp".equals(h)) return "parts";
+        if ("/versions.jsp".equals(h)) return "versions";
+        if ("/pdf_redact.jsp".equals(h)) return "pdf-redact";
         if ("/facts.jsp".equals(h)) return "facts";
         if ("/tasks.jsp".equals(h)) return "tasks";
-        if ("/deadline_calculator.jsp".equals(h)) return "tasks";
+        if ("/deadline_calculator.jsp".equals(h)) return "deadline";
+        if ("/billing.jsp".equals(h)) return "billing";
         if ("/omnichannel.jsp".equals(h) || "/omnichannel_manifest.jsp".equals(h)) return "threads";
         if ("/wiki.jsp".equals(h)) return "wiki";
         if ("/texas_law.jsp".equals(h)) return "texas-law";
-        if ("/case_fields.jsp".equals(h) || "/tenant_fields.jsp".equals(h)) return "fields";
-        if ("/forms.jsp".equals(h) || "/assembled_forms.jsp".equals(h)) return "forms";
+        if ("/case_fields.jsp".equals(h)) return "fields";
+        if ("/forms.jsp".equals(h)) return "assemble-form";
+        if ("/assembled_forms.jsp".equals(h)) return "assembled-forms";
         if ("/template_library.jsp".equals(h)) return "templates";
-        if ("/template_editor.jsp".equals(h) || "/markup_notation.jsp".equals(h)) return "editor";
-        if ("/users_roles.jsp".equals(h) || "/permissions_management.jsp".equals(h) || "/security.jsp".equals(h)) return "security";
-        if ("/user_settings.jsp".equals(h) || "/tenant_login.jsp".equals(h) || "/user_login.jsp".equals(h)) return "user";
-        if ("/change_email.jsp".equals(h)) return "email";
-        if ("/change_password.jsp".equals(h) || "/forgot_password.jsp".equals(h)) return "password";
-        if ("/custom_objects.jsp".equals(h) || "/custom_object_records.jsp".equals(h)) return "custom-objects";
-        if ("/case_attributes.jsp".equals(h) || "/document_attributes.jsp".equals(h) || "/task_attributes.jsp".equals(h)
-                || "/custom_object_attributes.jsp".equals(h) || "/attribute_editor.jsp".equals(h)) return "attributes";
-        if ("/business_processes.jsp".equals(h) || "/tenant_settings.jsp".equals(h)) return "settings";
+        if ("/template_editor.jsp".equals(h)) return "editor";
+        if ("/markup_notation.jsp".equals(h)) return "markup-notation";
+        if ("/users_roles.jsp".equals(h) || "/security.jsp".equals(h)) return "security";
+        if ("/permissions_management.jsp".equals(h)) return "permission-layers";
+        if ("/user_settings.jsp".equals(h)) return "user";
+        if ("/tenant_login.jsp".equals(h)) return "tenant-login";
+        if ("/user_login.jsp".equals(h)) return "user-login";
+        if ("/change_email.jsp".equals(h)) return "change-email";
+        if ("/change_password.jsp".equals(h)) return "password";
+        if ("/forgot_password.jsp".equals(h)) return "forgot-password";
+        if ("/tenant_fields.jsp".equals(h)) return "tenant-fields";
+        if ("/attribute_editor.jsp".equals(h)) return "attribute-editor";
+        if ("/custom_objects.jsp".equals(h)) return "custom-objects";
+        if ("/custom_object_records.jsp".equals(h)) return "custom-object-records";
+        if ("/case_attributes.jsp".equals(h)) return "case-attributes";
+        if ("/document_attributes.jsp".equals(h)) return "document-attributes";
+        if ("/task_attributes.jsp".equals(h)) return "task-attributes";
+        if ("/custom_object_attributes.jsp".equals(h)) return "attributes";
+        if ("/business_processes.jsp".equals(h)) return "business-processes";
+        if ("/tenant_settings.jsp".equals(h)) return "tenant-settings";
+        if ("/entity_recognition_lab.jsp".equals(h)) return "entity-recognition";
+        if ("/search_operator_lab.jsp".equals(h)) return "search-operator";
+        if ("/version_similarity_lab.jsp".equals(h)) return "version-similarity";
+        if ("/image_hash_lab.jsp".equals(h)) return "image-hash";
+        if ("/ocr_companion_lab.jsp".equals(h)) return "ocr-companion";
+        if ("/storage_backend_lab.jsp".equals(h)) return "storage-backend";
+        if ("/scheduler_control.jsp".equals(h)) return "scheduler";
+        if ("/api_console.jsp".equals(h)) return "api-console";
+        if ("/clio_billing_mapper_lab.jsp".equals(h)) return "clio-mapper";
+        if ("/online_payments_lab.jsp".equals(h)) return "billing";
+        if ("/analytics_kpi_lab.jsp".equals(h)) return "logs";
         if ("/business_process_reviews.jsp".equals(h)) return "reviews";
         if ("/plugin_manager.jsp".equals(h)) return "plugins";
         if ("/log_viewer.jsp".equals(h)) return "logs";
-        if ("/help_browser.jsp".equals(h) || "/help_center.jsp".equals(h) || "/help_getting_started.jsp".equals(h) || "/token_guide.jsp".equals(h)) return "info";
-        if ("/help_permissions.jsp".equals(h)) return "security";
-        if (h.startsWith("/help_")) return "help";
+        if ("/install.jsp".equals(h)) return "install";
+        if ("/help_browser.jsp?topic=help_center".equals(h)) return "help-center";
+        if ("/help_browser.jsp?topic=getting_started".equals(h)) return "getting-started";
+        if ("/help_browser.jsp?topic=case_workflow".equals(h)) return "case-workflow";
+        if ("/help_browser.jsp?topic=conflict_checks".equals(h)) return "conflict-checks";
+        if ("/help_browser.jsp?topic=form_assembly".equals(h)) return "form-assembly-guide";
+        if ("/help_browser.jsp?topic=facts_novice".equals(h)) return "facts-guide-novice";
+        if ("/help_browser.jsp?topic=facts_expert".equals(h)) return "facts-guide-expert";
+        if ("/help_browser.jsp?topic=tasks_novice".equals(h)) return "tasks-guide-novice";
+        if ("/help_browser.jsp?topic=tasks_expert".equals(h)) return "tasks-guide-expert";
+        if ("/help_browser.jsp?topic=business_processes_expert".equals(h)) return "business-processes-guide";
+        if ("/help_browser.jsp?topic=threads_novice".equals(h)) return "threads-guide-novice";
+        if ("/help_browser.jsp?topic=threads_expert".equals(h)) return "threads-guide-expert";
+        if ("/help_browser.jsp?topic=permissions_guide".equals(h)) return "permissions-guide";
+        if ("/help_browser.jsp".equals(hPath)) return "help-center";
+        if ("/help_center.jsp".equals(h)) return "help-center";
+        if ("/help_getting_started.jsp".equals(h)) return "getting-started";
+        if ("/help_permissions.jsp".equals(h)) return "permissions-guide";
+        if (hPath.startsWith("/help_")) return "help";
+        if ("/token_guide.jsp".equals(h)) return "token-guide";
 
         // Label fallback handles heading defaults and submenu labels without href.
         if (containsKey(l, "home")) return "home";
+        if (containsKey(l, "form") && containsKey(l, "assembler")) return "form-assembler";
+        if (containsKey(l, "setting")) return "settings";
+        if (containsKey(l, "help")) return "help";
         if (containsKey(l, "case") && containsKey(l, "field")) return "fields";
-        if (containsKey(l, "case") && !containsKey(l, "workflow")) return "cases";
+        if (containsKey(l, "case") && containsKey(l, "workflow")) return "case-workflow";
+        if (containsKey(l, "case")) return "cases";
         if (containsKey(l, "contact")) return "contacts";
         if (containsKey(l, "document")) return "documents";
         if (containsKey(l, "fact")) return "facts";
         if (containsKey(l, "task")) return "tasks";
+        if (containsKey(l, "billing") || containsKey(l, "invoice") || containsKey(l, "accounting")) return "billing";
         if (containsKey(l, "thread") || containsKey(l, "omnichannel")) return "threads";
         if (containsKey(l, "wiki") || containsKey(l, "knowledge")) return "wiki";
         if (containsKey(l, "texas") || containsKey(l, "law")) return "texas-law";
-        if (containsKey(l, "form") && containsKey(l, "assembler")) return "form-assembler";
-        if (containsKey(l, "form") && containsKey(l, "assemble")) return "forms";
+        if (containsKey(l, "form") && containsKey(l, "assemble")) return "assemble-form";
         if (containsKey(l, "template") && containsKey(l, "editor")) return "editor";
         if (containsKey(l, "template")) return "templates";
-        if (containsKey(l, "setting")) return "settings";
         if (containsKey(l, "security") || (containsKey(l, "user") && containsKey(l, "role"))) return "security";
         if (containsKey(l, "user")) return "user";
-        if (containsKey(l, "mail") || containsKey(l, "email")) return "email";
+        if (containsKey(l, "mail")) return "email";
+        if (containsKey(l, "email")) return "change-email";
         if (containsKey(l, "password")) return "password";
-        if (containsKey(l, "attribute")) return "attributes";
+        if (containsKey(l, "attribute")) return "attribute-editor";
         if (containsKey(l, "custom") && containsKey(l, "object")) return "custom-objects";
         if (containsKey(l, "plugin")) return "plugins";
         if (containsKey(l, "log")) return "logs";
         if (containsKey(l, "review")) return "reviews";
-        if (containsKey(l, "help") || containsKey(l, "guide")) return "help";
-        if (containsKey(l, "token")) return "info";
+        if (containsKey(l, "guide")) return "help";
+        if (containsKey(l, "token")) return "token-guide";
         if (hasChildren) return "settings";
         return "";
     }
@@ -238,10 +331,12 @@
         g.items.add(new MenuNode("Cases", "/cases.jsp"));
         g.items.add(new MenuNode("Case Conflicts", "/case_conflicts.jsp"));
         g.items.add(new MenuNode("Contacts", "/contacts.jsp"));
+        g.items.add(new MenuNode("Mail", "/mail.jsp"));
         g.items.add(new MenuNode("Search", "/search.jsp"));
         g.items.add(new MenuNode("Facts Case Plan", "/facts.jsp"));
         g.items.add(new MenuNode("Tasks", "/tasks.jsp"));
         g.items.add(new MenuNode("Deadline Calculator", "/deadline_calculator.jsp"));
+        g.items.add(new MenuNode("Billing & Accounting", "/billing.jsp"));
         g.items.add(new MenuNode("Omnichannel Threads", "/omnichannel.jsp"));
         g.items.add(new MenuNode("Knowledge Wiki", "/wiki.jsp"));
         g.items.add(new MenuNode("Texas Law", "/texas_law.jsp"));
@@ -291,15 +386,31 @@
         if ("/case_conflicts.jsp".equals(h)) return "conflicts.access";
         if ("/case_fields.jsp".equals(h)) return "case_fields.access";
         if ("/contacts.jsp".equals(h)) return "contacts.access";
+        if ("/mail.jsp".equals(h)) return "mail.access";
         if ("/documents.jsp".equals(h)
                 || "/document_preview.jsp".equals(h)
                 || "/parts.jsp".equals(h)
                 || "/versions.jsp".equals(h)
                 || "/pdf_redact.jsp".equals(h)
                 || "/search.jsp".equals(h)) return "documents.access";
+        if ("/search_operator_lab.jsp".equals(h)) return "documents.access";
+        if ("/version_similarity_lab.jsp".equals(h)) return "documents.access";
+        if ("/image_hash_lab.jsp".equals(h)) return "documents.access";
+        if ("/ocr_companion_lab.jsp".equals(h)) return "documents.access";
+        if ("/entity_recognition_lab.jsp".equals(h)) return "conflicts.access";
+        if ("/storage_backend_lab.jsp".equals(h)) return "tenant_settings.manage";
+        if ("/scheduler_control.jsp".equals(h)) return "tenant_settings.manage";
+        if ("/api_console.jsp".equals(h)) return "api.credentials.manage";
+        if ("/clio_billing_mapper_lab.jsp".equals(h)) return "tenant_settings.manage";
+        if ("/leads_crm_lab.jsp".equals(h)) return "tenant_settings.manage";
+        if ("/esign_requests_lab.jsp".equals(h)) return "tenant_settings.manage";
+        if ("/integration_webhooks_lab.jsp".equals(h)) return "tenant_settings.manage";
+        if ("/online_payments_lab.jsp".equals(h)) return "tenant_settings.manage";
+        if ("/analytics_kpi_lab.jsp".equals(h)) return "tenant_settings.manage";
         if ("/facts.jsp".equals(h)) return "facts.access";
         if ("/tasks.jsp".equals(h)) return "tasks.access";
         if ("/deadline_calculator.jsp".equals(h)) return "tasks.access";
+        if ("/billing.jsp".equals(h)) return "tasks.access";
         if ("/omnichannel.jsp".equals(h) || "/omnichannel_manifest.jsp".equals(h)) return "threads.access";
         if ("/wiki.jsp".equals(h)) return "wiki.access";
         if ("/texas_law.jsp".equals(h)) return "texas_law.access";
@@ -495,6 +606,69 @@
             return "";
         }
     }
+
+    private static void collectCommandItems(List<String[]> out, MenuNode node, String groupLabel, String trail) {
+        if (out == null || node == null) return;
+        String label = safe(node.label).trim();
+        if (label.isBlank()) return;
+        String href = normalizeHref(node.href);
+        String nextTrail = trail == null || trail.isBlank() ? label : (trail + " -> " + label);
+        if (!href.isBlank()) {
+            out.add(new String[]{ label, href, safe(groupLabel).trim(), nextTrail });
+        }
+        if (node.children != null) {
+            for (int i = 0; i < node.children.size(); i++) {
+                collectCommandItems(out, node.children.get(i), groupLabel, nextTrail);
+            }
+        }
+    }
+
+    private static boolean collectBreadcrumbChain(MenuNode node, String targetHref, List<MenuNode> chain) {
+        if (node == null || chain == null) return false;
+        String href = normalizeHref(node.href);
+        if (!href.isBlank() && href.equalsIgnoreCase(normalizeHref(targetHref))) {
+            chain.add(node);
+            return true;
+        }
+        if (node.children != null) {
+            for (int i = 0; i < node.children.size(); i++) {
+                List<MenuNode> childChain = new ArrayList<MenuNode>();
+                if (collectBreadcrumbChain(node.children.get(i), targetHref, childChain)) {
+                    chain.add(node);
+                    chain.addAll(childChain);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static List<BreadcrumbRec> resolveBreadcrumbs(List<MenuGroup> groups, String targetHref) {
+        ArrayList<BreadcrumbRec> out = new ArrayList<BreadcrumbRec>();
+        String target = normalizeHref(targetHref);
+        if (target.isBlank() || groups == null || groups.isEmpty()) return out;
+        for (int gi = 0; gi < groups.size(); gi++) {
+            MenuGroup g = groups.get(gi);
+            if (g == null || g.items == null) continue;
+            for (int ii = 0; ii < g.items.size(); ii++) {
+                MenuNode n = g.items.get(ii);
+                List<MenuNode> chain = new ArrayList<MenuNode>();
+                if (!collectBreadcrumbChain(n, target, chain)) continue;
+                String gl = safe(g.label).trim();
+                if (!gl.isBlank()) out.add(new BreadcrumbRec(gl, ""));
+                for (int ci = 0; ci < chain.size(); ci++) {
+                    MenuNode step = chain.get(ci);
+                    if (step == null) continue;
+                    String label = safe(step.label).trim();
+                    if (label.isBlank()) continue;
+                    String href = normalizeHref(step.href);
+                    out.add(new BreadcrumbRec(label, href));
+                }
+                return out;
+            }
+        }
+        return out;
+    }
 %>
 
 <%
@@ -651,7 +825,44 @@
     }
     if (!currentPath.startsWith("/")) currentPath = "/index.jsp";
 
-    String pageTitleIconName = menuIconName("", currentPath, false);
+    List<String[]> commandItems = new ArrayList<String[]>();
+    if (navVisible && menuGroups != null) {
+        for (int gi = 0; gi < menuGroups.size(); gi++) {
+            MenuGroup g = menuGroups.get(gi);
+            if (g == null || g.items == null) continue;
+            String gl = safe(g.label).trim();
+            for (int ii = 0; ii < g.items.size(); ii++) {
+                collectCommandItems(commandItems, g.items.get(ii), gl, "");
+            }
+        }
+    }
+
+    List<BreadcrumbRec> breadcrumbTrail = resolveBreadcrumbs(menuGroups, currentPath);
+
+    String contextMatterUuid = safe(request.getParameter("matter_uuid")).trim();
+    if (contextMatterUuid.isBlank()) contextMatterUuid = safe(request.getParameter("case_uuid")).trim();
+
+    String contextMatterLabel = "";
+    if (navVisible && !safe(tenantUuid).trim().isBlank() && !contextMatterUuid.isBlank()) {
+        try {
+            matters.MatterRec m = matters.defaultStore().getByUuid(tenantUuid, contextMatterUuid);
+            if (m != null) contextMatterLabel = safe(m.label).trim();
+        } catch (Exception ignored) {}
+    }
+
+    String contextChipLabel = contextMatterLabel;
+    if (contextChipLabel.isBlank() && !contextMatterUuid.isBlank()) {
+        String shortened = contextMatterUuid.length() > 8 ? contextMatterUuid.substring(0, 8) : contextMatterUuid;
+        contextChipLabel = "Matter " + shortened;
+    }
+    boolean showContextBar = navVisible && (!breadcrumbTrail.isEmpty() || !contextChipLabel.isBlank());
+
+    String pageIconLookup = currentPath;
+    if ("/help_browser.jsp".equalsIgnoreCase(currentPath)) {
+        String helpTopic = safe(request.getParameter("topic")).trim().toLowerCase(Locale.ROOT);
+        if (!helpTopic.isBlank()) pageIconLookup = currentPath + "?topic=" + helpTopic;
+    }
+    String pageTitleIconName = menuIconName("", pageIconLookup, false);
     String nextEnc = URLEncoder.encode(currentPath, StandardCharsets.UTF_8);
 
     String loginHref = ctx + "/tenant_login.jsp?next=" + nextEnc;
@@ -666,6 +877,9 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate, max-snippet:0, max-image-preview:none, max-video-preview:0" />
+    <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate, max-snippet:0, max-image-preview:none, max-video-preview:0" />
+    <meta name="bingbot" content="noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate, max-snippet:0, max-image-preview:none, max-video-preview:0" />
     <title>Controversies</title>
     <link rel="icon" type="image/png" sizes="32x32" href="<%= ctx %>/branding/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="<%= ctx %>/branding/favicon-16x16.png" />
@@ -680,8 +894,8 @@
 <body>
 
 <header class="site-header">
-    <div class="container header-row" style="padding:0.45rem 0; gap:0.75rem;">
-        <div class="header-left" style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+    <div class="container header-row">
+        <div class="header-left">
 
             <% if (navVisible) { %>
                 <details class="dropdown nav-dropdown">
@@ -733,6 +947,9 @@
                 </button>
                 <button type="button" id="uiTextSmaller" class="btn btn-ghost btn-sm header-ui-btn" title="Text smaller">A-</button>
                 <button type="button" id="uiTextBigger" class="btn btn-ghost btn-sm header-ui-btn" title="Text bigger">A+</button>
+                <% if (navVisible) { %>
+                    <button type="button" id="cmdPaletteToggle" class="btn btn-ghost btn-sm header-ui-btn" title="Open command palette (Ctrl+K / Cmd+K)">Go To</button>
+                <% } %>
             </div>
 
             <!-- =========================
@@ -760,8 +977,7 @@
     </div>
 </header>
 
-<div id="uiThemeConfig"
-     style="display:none;"
+<div id="uiThemeConfig" class="u-hidden"
      data-tenant-scope="<%= esc((tenantUuid == null || tenantUuid.isBlank()) ? "public" : tenantUuid) %>"
      data-pref-scope="<%= esc(uiPreferenceScope) %>"
      data-context-path="<%= esc(ctx) %>"
@@ -774,6 +990,54 @@
      data-theme-light-hour="<%= esc(uiThemeLightHour) %>"
      data-theme-dark-hour="<%= esc(uiThemeDarkHour) %>"
      data-text-size-default="<%= esc(uiThemeTextSizeDefault) %>"></div>
+
+<% if (showContextBar) { %>
+<div class="container page-context-bar" aria-label="Page context">
+    <% if (!breadcrumbTrail.isEmpty()) { %>
+    <nav class="breadcrumbs" aria-label="Breadcrumb">
+        <% for (int bi = 0; bi < breadcrumbTrail.size(); bi++) {
+             BreadcrumbRec crumb = breadcrumbTrail.get(bi);
+             if (crumb == null) continue;
+             String label = safe(crumb.label).trim();
+             if (label.isBlank()) continue;
+             String href = normalizeHref(crumb.href);
+             boolean isLast = (bi == breadcrumbTrail.size() - 1);
+        %>
+            <% if (!isLast && !href.isBlank()) { %>
+                <a class="breadcrumb-link" href="<%= esc(ctx + href) %>"><%= esc(label) %></a>
+                <span class="breadcrumb-sep" aria-hidden="true">/</span>
+            <% } else { %>
+                <span class="breadcrumb-current"><%= esc(label) %></span>
+                <% if (!isLast) { %><span class="breadcrumb-sep" aria-hidden="true">/</span><% } %>
+            <% } %>
+        <% } %>
+    </nav>
+    <% } %>
+    <% if (!contextChipLabel.isBlank()) { %>
+    <div class="context-chip" title="<%= esc(contextMatterUuid) %>"><%= esc(contextChipLabel) %></div>
+    <% } %>
+</div>
+<% } %>
+
+<% if (navVisible) { %>
+<div class="cmd-palette" id="cmdPalette" hidden>
+    <div class="cmd-palette-backdrop" data-cmd-close="1"></div>
+    <div class="cmd-palette-dialog" role="dialog" aria-modal="true" aria-labelledby="cmdPaletteTitle">
+        <div class="cmd-palette-head">
+            <h2 id="cmdPaletteTitle" class="u-m-0">Go To</h2>
+            <button type="button" class="btn btn-ghost btn-sm" data-cmd-close="1">Close</button>
+        </div>
+        <label class="u-m-0">
+            <span>Search pages</span>
+            <input type="search" id="cmdPaletteInput" placeholder="Type page or feature name" autocomplete="off" />
+        </label>
+        <div class="cmd-palette-list" id="cmdPaletteList" role="listbox" aria-label="Navigation matches"></div>
+        <div class="meta cmd-palette-foot">
+            Keyboard: <code>Ctrl/Cmd + K</code> open, <code>↑/↓</code> navigate, <code>Enter</code> open, <code>Esc</code> close.
+        </div>
+    </div>
+</div>
+<% } %>
 
 <script>
 (() => {
@@ -1208,6 +1472,259 @@
     function safeWriteStorage(key, value) {
         try { window.localStorage.setItem(key, String(value == null ? "" : value)); } catch (ignored) {}
     }
+})();
+</script>
+
+<script>
+(() => {
+    const configEl = document.getElementById("uiThemeConfig");
+    if (!configEl) return;
+    const ctx = String(configEl.getAttribute("data-context-path") || "");
+    const scope = String(configEl.getAttribute("data-pref-scope") || "public");
+
+    const commandItems = [
+        <% for (int ci = 0; ci < commandItems.size(); ci++) {
+             String[] row = commandItems.get(ci);
+             if (row == null || row.length < 4) continue;
+        %>
+        {
+            label: "<%= js(safe(row[0])) %>",
+            href: "<%= js(safe(row[1])) %>",
+            group: "<%= js(safe(row[2])) %>",
+            trail: "<%= js(safe(row[3])) %>"
+        }<%= (ci + 1 < commandItems.size()) ? "," : "" %>
+        <% } %>
+    ];
+
+    const paletteEl = document.getElementById("cmdPalette");
+    const paletteInput = document.getElementById("cmdPaletteInput");
+    const paletteList = document.getElementById("cmdPaletteList");
+    const paletteToggle = document.getElementById("cmdPaletteToggle");
+    const paletteClose = Array.prototype.slice.call(document.querySelectorAll("[data-cmd-close]"));
+
+    const TELEMETRY_KEY = "ui.telemetry.events." + scope;
+    const TELEMETRY_LIMIT = 240;
+    let filtered = [];
+    let activeIndex = -1;
+
+    function readJson(key) {
+        try {
+            const raw = localStorage.getItem(key);
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch (ignored) {
+            return null;
+        }
+    }
+
+    function writeJson(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (ignored) {}
+    }
+
+    function telemetry(eventType, details) {
+        const queue = Array.isArray(readJson(TELEMETRY_KEY)) ? readJson(TELEMETRY_KEY) : [];
+        queue.push({
+            type: String(eventType || "event"),
+            at: new Date().toISOString(),
+            path: String(location.pathname || "") + String(location.search || ""),
+            details: details || {}
+        });
+        while (queue.length > TELEMETRY_LIMIT) queue.shift();
+        writeJson(TELEMETRY_KEY, queue);
+    }
+
+    telemetry("page_view", {
+        breadcrumb_depth: document.querySelectorAll(".breadcrumbs .breadcrumb-link, .breadcrumbs .breadcrumb-current").length
+    });
+
+    document.addEventListener("submit", function (ev) {
+        const form = ev.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        telemetry("form_submit", {
+            action: String(form.getAttribute("action") || ""),
+            method: String(form.getAttribute("method") || "get").toLowerCase()
+        });
+    }, true);
+
+    document.addEventListener("click", function (ev) {
+        const btn = ev.target && ev.target.closest ? ev.target.closest(".btn") : null;
+        if (!btn) return;
+        telemetry("button_click", { label: String(btn.textContent || "").trim().slice(0, 80) });
+    }, true);
+
+    if (!paletteEl || !paletteInput || !paletteList || commandItems.length === 0) return;
+
+    function norm(s) {
+        return String(s || "").toLowerCase().trim();
+    }
+
+    function score(item, query) {
+        if (!query) return 1;
+        const label = norm(item.label);
+        const trail = norm(item.trail);
+        if (label === query) return 100;
+        if (label.startsWith(query)) return 80;
+        if (label.indexOf(query) >= 0) return 60;
+        if (trail.indexOf(query) >= 0) return 40;
+        return 0;
+    }
+
+    function queryItems(raw) {
+        const q = norm(raw);
+        const ranked = [];
+        for (let i = 0; i < commandItems.length; i++) {
+            const it = commandItems[i];
+            const s = score(it, q);
+            if (s <= 0) continue;
+            ranked.push({ item: it, score: s });
+        }
+        ranked.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return String(a.item.trail || "").localeCompare(String(b.item.trail || ""));
+        });
+        const out = [];
+        for (let i = 0; i < ranked.length && i < 40; i++) out.push(ranked[i].item);
+        return out;
+    }
+
+    function renderList() {
+        paletteList.innerHTML = "";
+        if (filtered.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "cmd-palette-empty";
+            empty.textContent = "No matching pages.";
+            paletteList.appendChild(empty);
+            return;
+        }
+
+        if (activeIndex < 0 || activeIndex >= filtered.length) activeIndex = 0;
+
+        for (let i = 0; i < filtered.length; i++) {
+            const it = filtered[i];
+            const row = document.createElement("button");
+            row.type = "button";
+            row.className = "cmd-palette-item" + (i === activeIndex ? " is-active" : "");
+            row.setAttribute("role", "option");
+            row.setAttribute("aria-selected", i === activeIndex ? "true" : "false");
+            row.dataset.idx = String(i);
+            row.dataset.href = String(it.href || "");
+
+            const label = document.createElement("span");
+            label.className = "cmd-palette-item-label";
+            label.textContent = String(it.label || "");
+            row.appendChild(label);
+
+            const meta = document.createElement("span");
+            meta.className = "cmd-palette-item-meta";
+            const trail = String(it.trail || "");
+            const group = String(it.group || "");
+            meta.textContent = group ? (group + " -> " + trail) : trail;
+            row.appendChild(meta);
+
+            row.addEventListener("click", function () {
+                navigateTo(this.dataset.href || "");
+            });
+            row.addEventListener("mousemove", function () {
+                activeIndex = Number(this.dataset.idx || "0");
+                renderList();
+            });
+            paletteList.appendChild(row);
+        }
+    }
+
+    function navigateTo(href) {
+        const target = String(href || "").trim();
+        if (!target) return;
+        telemetry("command_palette_open", { href: target });
+        location.href = (target.startsWith("/") ? (ctx + target) : target);
+    }
+
+    function openPalette() {
+        if (!paletteEl.hidden) return;
+        paletteEl.hidden = false;
+        document.body.classList.add("cmd-palette-open");
+        paletteInput.value = "";
+        filtered = queryItems("");
+        activeIndex = 0;
+        renderList();
+        setTimeout(() => paletteInput.focus(), 0);
+    }
+
+    function closePalette() {
+        if (paletteEl.hidden) return;
+        paletteEl.hidden = true;
+        document.body.classList.remove("cmd-palette-open");
+        if (paletteToggle) paletteToggle.focus();
+    }
+
+    function activateIndex(idx) {
+        if (!filtered.length) return;
+        const next = Math.max(0, Math.min(filtered.length - 1, idx));
+        activeIndex = next;
+        renderList();
+        const active = paletteList.querySelector(".cmd-palette-item.is-active");
+        if (active && active.scrollIntoView) {
+            try { active.scrollIntoView({ block: "nearest" }); } catch (ignored) {}
+        }
+    }
+
+    if (paletteToggle) {
+        paletteToggle.addEventListener("click", function () {
+            openPalette();
+        });
+    }
+
+    for (let i = 0; i < paletteClose.length; i++) {
+        paletteClose[i].addEventListener("click", function () {
+            closePalette();
+        });
+    }
+
+    paletteInput.addEventListener("input", function () {
+        filtered = queryItems(this.value || "");
+        activeIndex = 0;
+        renderList();
+    });
+
+    paletteInput.addEventListener("keydown", function (ev) {
+        if (ev.key === "ArrowDown") {
+            ev.preventDefault();
+            activateIndex(activeIndex + 1);
+            return;
+        }
+        if (ev.key === "ArrowUp") {
+            ev.preventDefault();
+            activateIndex(activeIndex - 1);
+            return;
+        }
+        if (ev.key === "Enter") {
+            ev.preventDefault();
+            if (activeIndex >= 0 && activeIndex < filtered.length) {
+                navigateTo(filtered[activeIndex].href);
+            }
+            return;
+        }
+        if (ev.key === "Escape") {
+            ev.preventDefault();
+            closePalette();
+        }
+    });
+
+    document.addEventListener("keydown", function (ev) {
+        const isShortcut = (ev.key === "k" || ev.key === "K") && (ev.ctrlKey || ev.metaKey);
+        if (isShortcut) {
+            ev.preventDefault();
+            if (paletteEl.hidden) openPalette();
+            else closePalette();
+            return;
+        }
+        if (ev.key === "Escape" && !paletteEl.hidden) {
+            ev.preventDefault();
+            closePalette();
+        }
+    });
 })();
 </script>
 

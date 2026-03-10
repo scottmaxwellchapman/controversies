@@ -28,6 +28,7 @@ public final class tenant_wikis {
     public static final long MAX_ATTACHMENT_BYTES = 50L * 1024L * 1024L;
 
     private static final ConcurrentHashMap<String, ReentrantReadWriteLock> LOCKS = new ConcurrentHashMap<String, ReentrantReadWriteLock>();
+    private static final activity_log ACTIVITY_LOGS = activity_log.defaultStore();
     private static final Cleaner HTML_CLEANER = new Cleaner(
             Safelist.relaxed()
                     .addTags("table", "thead", "tbody", "tfoot", "tr", "th", "td", "hr", "span", "div")
@@ -207,6 +208,21 @@ public final class tenant_wikis {
             rec.currentRevisionUuid = safe(r1 == null ? "" : r1.uuid);
             rec.updatedAt = document_workflow_support.nowIso();
             writePagesLocked(tu, pages);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("page_uuid", safe(rec.uuid).trim());
+            details.put("title", safe(rec.title).trim());
+            details.put("slug", safe(rec.slug).trim());
+            details.put("parent_uuid", safe(rec.parentUuid).trim());
+            details.put("permission_key", safe(rec.permissionKey).trim());
+            details.put("initial_revision_uuid", safe(rec.currentRevisionUuid).trim());
+            ACTIVITY_LOGS.logVerbose(
+                    "wiki.page.created",
+                    safe(tenantUuid).trim(),
+                    safe(createdBy).trim(),
+                    "",
+                    "",
+                    details
+            );
             return rec;
         } finally {
             lock.writeLock().unlock();
@@ -252,6 +268,15 @@ public final class tenant_wikis {
             target.updatedAt = document_workflow_support.nowIso();
 
             writePagesLocked(tu, pages);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("page_uuid", safe(target.uuid).trim());
+            details.put("title", safe(target.title).trim());
+            details.put("slug", safe(target.slug).trim());
+            details.put("parent_uuid", safe(target.parentUuid).trim());
+            details.put("permission_key", safe(target.permissionKey).trim());
+            details.put("nav_order", String.valueOf(target.navOrder));
+            details.put("archived", target.archived ? "true" : "false");
+            ACTIVITY_LOGS.logVerbose("wiki.page.meta_updated", safe(tenantUuid).trim(), "", "", "", details);
             return true;
         } finally {
             lock.writeLock().unlock();
@@ -296,7 +321,21 @@ public final class tenant_wikis {
             String html = readRevisionHtmlLocked(tu, pu, ru);
             String note = safe(summary).trim();
             if (note.isBlank()) note = "Restored from " + safe(source.label).trim() + ".";
-            return saveRevisionLocked(tu, pu, html, note, editorEmail, editorUuid, ru, true);
+            RevisionRec restored = saveRevisionLocked(tu, pu, html, note, editorEmail, editorUuid, ru, true);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("page_uuid", pu);
+            details.put("from_revision_uuid", ru);
+            details.put("new_revision_uuid", safe(restored == null ? "" : restored.uuid).trim());
+            details.put("summary", note);
+            ACTIVITY_LOGS.logVerbose(
+                    "wiki.revision.restored",
+                    safe(tenantUuid).trim(),
+                    safe(editorUuid).trim().isBlank() ? safe(editorEmail).trim() : safe(editorUuid).trim(),
+                    "",
+                    "",
+                    details
+            );
+            return restored;
         } finally {
             lock.writeLock().unlock();
         }
@@ -442,6 +481,20 @@ public final class tenant_wikis {
             List<AttachmentRec> rows = readAttachmentsLocked(tu, pu);
             rows.add(rec);
             writeAttachmentsLocked(tu, pu, rows);
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("page_uuid", pu);
+            details.put("attachment_uuid", safe(rec.uuid).trim());
+            details.put("file_name", safe(rec.fileName).trim());
+            details.put("mime_type", safe(rec.mimeType).trim());
+            details.put("file_size_bytes", safe(rec.fileSizeBytes).trim());
+            ACTIVITY_LOGS.logVerbose(
+                    "wiki.attachment.uploaded",
+                    safe(tenantUuid).trim(),
+                    safe(uploadedBy).trim(),
+                    "",
+                    "",
+                    details
+            );
             return rec;
         } finally {
             lock.writeLock().unlock();
@@ -538,6 +591,18 @@ public final class tenant_wikis {
         }
 
         if (!force && current != null && sha.equals(safe(current.checksumSha256).trim())) {
+            LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+            details.put("page_uuid", safe(pageUuid).trim());
+            details.put("revision_uuid", safe(current.uuid).trim());
+            details.put("reason", "content_unchanged");
+            ACTIVITY_LOGS.logVerbose(
+                    "wiki.revision.skipped",
+                    safe(tenantUuid).trim(),
+                    safe(editorUuid).trim().isBlank() ? safe(editorEmail).trim() : safe(editorUuid).trim(),
+                    "",
+                    "",
+                    details
+            );
             return current;
         }
 
@@ -573,6 +638,21 @@ public final class tenant_wikis {
         page.currentRevisionUuid = rec.uuid;
         page.updatedAt = now;
         writePagesLocked(tenantUuid, pages);
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("page_uuid", safe(pageUuid).trim());
+        details.put("revision_uuid", safe(rec.uuid).trim());
+        details.put("revision_label", safe(rec.label).trim());
+        details.put("base_revision_uuid", safe(rec.baseRevisionUuid).trim());
+        details.put("file_size_bytes", safe(rec.fileSizeBytes).trim());
+        details.put("forced", force ? "true" : "false");
+        ACTIVITY_LOGS.logVerbose(
+                "wiki.revision.saved",
+                safe(tenantUuid).trim(),
+                safe(editorUuid).trim().isBlank() ? safe(editorEmail).trim() : safe(editorUuid).trim(),
+                "",
+                "",
+                details
+        );
         return rec;
     }
 

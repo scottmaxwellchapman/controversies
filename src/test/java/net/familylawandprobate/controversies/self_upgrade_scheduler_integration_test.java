@@ -112,6 +112,83 @@ public class self_upgrade_scheduler_integration_test {
         assertEquals(markerAfterFirstRun, markerAfterSecondRun, "Restart probe should not run when no update exists.");
     }
 
+    @Test
+    void updater_rolls_back_to_previous_commit_when_build_fails() throws Exception {
+        Path root = Files.createTempDirectory("self-upgrade-rollback-it-");
+        Path remote = root.resolve("remote.git");
+        Path seed = root.resolve("seed");
+        Path app = root.resolve("app");
+        Path wrapperDir = root.resolve("bin");
+        Path gitCallsLog = root.resolve("git-calls.log");
+        Path restartScript = root.resolve("restart-probe.sh");
+        Path restartMarker = root.resolve("restart.marker");
+        Path workspaceRepo = Path.of("").toAbsolutePath().normalize();
+
+        runAndRequireExit(0, root, List.of("git", "init", "--bare", remote.toString()), Map.of(), Duration.ofSeconds(30));
+        runAndRequireExit(0, root, List.of("git", "clone", "--no-local", workspaceRepo.toString(), seed.toString()), Map.of(), Duration.ofMinutes(2));
+
+        runAndRequireExit(0, seed, List.of("git", "config", "user.email", "test@example.com"), Map.of(), Duration.ofSeconds(30));
+        runAndRequireExit(0, seed, List.of("git", "config", "user.name", "Self Upgrade Test"), Map.of(), Duration.ofSeconds(30));
+        runAndRequireExit(0, seed, List.of("git", "remote", "set-url", "origin", remote.toString()), Map.of(), Duration.ofSeconds(30));
+        runAndRequireExit(0, seed, List.of("git", "push", "origin", "HEAD:refs/heads/main"), Map.of(), Duration.ofSeconds(30));
+
+        runAndRequireExit(0, root, List.of("git", "clone", "--branch", "main", remote.toString(), app.toString()), Map.of(), Duration.ofSeconds(30));
+        String branch = firstLine(runAndRequireExit(0, app, List.of("git", "rev-parse", "--abbrev-ref", "HEAD"), Map.of(), Duration.ofSeconds(30)).output);
+        assertFalse(branch.isBlank());
+
+        String realGit = firstLine(runAndRequireExit(
+                0,
+                root,
+                List.of("/bin/sh", "-lc", "command -v git"),
+                Map.of(),
+                Duration.ofSeconds(30)
+        ).output);
+        assertFalse(realGit.isBlank());
+
+        createGitWrapper(wrapperDir, realGit);
+        Files.writeString(gitCallsLog, "", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        createRestartProbeScript(restartScript);
+        writeSelfUpgradeConfig(
+                app,
+                branch,
+                "mvn -q -DskipTests compile",
+                "/bin/sh " + shellQuote(restartScript.toAbsolutePath().toString()) + " " + shellQuote(restartMarker.toAbsolutePath().toString())
+        );
+
+        String beforeHead = firstLine(runAndRequireExit(0, app, List.of("git", "rev-parse", "HEAD"), Map.of(), Duration.ofSeconds(30)).output);
+        assertFalse(beforeHead.isBlank());
+
+        Path brokenSource = seed.resolve("src/main/java/net/familylawandprobate/controversies/self_upgrade_compile_breaker.java");
+        String brokenJava = "package net.familylawandprobate.controversies;\n"
+                + "\n"
+                + "public final class self_upgrade_compile_breaker {\n"
+                + "    public static String value() {\n"
+                + "        return \"compile-broken;\n"
+                + "    }\n"
+                + "}\n";
+        Files.writeString(brokenSource, brokenJava, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        runAndRequireExit(0, seed, List.of("git", "add", brokenSource.toString()), Map.of(), Duration.ofSeconds(30));
+        runAndRequireExit(0, seed, List.of("git", "commit", "-m", "introduce compile failure"), Map.of(), Duration.ofSeconds(30));
+        String brokenHead = firstLine(runAndRequireExit(0, seed, List.of("git", "rev-parse", "HEAD"), Map.of(), Duration.ofSeconds(30)).output);
+        runAndRequireExit(0, seed, List.of("git", "push", "origin", "HEAD:refs/heads/main"), Map.of(), Duration.ofSeconds(30));
+
+        ProcessResult run = runHarness(app, wrapperDir, gitCallsLog, realGit);
+        assertEquals(0, run.exitCode, "Updater run failed unexpectedly:\n" + run.output);
+
+        String afterHead = firstLine(runAndRequireExit(0, app, List.of("git", "rev-parse", "HEAD"), Map.of(), Duration.ofSeconds(30)).output);
+        assertEquals(beforeHead, afterHead, "Expected updater to rollback checkout after compile failure.");
+        assertFalse(afterHead.equals(brokenHead), "Checkout should not remain on the broken commit.");
+        assertFalse(waitForFile(restartMarker, Duration.ofSeconds(2)), "Restart command should not run after compile failure.");
+
+        Properties status = readProperties(app.resolve("data/shared/self_upgrade/self_upgrade_status.properties"));
+        assertEquals("error", safe(status.getProperty("last_status")));
+        assertEquals(beforeHead, safe(status.getProperty("last_commit_before")));
+        assertEquals(beforeHead, safe(status.getProperty("last_commit_after")));
+        assertFalse("0".equals(safe(status.getProperty("last_build_exit_code"))), "Build exit code should indicate failure.");
+        assertTrue(safe(status.getProperty("last_error")).contains("rolled back to " + beforeHead),
+                "Expected rollback marker in status error: " + safe(status.getProperty("last_error")));
+    }
+
     private static ProcessResult runHarness(Path appDir, Path wrapperDir, Path gitCallsLog, String realGit) throws Exception {
         String javaBin = Path.of(System.getProperty("java.home"), "bin", "java").toAbsolutePath().toString();
         String classpath = System.getProperty("java.class.path");

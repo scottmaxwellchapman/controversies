@@ -8,3 +8,8 @@ https://raw.githubusercontent.com/twitter/twemoji/master/assets/svg/
 Files in this folder are used for:
 - Navigation menu item icons
 - Page title heading icons
+- Future feature/page icon assignments (expanded catalog)
+
+Naming:
+- Existing names match current menu/page mappings
+- Additional descriptive names are preloaded for future development

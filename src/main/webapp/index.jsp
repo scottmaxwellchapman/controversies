@@ -29,77 +29,77 @@
 <section class="card">
   <div class="section-head">
     <div>
-      <h1 style="margin:0;">Controversies</h1>
-      <p class="meta" style="margin-top:6px;">Focused legal-document workflow: users, cases, tenant fields, and DOCX-first assembly.</p>
+      <h1 class="u-m-0">Controversies</h1>
+      <p class="meta u-mt-6">Focused legal-document workflow: users, cases, tenant fields, and DOCX-first assembly.</p>
     </div>
   </div>
 
   <% if (!tenantLoggedInIndex) { %>
-    <div class="alert alert-warn" style="margin-top:12px;">
+    <div class="alert alert-warn u-mt-12">
       You must sign in before using Controversies features.
-      <div style="margin-top:8px;">
+      <div class="u-mt-8">
         <a class="btn btn-ghost" href="<%= request.getContextPath() %>/tenant_login.jsp?next=%2Findex.jsp">Go To Login</a>
       </div>
     </div>
   <% } else if (!userLoggedInIndex) { %>
-    <div class="alert alert-warn" style="margin-top:12px;">
+    <div class="alert alert-warn u-mt-12">
       Your session is not fully authenticated. Sign in again to continue.
-      <div style="margin-top:8px;">
+      <div class="u-mt-8">
         <a class="btn btn-ghost" href="<%= request.getContextPath() %>/tenant_login.jsp?next=%2Findex.jsp">Go To Login</a>
       </div>
     </div>
   <% } else { %>
-    <div class="alert alert-ok" style="margin-top:12px;">
+    <div class="alert alert-ok u-mt-12">
       Authenticated. Use the workflow cards below.
     </div>
   <% } %>
 </section>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Workflow</h2>
-  <div class="grid" style="display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:12px;">
-    <article class="card" style="padding:14px; margin:0;">
-      <h3 style="margin-top:0;">1. Users & Security</h3>
+<section class="card section-gap-12">
+  <h2>Workflow</h2>
+  <div class="grid grid-4">
+    <article class="card card-compact">
+      <h3 class="u-mt-0">1. Users & Security</h3>
       <p class="muted">Manage users, passwords, roles, and permission keys that control access.</p>
       <a class="btn" href="<%= request.getContextPath() %>/users_roles.jsp">Open Users &amp; Security</a>
     </article>
 
-    <article class="card" style="padding:14px; margin:0;">
-      <h3 style="margin-top:0;">2. Permission Layers</h3>
+    <article class="card card-compact">
+      <h3 class="u-mt-0">2. Permission Layers</h3>
       <p class="muted">Manage tenant, group, and user-level permission overrides with reusable permission profiles.</p>
       <a class="btn" href="<%= request.getContextPath() %>/permissions_management.jsp">Open Permission Layers</a>
     </article>
 
-    <article class="card" style="padding:14px; margin:0;">
-      <h3 style="margin-top:0;">3. Cases</h3>
+    <article class="card card-compact">
+      <h3 class="u-mt-0">3. Cases</h3>
       <p class="muted">Create and maintain case records plus key/value replacement fields for each case.</p>
       <a class="btn" href="<%= request.getContextPath() %>/cases.jsp">Open Cases</a>
     </article>
 
-    <article class="card" style="padding:14px; margin:0;">
-      <h3 style="margin-top:0;">4. Tenant Fields</h3>
+    <article class="card card-compact">
+      <h3 class="u-mt-0">4. Tenant Fields</h3>
       <p class="muted">Maintain global tenant replacement keys used across all cases and templates.</p>
       <a class="btn" href="<%= request.getContextPath() %>/tenant_fields.jsp">Open Tenant Fields</a>
     </article>
 
-    <article class="card" style="padding:14px; margin:0;">
-      <h3 style="margin-top:0;">5. Attribute Editor</h3>
+    <article class="card card-compact">
+      <h3 class="u-mt-0">5. Attribute Editor</h3>
       <p class="muted">Tenant administrators configure custom matter and document attributes, including dropdown fields.</p>
       <a class="btn" href="<%= request.getContextPath() %>/attribute_editor.jsp">Open Attribute Editor</a>
     </article>
 
-    <article class="card" style="padding:14px; margin:0;">
-      <h3 style="margin-top:0;">6. Form Assembly</h3>
+    <article class="card card-compact">
+      <h3 class="u-mt-0">6. Form Assembly</h3>
       <p class="muted">Assemble DOCX/DOC/RTF/ODT/TXT templates with style preservation and replace-once/all preview tools.</p>
       <a class="btn" href="<%= request.getContextPath() %>/forms.jsp">Open Form Assembly</a>
     </article>
   </div>
 </section>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Template Tokens</h2>
+<section class="card section-gap-12">
+  <h2>Template Tokens</h2>
   <div class="meta">Use double braces in templates. Examples:</div>
-  <div class="table-wrap" style="margin-top:8px;">
+  <div class="table-wrap table-wrap-tight">
     <table class="table">
       <thead>
         <tr>

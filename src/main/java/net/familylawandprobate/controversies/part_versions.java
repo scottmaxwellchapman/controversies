@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 
@@ -14,6 +15,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 public final class part_versions {
+    private static final activity_log LOGS = activity_log.defaultStore();
 
     public static final class VersionRec {
         public String uuid;
@@ -151,6 +153,24 @@ public final class part_versions {
         rec.current = makeCurrent || all.isEmpty();
         all.add(rec);
         writeAll(tenantUuid, matterUuid, docUuid, partUuid, all);
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("part_uuid", document_workflow_support.safe(partUuid).trim());
+        details.put("version_uuid", rec.uuid);
+        details.put("version_label", rec.versionLabel);
+        details.put("source", rec.source);
+        details.put("mime_type", rec.mimeType);
+        details.put("checksum", rec.checksum);
+        details.put("file_size_bytes", rec.fileSizeBytes);
+        details.put("make_current", rec.current ? "true" : "false");
+        details.put("sync_mode", enforceEditable ? "interactive" : "external_sync");
+        LOGS.logVerbose(
+                "document.version.created",
+                document_workflow_support.safe(tenantUuid).trim(),
+                document_workflow_support.safe(createdBy).trim(),
+                document_workflow_support.safe(matterUuid).trim(),
+                document_workflow_support.safe(docUuid).trim(),
+                details
+        );
         return rec;
     }
 }

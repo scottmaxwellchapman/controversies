@@ -1,6 +1,7 @@
 package net.familylawandprobate.controversies;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -10,6 +11,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -17,6 +19,8 @@ import java.util.regex.Pattern;
 
 public final class activity_log {
     private static final Pattern EVENT_PATTERN = Pattern.compile("<event\\s+([^>]+)>([\\s\\S]*?)</event>");
+    private static final Pattern DETAIL_PATTERN = Pattern.compile("<detail\\s+key=\\\"([^\\\"]*)\\\">([\\s\\S]*?)</detail>");
+    private static final Pattern TENANT_ACTIVITY_FILE = Pattern.compile("activity_\\d{4}-\\d{2}-\\d{2}\\.xml");
 
     public static final class LogEntry {
         public final String time;
@@ -27,8 +31,17 @@ public final class activity_log {
         public final String caseUuid;
         public final String documentUuid;
         public final String details;
+        public final Map<String, String> detailMap;
 
-        public LogEntry(String time, String level, String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, String details) {
+        public LogEntry(String time,
+                        String level,
+                        String action,
+                        String tenantUuid,
+                        String userUuid,
+                        String caseUuid,
+                        String documentUuid,
+                        String details,
+                        Map<String, String> detailMap) {
             this.time = safe(time);
             this.level = safe(level);
             this.action = safe(action);
@@ -37,6 +50,16 @@ public final class activity_log {
             this.caseUuid = safe(caseUuid);
             this.documentUuid = safe(documentUuid);
             this.details = safe(details);
+            LinkedHashMap<String, String> copy = new LinkedHashMap<String, String>();
+            if (detailMap != null) {
+                for (Map.Entry<String, String> e : detailMap.entrySet()) {
+                    if (e == null) continue;
+                    String key = safe(e.getKey()).trim();
+                    if (key.isBlank()) continue;
+                    copy.put(key, safe(e.getValue()));
+                }
+            }
+            this.detailMap = Collections.unmodifiableMap(copy);
         }
     }
 
@@ -96,10 +119,13 @@ public final class activity_log {
         List<LogEntry> out = new ArrayList<LogEntry>();
         synchronized (lock) {
             try {
-                Path p = logPath(tenant);
-                if (!Files.exists(p)) return List.of();
-                String xml = Files.readString(p, StandardCharsets.UTF_8);
-                out.addAll(parseEntries(xml));
+                List<Path> logs = tenantLogPathsNewestFirst(tenant);
+                for (Path p : logs) {
+                    if (p == null || !Files.exists(p)) continue;
+                    String xml = Files.readString(p, StandardCharsets.UTF_8);
+                    out.addAll(parseEntries(xml));
+                    if (out.size() >= (max * 2)) break;
+                }
             } catch (Exception ignored) {}
         }
         Collections.sort(out, Comparator.comparing((LogEntry e) -> safe(e.time)).reversed());
@@ -147,6 +173,7 @@ public final class activity_log {
         while (m.find()) {
             String attrs = safe(m.group(1));
             String body = safe(m.group(2)).trim();
+            LinkedHashMap<String, String> detailMap = parseDetailMap(body);
             out.add(new LogEntry(
                     xmlUnescape(attr(attrs, "time")),
                     xmlUnescape(attr(attrs, "level")),
@@ -155,10 +182,36 @@ public final class activity_log {
                     xmlUnescape(attr(attrs, "user_uuid")),
                     xmlUnescape(attr(attrs, "case_uuid")),
                     xmlUnescape(attr(attrs, "document_uuid")),
-                    xmlUnescape(body.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim())
+                    summarizeDetails(body, detailMap),
+                    detailMap
             ));
         }
         return out;
+    }
+
+    private static LinkedHashMap<String, String> parseDetailMap(String body) {
+        LinkedHashMap<String, String> out = new LinkedHashMap<String, String>();
+        Matcher detailMatcher = DETAIL_PATTERN.matcher(safe(body));
+        while (detailMatcher.find()) {
+            String key = xmlUnescape(safe(detailMatcher.group(1)).trim());
+            if (key.isBlank()) continue;
+            String val = xmlUnescape(safe(detailMatcher.group(2)).trim());
+            out.put(key, val);
+        }
+        return out;
+    }
+
+    private static String summarizeDetails(String body, LinkedHashMap<String, String> detailMap) {
+        if (detailMap != null && !detailMap.isEmpty()) {
+            StringBuilder sb = new StringBuilder(Math.max(64, detailMap.size() * 20));
+            for (Map.Entry<String, String> e : detailMap.entrySet()) {
+                if (e == null) continue;
+                if (sb.length() > 0) sb.append("; ");
+                sb.append(safe(e.getKey())).append("=").append(safe(e.getValue()));
+            }
+            return sb.toString();
+        }
+        return xmlUnescape(safe(body).replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim());
     }
 
     private static void appendXmlEvent(Path path, String rootTag, String seed, String entry) throws Exception {
@@ -205,6 +258,25 @@ public final class activity_log {
     private static Path logPath(String tenantUuid) {
         String day = DAY.format(Instant.now());
         return Paths.get("data", "tenants", safeFile(tenantUuid), "logs", "activity_" + day + ".xml").toAbsolutePath();
+    }
+
+    private static List<Path> tenantLogPathsNewestFirst(String tenantUuid) {
+        Path logsDir = Paths.get("data", "tenants", safeFile(tenantUuid), "logs").toAbsolutePath();
+        if (!Files.isDirectory(logsDir)) return List.of();
+        ArrayList<Path> out = new ArrayList<Path>();
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(logsDir, "activity_*.xml")) {
+            for (Path p : ds) {
+                if (p == null) continue;
+                String fn = safe(p.getFileName() == null ? "" : p.getFileName().toString()).trim();
+                if (!TENANT_ACTIVITY_FILE.matcher(fn).matches()) continue;
+                out.add(p);
+            }
+        } catch (Exception ignored) {
+            return List.of();
+        }
+        out.sort((a, b) -> safe(b == null || b.getFileName() == null ? "" : b.getFileName().toString())
+                .compareTo(safe(a == null || a.getFileName() == null ? "" : a.getFileName().toString())));
+        return out;
     }
 
     private static Path caseLogPath(String tenantUuid, String caseUuid) {

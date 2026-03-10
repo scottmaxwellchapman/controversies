@@ -366,11 +366,11 @@
 <jsp:include page="header.jsp" />
 
 <section class="card">
-  <h1 style="margin:0;">Case Documents</h1>
+  <h1 class="u-m-0">Case Documents</h1>
   <div class="meta">Legal-document index with lifecycle metadata, taxonomy, and tenant-defined document attributes.</div>
 </section>
 
-<section class="card" style="margin-top:12px;">
+<section class="card section-gap-12">
   <form class="form" method="get" action="<%= ctx %>/documents.jsp">
     <label>
       <span>Case</span>
@@ -386,18 +386,18 @@
     </label>
   </form>
 
-  <div class="actions" style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+  <div class="entity-action-bar">
     <a class="btn btn-ghost" href="<%= ctx %>/attribute_editor.jsp">Attribute Editor</a>
     <a class="btn btn-ghost" href="<%= ctx %>/document_attributes.jsp">Manage Document Attributes</a>
     <a class="btn btn-ghost" href="<%= ctx %>/tenant_settings.jsp#document-taxonomy">Manage Taxonomy</a>
   </div>
 
-  <% if (message != null) { %><div class="alert alert-ok" style="margin-top:10px;"><%= esc(message) %></div><% } %>
-  <% if (error != null) { %><div class="alert alert-error" style="margin-top:10px;"><%= esc(error) %></div><% } %>
+  <% if (message != null) { %><div class="alert alert-ok u-mt-10"><%= esc(message) %></div><% } %>
+  <% if (error != null) { %><div class="alert alert-error u-mt-10"><%= esc(error) %></div><% } %>
 </section>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Add Document</h2>
+<section class="card section-gap-12">
+  <h2 class="u-mt-0">Add Document</h2>
   <form method="post" class="form" action="<%= ctx %>/documents.jsp">
     <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
     <input type="hidden" name="action" value="create_document" />
@@ -428,8 +428,8 @@
     </div>
 
     <% if (!enabledAttrDefs.isEmpty()) { %>
-      <h4 style="margin:14px 0 8px 0;">Custom Attributes</h4>
-      <div class="grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+      <h4 class="u-mt-12">Custom Attributes</h4>
+      <div class="pref-grid">
         <%
           for (int i = 0; i < enabledAttrDefs.size(); i++) {
             document_attributes.AttributeRec def = enabledAttrDefs.get(i);
@@ -482,8 +482,8 @@
   </form>
 </section>
 
-<section class="card" style="margin-top:12px;">
-  <h2 style="margin-top:0;">Documents</h2>
+<section class="card section-gap-12">
+  <h2 class="u-mt-0">Documents</h2>
   <div class="table-wrap">
     <table class="table">
       <thead>
@@ -493,7 +493,7 @@
           <th>Attributes</th>
           <th>Owner</th>
           <th>Updated</th>
-          <th style="width:360px;">Actions</th>
+          <th class="u-w-360">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -565,7 +565,7 @@
             <a class="btn btn-ghost" href="<%= ctx %>/document_preview.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(did) %>">Preview</a>
             <% if (!docReadOnly) { %>
               <% if (checkoutActive && checkedOutByMe) { %>
-                <form method="post" action="<%= ctx %>/documents.jsp" style="display:inline;">
+                <form method="post" action="<%= ctx %>/documents.jsp" class="u-inline">
                   <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
                   <input type="hidden" name="action" value="check_in_document" />
                   <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
@@ -573,7 +573,7 @@
                   <button class="btn btn-ghost" type="submit">Check In</button>
                 </form>
               <% } else if (!checkoutActive) { %>
-                <form method="post" action="<%= ctx %>/documents.jsp" style="display:inline;">
+                <form method="post" action="<%= ctx %>/documents.jsp" class="u-inline">
                   <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
                   <input type="hidden" name="action" value="check_out_document" />
                   <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
@@ -585,7 +585,7 @@
               <% } %>
             <% } %>
             <% if (!d.trashed && !docReadOnly) { %>
-              <form method="post" action="<%= ctx %>/documents.jsp" style="display:inline;">
+              <form method="post" action="<%= ctx %>/documents.jsp" class="u-inline">
                 <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
                 <input type="hidden" name="action" value="archive_document" />
                 <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
@@ -593,7 +593,7 @@
                 <button class="btn btn-ghost" type="submit" onclick="return confirm('Archive this document?');" <%= lockDisabledAttr %>>Archive</button>
               </form>
             <% } else if (d.trashed && !docReadOnly) { %>
-              <form method="post" action="<%= ctx %>/documents.jsp" style="display:inline;">
+              <form method="post" action="<%= ctx %>/documents.jsp" class="u-inline">
                 <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
                 <input type="hidden" name="action" value="restore_document" />
                 <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
@@ -604,19 +604,19 @@
           </td>
         </tr>
 
-        <tr id="<%= editRowId %>" style="display:none;">
+        <tr id="<%= editRowId %>" class="doc-edit-row">
           <td colspan="6">
-            <div class="card" style="margin:8px 0; padding:14px; background:rgba(0,0,0,0.02);">
+            <div class="card doc-edit-panel">
               <form class="form" method="post" action="<%= ctx %>/documents.jsp">
                 <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
                 <input type="hidden" name="action" value="save_document" />
                 <input type="hidden" name="case_uuid" value="<%= esc(caseUuid) %>" />
                 <input type="hidden" name="uuid" value="<%= esc(did) %>" />
                 <% if (docReadOnly) { %>
-                  <div class="alert alert-error" style="margin-bottom:10px;">This document is synced from Clio and is read-only. Edit it in Clio.</div>
+                  <div class="alert alert-error u-mb-12">This document is synced from Clio and is read-only. Edit it in Clio.</div>
                 <% } %>
                 <% if (checkedOutByOther) { %>
-                  <div class="alert alert-error" style="margin-bottom:10px;"><%= esc(checkoutMessage) %> Checkout lock expires automatically after 72 hours.</div>
+                  <div class="alert alert-error u-mb-12"><%= esc(checkoutMessage) %> Checkout lock expires automatically after 72 hours.</div>
                 <% } %>
 
                 <div class="grid grid-3">
@@ -644,8 +644,8 @@
                 </div>
 
                 <% if (!enabledAttrDefs.isEmpty()) { %>
-                  <h4 style="margin:14px 0 8px 0;">Custom Attributes</h4>
-                  <div class="grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+                  <h4 class="u-mt-12">Custom Attributes</h4>
+                  <div class="pref-grid">
                     <%
                       for (int ai = 0; ai < enabledAttrDefs.size(); ai++) {
                         document_attributes.AttributeRec def = enabledAttrDefs.get(ai);
@@ -695,7 +695,7 @@
                   </div>
                 <% } %>
 
-                <div class="actions" style="display:flex; gap:10px; margin-top:10px;">
+                <div class="entity-action-bar">
                   <button class="btn" type="submit" <%= docLockedForEdit ? "disabled" : "" %>>Save Document</button>
                   <button class="btn btn-ghost" type="button" onclick="toggleDocEdit('<%= editRowId %>')">Cancel</button>
                 </div>
