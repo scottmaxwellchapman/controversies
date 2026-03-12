@@ -253,11 +253,18 @@ public final class self_upgrade_scheduler {
                 throw new IllegalStateException("git fetch failed: " + summarizeCommandResult(fetch));
             }
 
-            String remoteRef = cfg.gitRemote + "/" + branch;
-            String remoteHead = requireValue(
-                    runCommand(List.of("git", "rev-parse", remoteRef), cfg.commandTimeout, repoRoot),
-                    "Unable to resolve remote branch '" + remoteRef + "'."
-            );
+            String remoteHead = "";
+            CommandResult fetchHead = runCommand(List.of("git", "rev-parse", "FETCH_HEAD"), cfg.commandTimeout, repoRoot);
+            if (!fetchHead.timedOut && fetchHead.exitCode == 0) {
+                remoteHead = firstLine(fetchHead.output);
+            }
+            if (remoteHead.isBlank()) {
+                String remoteRef = cfg.gitRemote + "/" + branch;
+                remoteHead = requireValue(
+                        runCommand(List.of("git", "rev-parse", remoteRef), cfg.commandTimeout, repoRoot),
+                        "Unable to resolve fetched commit or remote branch '" + remoteRef + "'."
+                );
+            }
             if (beforeHead.equals(remoteHead)) {
                 status = "no_updates";
                 LOG.info("Self-upgrade check complete: local commit " + beforeHead + " is already at latest remote commit.");

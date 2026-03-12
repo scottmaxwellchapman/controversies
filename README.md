@@ -53,7 +53,7 @@ If you want to script launches, package the fat JAR, tune headless/desktop behav
 
 ## Prerequisites
 
-- **JDK 23** (required by `maven.compiler.release=23`)
+- **JDK 17+** (project compiles with `maven.compiler.release=17`)
 - **Maven 3.9+**
 - A desktop environment only if you want automatic browser launch
 

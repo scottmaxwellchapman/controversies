@@ -354,6 +354,9 @@ public final class integration_webhooks {
                 try {
                     delivery = dispatchOne(tu, endpoint, evt, payload == null ? new LinkedHashMap<String, Object>() : new LinkedHashMap<String, Object>(payload), now);
                 } catch (Exception ex) {
+                    String failureMessage = safe(ex.getMessage()).trim();
+                    if (failureMessage.isBlank()) failureMessage = safe(ex.getClass().getSimpleName()).trim();
+                    if (failureMessage.isBlank()) failureMessage = "Webhook dispatch failed.";
                     delivery = new DeliveryRec(
                             "whd_" + UUID.randomUUID().toString().replace("-", ""),
                             safe(endpoint.webhook_uuid).trim(),
@@ -361,7 +364,7 @@ public final class integration_webhooks {
                             false,
                             0,
                             "",
-                            safe(ex.getMessage()),
+                            failureMessage,
                             app_clock.now().toString()
                     );
                 }
