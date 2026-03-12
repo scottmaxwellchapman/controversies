@@ -12,6 +12,7 @@ public class app {
 
     public static void main(String[] args) {
         configureHeadlessMode();
+        app_clock.startIfEnabled();
 
         tenant_settings.StartupSelfCheckResult startupCheck = tenant_settings.defaultStore().startupSelfCheckAllTenants();
         if (!startupCheck.ok) {
@@ -26,6 +27,7 @@ public class app {
         notification_emails.defaultStore();
         clio_matter_sync_scheduler.defaultService().startIfNeeded();
         office365_contact_sync_scheduler.defaultService().startIfNeeded();
+        office365_calendar_sync_scheduler.defaultService().startIfNeeded();
         external_storage_data_sync_scheduler.defaultService().startIfNeeded();
         bpm_aging_alarm_scheduler.defaultService().startIfNeeded();
         self_upgrade_scheduler.defaultService().startIfNeeded();

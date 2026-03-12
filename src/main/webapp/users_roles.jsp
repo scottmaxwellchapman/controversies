@@ -30,6 +30,24 @@
     return "1".equals(s) || "true".equals(s) || "on".equals(s) || "yes".equals(s);
   }
 
+  private static long u_parseMoneyCents(String raw, long fallback) {
+    String s = u_safe(raw).replace("$","").replace(",","").trim();
+    if (s.isBlank()) return Math.max(0L, fallback);
+    try {
+      java.math.BigDecimal bd = new java.math.BigDecimal(s);
+      return bd.multiply(java.math.BigDecimal.valueOf(100L))
+               .setScale(0, java.math.RoundingMode.HALF_UP)
+               .longValueExact();
+    } catch (Exception ignored) {
+      return Math.max(0L, fallback);
+    }
+  }
+
+  private static String u_moneyFromCents(long cents) {
+    long safeCents = Math.max(0L, cents);
+    return String.format(Locale.ROOT, "%.2f", safeCents / 100.0d);
+  }
+
   private static String csrfForRender(jakarta.servlet.http.HttpServletRequest req) {
     Object a = req.getAttribute("csrfToken");
     if (a instanceof String) {
@@ -229,20 +247,34 @@
       } else if ("createUser".equalsIgnoreCase(action)) {
         String email = u_safe(request.getParameter("newUserEmail")).trim();
         String roleUuid = u_safe(request.getParameter("newUserRoleUuid")).trim();
+        String billingInitials = u_safe(request.getParameter("newUserBillingInitials")).trim();
+        long defaultHourlyRateCents = u_parseMoneyCents(request.getParameter("newUserDefaultHourlyRate"), 0L);
         boolean enabled = u_checked(request.getParameter("newUserEnabled"));
         String pw = u_safe(request.getParameter("newUserPassword"));
         boolean bypassPasswordPolicy = u_checked(request.getParameter("newUserBypassPasswordPolicy"));
 
         if (email.isBlank()) error = "Email address is required.";
         else if (roleUuid.isBlank()) error = "Role is required.";
+        else if (billingInitials.isBlank()) error = "Billing initials are required.";
         else if (pw.isBlank()) error = "Password is required.";
         else {
-          UserRec u = store.createUser(targetTenantUuid, email, roleUuid, enabled, pw.toCharArray(), bypassPasswordPolicy);
+          UserRec u = store.createUser(
+                  targetTenantUuid,
+                  email,
+                  roleUuid,
+                  enabled,
+                  pw.toCharArray(),
+                  billingInitials,
+                  defaultHourlyRateCents,
+                  bypassPasswordPolicy
+          );
           message = "User created.";
           if (u != null) selectedUserUuid = u_safe(u.uuid);
           auditDetails.put("user_uuid", selectedUserUuid);
           auditDetails.put("email", email);
           auditDetails.put("role_uuid", roleUuid);
+          auditDetails.put("billing_initials", billingInitials);
+          auditDetails.put("default_hourly_rate_cents", String.valueOf(defaultHourlyRateCents));
           auditDetails.put("enabled", enabled ? "true" : "false");
           auditDetails.put("bypass_password_policy", bypassPasswordPolicy ? "true" : "false");
         }
@@ -251,24 +283,31 @@
         String userUuid = u_safe(request.getParameter("editUserUuid")).trim();
         String email = u_safe(request.getParameter("editUserEmail")).trim();
         String roleUuid = u_safe(request.getParameter("editUserRoleUuid")).trim();
+        String billingInitials = u_safe(request.getParameter("editUserBillingInitials")).trim();
+        long defaultHourlyRateCents = u_parseMoneyCents(request.getParameter("editUserDefaultHourlyRate"), 0L);
         boolean enabled = u_checked(request.getParameter("editUserEnabled"));
         boolean twoFactorEnabled = u_checked(request.getParameter("editUserTwoFactorEnabled"));
         String twoFactorEngine = u_safe(request.getParameter("editUserTwoFactorEngine")).trim();
         String twoFactorPhone = u_safe(request.getParameter("editUserTwoFactorPhone")).trim();
 
         if (userUuid.isBlank()) error = "Select a user to update.";
+        else if (billingInitials.isBlank()) error = "Billing initials are required.";
         else {
-          boolean c1 = false, c2 = false, c3 = false, c4 = false;
+          boolean c1 = false, c2 = false, c3 = false, c4 = false, c5 = false, c6 = false;
           if (!email.isBlank()) c1 = store.updateUserEmail(targetTenantUuid, userUuid, email);
           if (!roleUuid.isBlank()) c2 = store.updateUserRole(targetTenantUuid, userUuid, roleUuid);
           c3 = store.updateUserEnabled(targetTenantUuid, userUuid, enabled);
           c4 = store.updateUserTwoFactorSettings(targetTenantUuid, userUuid, twoFactorEnabled, twoFactorEngine, twoFactorPhone);
+          c5 = store.updateUserBillingInitials(targetTenantUuid, userUuid, billingInitials);
+          c6 = store.updateUserDefaultHourlyRateCents(targetTenantUuid, userUuid, defaultHourlyRateCents);
 
-          message = (c1 || c2 || c3 || c4) ? "User updated." : "No changes.";
+          message = (c1 || c2 || c3 || c4 || c5 || c6) ? "User updated." : "No changes.";
           selectedUserUuid = userUuid;
           auditDetails.put("user_uuid", userUuid);
           auditDetails.put("email", email);
           auditDetails.put("role_uuid", roleUuid);
+          auditDetails.put("billing_initials", billingInitials);
+          auditDetails.put("default_hourly_rate_cents", String.valueOf(defaultHourlyRateCents));
           auditDetails.put("enabled", enabled ? "true" : "false");
           auditDetails.put("two_factor_enabled", twoFactorEnabled ? "true" : "false");
           auditDetails.put("two_factor_engine", twoFactorEngine);
@@ -428,14 +467,16 @@
         <div class="table-wrap">
           <table class="table">
             <thead>
-              <tr><th>Email</th><th>Role</th><th>Enabled</th><th>2FA</th></tr>
+              <tr><th>Email</th><th>Initials</th><th>Default Rate</th><th>Role</th><th>Enabled</th><th>2FA</th></tr>
             </thead>
             <tbody>
               <% if (users.isEmpty()) { %>
-                <tr><td colspan="4"><small>No users found.</small></td></tr>
+                <tr><td colspan="6"><small>No users found.</small></td></tr>
               <% } else { for (UserRec u : users) { if (u == null) continue; %>
                 <tr>
                   <td><%= u_esc(u.emailAddress) %></td>
+                  <td><code><%= u_esc(u.billingInitials) %></code></td>
+                  <td>$<%= u_esc(u_moneyFromCents(u.defaultHourlyRateCents)) %>/hr</td>
                   <td><%= u_esc(u_roleLabel(roleLabels, u.roleUuid)) %></td>
                   <td><%= u.enabled ? "<span class=\"badge\">Yes</span>" : "<span class=\"badge\">No</span>" %></td>
                   <td><%= u_esc(u_twoFactorSummary(u)) %></td>
@@ -466,6 +507,16 @@
                 <option value="<%= u_esc(r.uuid) %>"><%= u_esc(r.label) %><%= r.enabled ? "" : " (disabled)" %></option>
               <% } %>
             </select>
+          </label>
+
+          <label>
+            <span>Billing initials (3 chars)</span>
+            <input type="text" name="newUserBillingInitials" maxlength="3" placeholder="ABC" required />
+          </label>
+
+          <label>
+            <span>Default hourly rate (USD)</span>
+            <input type="text" name="newUserDefaultHourlyRate" value="0.00" placeholder="250.00" />
           </label>
 
           <label>
@@ -533,6 +584,16 @@
                   </option>
                 <% } %>
               </select>
+            </label>
+
+            <label>
+              <span>Billing initials (3 chars)</span>
+              <input type="text" name="editUserBillingInitials" maxlength="3" value="<%= u_esc(selectedUser.billingInitials) %>" required />
+            </label>
+
+            <label>
+              <span>Default hourly rate (USD)</span>
+              <input type="text" name="editUserDefaultHourlyRate" value="<%= u_esc(u_moneyFromCents(selectedUser.defaultHourlyRateCents)) %>" />
             </label>
 
             <div class="field-row">

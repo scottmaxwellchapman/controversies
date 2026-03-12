@@ -193,7 +193,7 @@ public final class texas_pdf_compatibility_checker {
             return new Report(
                     STANDARDS_URL,
                     STANDARDS_LABEL,
-                    Instant.now().toString(),
+                    app_clock.now().toString(),
                     fileName,
                     pdfVersion,
                     pageCount,

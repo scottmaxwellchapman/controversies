@@ -316,7 +316,7 @@ public final class task_attributes {
                     r.required,
                     r.enabled,
                     r.sortOrder > 0 ? r.sortOrder : order,
-                    safe(r.updatedAt).isBlank() ? Instant.now().toString() : r.updatedAt
+                    safe(r.updatedAt).isBlank() ? app_clock.now().toString() : r.updatedAt
             );
             if (!byKey.containsKey(key)) byKey.put(key, clean);
             order += 10;
@@ -384,7 +384,7 @@ public final class task_attributes {
         List<AttributeRec> out = sanitizeRows(rows);
         sortRows(out);
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(4096);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<task_attributes updated_at=\"").append(xmlAttr(now)).append("\">\n");

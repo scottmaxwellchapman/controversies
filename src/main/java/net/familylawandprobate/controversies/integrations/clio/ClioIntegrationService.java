@@ -1,5 +1,7 @@
 package net.familylawandprobate.controversies.integrations.clio;
 
+import net.familylawandprobate.controversies.app_clock;
+
 import net.familylawandprobate.controversies.activity_log;
 import net.familylawandprobate.controversies.contacts;
 import net.familylawandprobate.controversies.document_parts;
@@ -158,7 +160,7 @@ public final class ClioIntegrationService {
             int synced = 0;
             int scanned = 0;
             int pages = 0;
-            String nowIso = Instant.now().toString();
+            String nowIso = app_clock.now().toString();
             LinkedHashSet<String> seenCursors = new LinkedHashSet<String>();
 
             while (true) {
@@ -247,7 +249,7 @@ public final class ClioIntegrationService {
                 }
             }
 
-            String nowIso = Instant.now().toString();
+            String nowIso = app_clock.now().toString();
             LinkedHashMap<String, String> nextCfg = new LinkedHashMap<String, String>(cfg);
             nextCfg.put(CLIO_DOCUMENTS_LAST_SYNC_AT_KEY, nowIso);
             settingsStore.write(tu, nextCfg);
@@ -342,7 +344,7 @@ public final class ClioIntegrationService {
                         }
 
                         ArrayList<matter_contacts.LinkRec> links = new ArrayList<matter_contacts.LinkRec>();
-                        String nowIso = Instant.now().toString();
+                        String nowIso = app_clock.now().toString();
                         for (String clioContactId : clioContactIds) {
                             String localContactUuid = safe(localContactByClioId.get(clioContactId)).trim();
                             if (localContactUuid.isBlank()) continue;
@@ -770,7 +772,7 @@ public final class ClioIntegrationService {
         try {
             Instant last = Instant.parse(lastRunIso);
             Instant next = last.plusSeconds(intervalMinutes * 60L);
-            return !Instant.now().isBefore(next);
+            return !app_clock.now().isBefore(next);
         } catch (Exception ignored) {
             return true;
         }
@@ -790,7 +792,7 @@ public final class ClioIntegrationService {
                                         String error) {
         try {
             LinkedHashMap<String, String> nextCfg = new LinkedHashMap<String, String>(cfg == null ? Map.of() : cfg);
-            nextCfg.put("clio_contacts_last_sync_at", Instant.now().toString());
+            nextCfg.put("clio_contacts_last_sync_at", app_clock.now().toString());
             nextCfg.put("clio_contacts_last_sync_status", ok ? "ok" : "failed");
             nextCfg.put("clio_contacts_last_sync_error", safe(error));
             settingsStore.write(tenantUuid, nextCfg);

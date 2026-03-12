@@ -65,7 +65,7 @@ public final class matter_contacts {
     }
 
     public void ensure(String tenantUuid) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
 
         ReentrantReadWriteLock lock = lockFor(tu);
@@ -80,7 +80,7 @@ public final class matter_contacts {
     }
 
     public List<LinkRec> listAll(String tenantUuid) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         if (tu.isBlank()) return List.of();
         ReentrantReadWriteLock lock = lockFor(tu);
         lock.readLock().lock();
@@ -125,7 +125,7 @@ public final class matter_contacts {
     public void replaceNativeLinksForContact(String tenantUuid,
                                              String contactUuid,
                                              List<String> matterUuids) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         String cu = safe(contactUuid).trim();
         if (tu.isBlank() || cu.isBlank()) throw new IllegalArgumentException("tenantUuid/contactUuid required");
 
@@ -142,7 +142,7 @@ public final class matter_contacts {
                 }
                 out.add(row);
             }
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             int requestedCount = 0;
             if (matterUuids != null) {
                 for (String mu : matterUuids) {
@@ -175,7 +175,7 @@ public final class matter_contacts {
                                              String source,
                                              String sourceMatterId,
                                              List<LinkRec> nextLinks) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         String mu = safe(matterUuid).trim();
         String src = safe(source).trim().toLowerCase();
         if (tu.isBlank() || mu.isBlank() || src.isBlank()) {
@@ -195,7 +195,7 @@ public final class matter_contacts {
                 }
                 out.add(row);
             }
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             int requestedCount = 0;
             if (nextLinks != null) {
                 for (LinkRec row : nextLinks) {
@@ -277,7 +277,7 @@ public final class matter_contacts {
     private static void writeAllLocked(String tenantUuid, List<LinkRec> rows) throws Exception {
         Path p = path(tenantUuid);
         Files.createDirectories(p.getParent());
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
 
         StringBuilder sb = new StringBuilder(8192);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -300,11 +300,11 @@ public final class matter_contacts {
     }
 
     private static ReentrantReadWriteLock lockFor(String tenantUuid) {
-        return LOCKS.computeIfAbsent(safe(tenantUuid), k -> new ReentrantReadWriteLock());
+        return LOCKS.computeIfAbsent(safeFileToken(tenantUuid), k -> new ReentrantReadWriteLock());
     }
 
     private static Path path(String tenantUuid) {
-        return Paths.get("data", "tenants", safe(tenantUuid).trim(), "matter_contacts.xml").toAbsolutePath();
+        return Paths.get("data", "tenants", safeFileToken(tenantUuid), "matter_contacts.xml").toAbsolutePath();
     }
 
     private static Document parseXml(Path p) throws Exception {
@@ -341,7 +341,7 @@ public final class matter_contacts {
     }
 
     private static String emptyXml() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 + "<matter_contacts created=\"" + xmlAttr(now) + "\" updated=\"" + xmlAttr(now) + "\"></matter_contacts>\n";
     }
@@ -384,5 +384,11 @@ public final class matter_contacts {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static String safeFileToken(String s) {
+        String t = safe(s).trim();
+        if (t.isBlank()) return "";
+        return t.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 }

@@ -150,6 +150,13 @@
     return "app_credentials";
   }
 
+  private static String normalizeDeploymentTopology(String raw) {
+    String s = safe(raw).trim().toLowerCase(Locale.ROOT);
+    if ("private".equals(s) || "vpn".equals(s) || "private_vpn".equals(s)
+            || "vpn_only".equals(s) || "behind_vpn".equals(s)) return "vpn";
+    return "public";
+  }
+
   private static boolean looksHttpUrl(String raw) {
     String s = safe(raw).trim().toLowerCase(Locale.ROOT);
     return s.startsWith("http://") || s.startsWith("https://");
@@ -262,6 +269,7 @@
   String externalDataAction = normalizeExternalDataAction(request.getParameter("externalDataAction"));
   boolean externalRestoreConfirm = truthy(request.getParameter("externalRestoreConfirm"));
   external_storage_data_sync.SnapshotInfo externalLatestSnapshot = null;
+  String deploymentTopology = "public";
 
   boolean clioEnabled = false;
   String clioBaseUrl = "";
@@ -351,6 +359,7 @@
     storageOnedrivePrivateRelayUrl = safe(settings.get("storage_onedrive_private_relay_url")).trim();
     storageMaxPathLength = parseIntBounded(settings.get("storage_max_path_length"), 0, 0, 8192);
     storageMaxFilenameLength = parseIntBounded(settings.get("storage_max_filename_length"), 0, 0, 1024);
+    deploymentTopology = normalizeDeploymentTopology(settings.get("integration_deployment_topology"));
 
     clioEnabled = truthy(settings.get("clio_enabled"));
     clioBaseUrl = safe(settings.get("clio_base_url")).trim();
@@ -359,6 +368,10 @@
     clioAuthMode = normalizeClioAuthMode(settings.get("clio_auth_mode"));
     clioOauthCallbackUrl = safe(settings.get("clio_oauth_callback_url")).trim();
     clioPrivateRelayUrl = safe(settings.get("clio_private_relay_url")).trim();
+    if ("public".equals(deploymentTopology)
+            && ("private".equals(clioAuthMode) || "private".equals(storageOnedriveAuthMode))) {
+      deploymentTopology = "vpn";
+    }
 
     emailProvider = normalizeEmailProvider(settings.get("email_provider"));
     emailFromAddress = safe(settings.get("email_from_address")).trim();
@@ -400,6 +413,7 @@
         passwordPolicyRequireNumber = truthy(request.getParameter("passwordPolicyRequireNumber"));
         passwordPolicyRequireSymbol = truthy(request.getParameter("passwordPolicyRequireSymbol"));
       } else if ("step4_save".equalsIgnoreCase(action)) {
+        deploymentTopology = normalizeDeploymentTopology(request.getParameter("deploymentTopology"));
         storageBackend = normalizeStorageBackend(request.getParameter("storageBackend"));
         storageEndpoint = safe(request.getParameter("storageEndpoint")).trim();
         storageRootFolder = safe(request.getParameter("storageRootFolder")).trim();
@@ -574,12 +588,18 @@
             error = "External backup/restore actions require an external storage backend.";
           } else if ("restore_latest".equals(externalDataAction) && !externalRestoreConfirm) {
             error = "Confirm restore acknowledgement before restoring from external backup.";
+          } else if ("vpn".equals(deploymentTopology)
+                  && "onedrive_business".equals(storageBackend)
+                  && "public".equals(storageOnedriveAuthMode)) {
+            error = "VPN/private deployment profile cannot use OneDrive public callback auth; choose app credentials or private relay/admin flow.";
           } else if ("onedrive_business".equals(storageBackend) && "public".equals(storageOnedriveAuthMode)
                   && !looksHttpUrl(storageOnedriveOauthCallbackUrl)) {
             error = "OneDrive public auth profile requires a valid OAuth callback URL.";
           } else if ("onedrive_business".equals(storageBackend) && "private".equals(storageOnedriveAuthMode)
                   && storageOnedrivePrivateRelayUrl.isBlank()) {
             error = "OneDrive private auth profile requires relay/admin exchange instructions.";
+          } else if ("vpn".equals(deploymentTopology) && clioEnabled && "public".equals(clioAuthMode)) {
+            error = "VPN/private deployment profile requires Clio private auth mode (relay/admin exchange).";
           } else if (clioEnabled && (!looksHttpUrl(clioBaseUrl) || clioClientId.isBlank() || clioClientSecret.isBlank())) {
             error = "Clio requires base URL, client ID, and client secret.";
           } else if (clioEnabled && "public".equals(clioAuthMode) && !looksHttpUrl(clioOauthCallbackUrl)) {
@@ -603,6 +623,7 @@
             LinkedHashMap<String, String> toSave = settingsStore.read(tenantUuid);
             external_storage_data_sync syncService = external_storage_data_sync.defaultService();
 
+            toSave.put("integration_deployment_topology", deploymentTopology);
             toSave.put("storage_backend", storageBackend);
             toSave.put("storage_max_path_length", String.valueOf(storageMaxPathLength));
             toSave.put("storage_max_filename_length", String.valueOf(storageMaxFilenameLength));
@@ -927,6 +948,27 @@
         <form class="form" method="post" action="<%= ctx %>/install.jsp?step=4">
           <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
 
+          <h2 class="u-m-0">Deployment Profile</h2>
+          <label>
+            <span>Instance Accessibility</span>
+            <select name="deploymentTopology">
+              <option value="public" <%= "public".equals(deploymentTopology) ? "selected" : "" %>>Publicly accessible instance</option>
+              <option value="vpn" <%= "vpn".equals(deploymentTopology) ? "selected" : "" %>>Behind VPN/private network instance</option>
+            </select>
+          </label>
+          <% if ("vpn".equals(deploymentTopology)) { %>
+            <div class="alert alert-error">
+              VPN/private profile selected. External integrations should use relay/admin exchange or outbound-only flows instead of public OAuth callbacks.
+            </div>
+          <% } else { %>
+            <div class="alert alert-ok">
+              Public profile selected. External providers can reach callback endpoints directly when configured.
+            </div>
+          <% } %>
+          <div class="help">
+            This profile applies topology-aware validation for external service interactions (for example Clio and OneDrive auth flows) and API/webhook integration planning.
+          </div>
+
           <h2 class="u-m-0">Storage</h2>
           <label>
             <span>Storage Backend</span>
@@ -960,8 +1002,8 @@
             <span>OneDrive Auth Profile</span>
             <select name="storageOnedriveAuthMode">
               <option value="app_credentials" <%= "app_credentials".equals(storageOnedriveAuthMode) ? "selected" : "" %>>App credentials only</option>
-              <option value="public" <%= "public".equals(storageOnedriveAuthMode) ? "selected" : "" %>>Public callback</option>
-              <option value="private" <%= "private".equals(storageOnedriveAuthMode) ? "selected" : "" %>>Private relay/admin flow</option>
+              <option value="public" <%= "public".equals(storageOnedriveAuthMode) ? "selected" : "" %>>Public callback (public deployments)</option>
+              <option value="private" <%= "private".equals(storageOnedriveAuthMode) ? "selected" : "" %>>Private relay/admin flow (VPN/private deployments)</option>
             </select>
           </label>
           <label>
@@ -1031,8 +1073,8 @@
           <label>
             <span>Clio Auth Mode</span>
             <select name="clioAuthMode">
-              <option value="public" <%= "public".equals(clioAuthMode) ? "selected" : "" %>>Public</option>
-              <option value="private" <%= "private".equals(clioAuthMode) ? "selected" : "" %>>Private</option>
+              <option value="public" <%= "public".equals(clioAuthMode) ? "selected" : "" %>>Public (web-accessible callback)</option>
+              <option value="private" <%= "private".equals(clioAuthMode) ? "selected" : "" %>>Private (relay/admin exchange)</option>
             </select>
           </label>
           <label>

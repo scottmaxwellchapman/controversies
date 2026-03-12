@@ -10,10 +10,12 @@
 <%@ page import="java.util.Locale" %>
 <%@ page import="java.util.Map" %>
 
+<%@ page import="net.familylawandprobate.controversies.assembly_identity_tokens" %>
 <%@ page import="net.familylawandprobate.controversies.case_fields" %>
 <%@ page import="net.familylawandprobate.controversies.form_templates" %>
 <%@ page import="net.familylawandprobate.controversies.matters" %>
 <%@ page import="net.familylawandprobate.controversies.tenant_fields" %>
+<%@ page import="net.familylawandprobate.controversies.users_roles" %>
 
 <%@ include file="security.jspf" %>
 <%
@@ -60,6 +62,8 @@
 
   String tenantUuid = safe((String)session.getAttribute(S_TENANT_UUID)).trim();
   String tenantLabel = safe((String)session.getAttribute(S_TENANT_LABEL)).trim();
+  String userUuid = safe((String)session.getAttribute(users_roles.S_USER_UUID)).trim();
+  String userEmail = safe((String)session.getAttribute(users_roles.S_USER_EMAIL)).trim();
   if (tenantUuid.isBlank()) {
     response.sendRedirect(ctx + "/tenant_login.jsp");
     return;
@@ -109,6 +113,8 @@
 
   putToken(mergeValues, tokenSource, "tenant.uuid", tenantUuid, "system");
   putToken(mergeValues, tokenSource, "tenant.label", tenantLabel, "system");
+  if (!userUuid.isBlank()) putToken(mergeValues, tokenSource, "user.uuid", userUuid, "system");
+  if (!userEmail.isBlank()) putToken(mergeValues, tokenSource, "user.email", userEmail, "system");
 
   if (selectedCase != null) {
     String caseCause = safe(caseKv.get("cause_docket_number"));
@@ -143,6 +149,9 @@
     putToken(mergeValues, tokenSource, "kv." + nk, val, "case");
     putToken(mergeValues, tokenSource, nk, val, "case");
   }
+
+  assembly_identity_tokens.addTenantIdentityTokens(mergeValues, tenantUuid, ctx, tenantKv);
+  assembly_identity_tokens.addUserIdentityTokens(mergeValues, tenantUuid, userUuid, userEmail, ctx);
 
   ArrayList<Map.Entry<String,String>> tokenRows = new ArrayList<Map.Entry<String,String>>(mergeValues.entrySet());
   Collections.sort(tokenRows, new Comparator<Map.Entry<String,String>>() {

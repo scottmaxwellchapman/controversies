@@ -9,6 +9,7 @@ import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationRubberStamp;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationSquareCircle;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.Test;
 
@@ -66,10 +67,12 @@ public class pdf_redaction_service_test {
             }
             assertTrue(hasAnnotationSubtype(output, 0, "Text"));
             assertTrue(hasAnnotationSubtype(output, 0, "Stamp"));
+            assertTrue(hasAnnotationSubtype(output, 0, "Widget"));
             assertTrue(hasAnnotationSubtype(output, 1, PDAnnotationSquareCircle.SUB_TYPE_SQUARE));
             assertTrue(hasAnnotationContent(output, "Source comment bubble"));
             assertTrue(hasAnnotationContent(output, "Source comment box"));
             assertTrue(hasAnnotationContent(output, "Source sticker object"));
+            assertTrue(hasAnnotationContent(output, "Source signature widget"));
 
             String sha = pdf_redaction_service.sha256(output);
             assertEquals(64, sha.length());
@@ -111,6 +114,26 @@ public class pdf_redaction_service_test {
         assertEquals(0, rows.get(0).pageIndex);
         assertEquals(1, rows.get(1).pageIndex);
         assertTrue(pdf_redaction_service.parseNormalizedPayload("bad,data").isEmpty());
+    }
+
+    @Test
+    void render_preview_quality_changes_resolution() throws Exception {
+        Path work = Files.createTempDirectory("pdf-redaction-service-quality-");
+        try {
+            Path source = work.resolve("source.pdf");
+            createPdf(source, 1);
+
+            pdf_redaction_service.RenderedPage low = pdf_redaction_service.renderPage(source, 0, 0.25d);
+            pdf_redaction_service.RenderedPage high = pdf_redaction_service.renderPage(source, 0, 1.0d);
+            assertTrue(low.imageWidthPx > 0);
+            assertTrue(low.imageHeightPx > 0);
+            assertTrue(high.imageWidthPx > low.imageWidthPx);
+            assertTrue(high.imageHeightPx > low.imageHeightPx);
+            assertEquals(0.25d, pdf_redaction_service.normalizePreviewRenderQuality(0.01d));
+            assertEquals(1.0d, pdf_redaction_service.normalizePreviewRenderQuality(2.0d));
+        } finally {
+            deleteRecursively(work);
+        }
     }
 
     @Test
@@ -162,10 +185,12 @@ public class pdf_redaction_service_test {
             assertTrue(extracted.trim().isEmpty(), "Flattened output should not retain extractable source text.");
             assertTrue(hasAnnotationSubtype(output, 0, "Text"));
             assertTrue(hasAnnotationSubtype(output, 0, "Stamp"));
+            assertTrue(hasAnnotationSubtype(output, 0, "Widget"));
             assertTrue(hasAnnotationSubtype(output, 1, PDAnnotationSquareCircle.SUB_TYPE_SQUARE));
             assertTrue(hasAnnotationContent(output, "Source comment bubble"));
             assertTrue(hasAnnotationContent(output, "Source comment box"));
             assertTrue(hasAnnotationContent(output, "Source sticker object"));
+            assertTrue(hasAnnotationContent(output, "Source signature widget"));
         } finally {
             deleteRecursively(work);
         }
@@ -212,6 +237,11 @@ public class pdf_redaction_service_test {
             sticker.setRectangle(new PDRectangle(120f, 620f, 130f, 48f));
             sticker.setContents("Source sticker object");
             page0.getAnnotations().add(sticker);
+
+            PDAnnotationWidget signatureWidget = new PDAnnotationWidget();
+            signatureWidget.setRectangle(new PDRectangle(280f, 620f, 180f, 38f));
+            signatureWidget.setContents("Source signature widget");
+            page0.getAnnotations().add(signatureWidget);
 
             PDPage page1 = doc.getNumberOfPages() > 1 ? doc.getPage(1) : page0;
             PDAnnotationSquareCircle commentBox = new PDAnnotationSquareCircle(PDAnnotationSquareCircle.SUB_TYPE_SQUARE);

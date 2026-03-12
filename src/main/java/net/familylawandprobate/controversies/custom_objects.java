@@ -162,7 +162,7 @@ public final class custom_objects {
             List<ObjectRec> all = readAllLocked(tu);
             ArrayList<ObjectRec> out = new ArrayList<ObjectRec>(all.size());
             boolean changed = false;
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
 
             for (int i = 0; i < all.size(); i++) {
                 ObjectRec r = all.get(i);
@@ -211,7 +211,7 @@ public final class custom_objects {
         if (rows == null) return out;
 
         LinkedHashSet<String> seenKey = new LinkedHashSet<String>();
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         int ord = 10;
         for (int i = 0; i < rows.size(); i++) {
             ObjectRec r = rows.get(i);
@@ -283,7 +283,7 @@ public final class custom_objects {
         Path p = objectsPath(tenantUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(2048);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<customObjects updated=\"").append(xmlAttr(now)).append("\">\n");

@@ -188,7 +188,7 @@ public final class custom_object_attributes {
         ArrayList<AttributeRec> out = new ArrayList<AttributeRec>();
         if (rows == null) return out;
         LinkedHashSet<String> seen = new LinkedHashSet<String>();
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         int ord = 10;
         for (int i = 0; i < rows.size(); i++) {
             AttributeRec r = rows.get(i);
@@ -257,7 +257,7 @@ public final class custom_object_attributes {
         Path p = attrsPath(tenantUuid, objectUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(2048);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<customObjectAttributes object_uuid=\"").append(xmlAttr(objectUuid)).append("\" updated=\"").append(xmlAttr(now)).append("\">\n");

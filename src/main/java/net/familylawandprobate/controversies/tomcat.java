@@ -146,8 +146,13 @@ public class tomcat {
         registerFilter(ctx);
         registerApiServlet(ctx);
         registerVersionUploadServlet(ctx);
+        registerVersionEditorServlet(ctx);
         registerSearchJobsServlet(ctx);
+        registerTenantChatServlet(ctx);
         registerWikiFileServlet(ctx);
+        registerWebDavServlet(ctx);
+        registerCalDavServlet(ctx);
+        registerProfileAssetsServlet(ctx);
 
         // HTTPS connector (primary)
         Connector https = createHttpsConnector(this.httpsPort, tlsMaterial.keystoreFile, tlsMaterial.keystorePassword, tlsMaterial.keyAlias);
@@ -257,10 +262,30 @@ public class tomcat {
         ctx.addServletMappingDecoded("/versions_upload", "versionUploadServlet");
     }
 
+    private static void registerVersionEditorServlet(Context ctx) {
+        Wrapper wrapper = Tomcat.addServlet(ctx, "versionEditorServlet", new version_editor_servlet());
+        wrapper.setLoadOnStartup(1);
+        ctx.addServletMappingDecoded("/version_editor/*", "versionEditorServlet");
+    }
+
     private static void registerSearchJobsServlet(Context ctx) {
         Wrapper wrapper = Tomcat.addServlet(ctx, "searchJobsServlet", new search_jobs_servlet());
         wrapper.setLoadOnStartup(1);
         ctx.addServletMappingDecoded("/search_jobs", "searchJobsServlet");
+    }
+
+    private static void registerTenantChatServlet(Context ctx) {
+        Wrapper wrapper = Tomcat.addServlet(ctx, "tenantChatServlet", new tenant_chat_servlet());
+        wrapper.setLoadOnStartup(1);
+        wrapper.setMultipartConfigElement(
+                new MultipartConfigElement(
+                        "",
+                        omnichannel_tickets.MAX_ATTACHMENT_BYTES,
+                        omnichannel_tickets.MAX_ATTACHMENT_BYTES * 5L,
+                        0
+                )
+        );
+        ctx.addServletMappingDecoded("/tenant_chat", "tenantChatServlet");
     }
 
     private static void registerWikiFileServlet(Context ctx) {
@@ -268,6 +293,32 @@ public class tomcat {
         wrapper.setLoadOnStartup(1);
         wrapper.setMultipartConfigElement(new MultipartConfigElement("", tenant_wikis.MAX_ATTACHMENT_BYTES, tenant_wikis.MAX_ATTACHMENT_BYTES + (5L * 1024L * 1024L), 0));
         ctx.addServletMappingDecoded("/wiki_files", "wikiFileServlet");
+    }
+
+    private static void registerWebDavServlet(Context ctx) {
+        Wrapper wrapper = Tomcat.addServlet(ctx, "webdavServlet", new webdav_servlet());
+        wrapper.setLoadOnStartup(1);
+        ctx.addServletMappingDecoded("/webdav/*", "webdavServlet");
+    }
+
+    private static void registerCalDavServlet(Context ctx) {
+        Wrapper wrapper = Tomcat.addServlet(ctx, "caldavServlet", new caldav_servlet());
+        wrapper.setLoadOnStartup(1);
+        ctx.addServletMappingDecoded("/caldav/*", "caldavServlet");
+    }
+
+    private static void registerProfileAssetsServlet(Context ctx) {
+        Wrapper wrapper = Tomcat.addServlet(ctx, "profileAssetsServlet", new profile_assets_servlet());
+        wrapper.setLoadOnStartup(1);
+        wrapper.setMultipartConfigElement(
+                new MultipartConfigElement(
+                        "",
+                        profile_assets.MAX_IMAGE_BYTES,
+                        profile_assets.MAX_IMAGE_BYTES + (1024L * 1024L),
+                        0
+                )
+        );
+        ctx.addServletMappingDecoded("/profile_assets", "profileAssetsServlet");
     }
 
     private static ResolvedPorts resolvePorts(int requestedHttpPort, int requestedHttpsPort) {

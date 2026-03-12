@@ -1,5 +1,7 @@
 package net.familylawandprobate.controversies.integrations.office365;
 
+import net.familylawandprobate.controversies.app_clock;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import net.familylawandprobate.controversies.activity_log;
@@ -304,7 +306,7 @@ public final class Office365ContactsSyncService {
         try {
             LinkedHashMap<String, String> next = new LinkedHashMap<String, String>();
             if (currentCfg != null) next.putAll(currentCfg);
-            next.put(SETTINGS_LAST_SYNC_AT, Instant.now().toString());
+            next.put(SETTINGS_LAST_SYNC_AT, app_clock.now().toString());
             next.put(SETTINGS_LAST_SYNC_STATUS, ok ? "ok" : "failed");
             next.put(SETTINGS_LAST_SYNC_ERROR, safe(error).trim());
             settingsStore.write(tenantUuid, next);

@@ -42,12 +42,14 @@ public final class tenant_settings {
             "storage_onedrive_auth_mode",
             "storage_onedrive_oauth_callback_url",
             "storage_onedrive_private_relay_url",
+            "integration_deployment_topology",
             "storage_cache_size_ftp_mb",
             "storage_cache_size_ftps_mb",
             "storage_cache_size_sftp_mb",
             "storage_cache_size_webdav_mb",
             "storage_cache_size_s3_compatible_mb",
             "storage_cache_size_onedrive_business_mb",
+            "storage_dedup_links_enabled",
             "storage_max_path_length",
             "storage_max_filename_length",
             "clio_base_url",
@@ -72,6 +74,12 @@ public final class tenant_settings {
             "office365_contacts_last_sync_at",
             "office365_contacts_last_sync_status",
             "office365_contacts_last_sync_error",
+            "office365_calendar_sync_enabled",
+            "office365_calendar_sync_interval_minutes",
+            "office365_calendar_sync_sources_json",
+            "office365_calendar_last_sync_at",
+            "office365_calendar_last_sync_status",
+            "office365_calendar_last_sync_error",
             "self_upgrade_enabled",
             "self_upgrade_day_of_week",
             "self_upgrade_time_local",
@@ -147,6 +155,7 @@ public final class tenant_settings {
             "clio_access_token",
             "clio_refresh_token",
             "office365_contacts_sync_sources_json",
+            "office365_calendar_sync_sources_json",
             "email_smtp_password",
             "email_graph_client_secret",
             "flowroute_sms_access_key",
@@ -374,7 +383,7 @@ public final class tenant_settings {
     }
 
     public String nowIso() {
-        return Instant.now().toString();
+        return app_clock.now().toString();
     }
 
     private LinkedHashMap<String, String> defaults() {
@@ -391,12 +400,14 @@ public final class tenant_settings {
         d.put("storage_onedrive_auth_mode", "app_credentials");
         d.put("storage_onedrive_oauth_callback_url", "");
         d.put("storage_onedrive_private_relay_url", "");
+        d.put("integration_deployment_topology", "public");
         d.put("storage_cache_size_ftp_mb", "1024");
         d.put("storage_cache_size_ftps_mb", "1024");
         d.put("storage_cache_size_sftp_mb", "1024");
         d.put("storage_cache_size_webdav_mb", "1024");
         d.put("storage_cache_size_s3_compatible_mb", "1024");
         d.put("storage_cache_size_onedrive_business_mb", "1024");
+        d.put("storage_dedup_links_enabled", "true");
         d.put("storage_max_path_length", "0");
         d.put("storage_max_filename_length", "0");
         d.put("clio_base_url", "");
@@ -421,6 +432,12 @@ public final class tenant_settings {
         d.put("office365_contacts_last_sync_at", "");
         d.put("office365_contacts_last_sync_status", "never");
         d.put("office365_contacts_last_sync_error", "");
+        d.put("office365_calendar_sync_enabled", "false");
+        d.put("office365_calendar_sync_interval_minutes", "30");
+        d.put("office365_calendar_sync_sources_json", "[]");
+        d.put("office365_calendar_last_sync_at", "");
+        d.put("office365_calendar_last_sync_status", "never");
+        d.put("office365_calendar_last_sync_error", "");
         d.put("self_upgrade_enabled", "true");
         d.put("self_upgrade_day_of_week", "SATURDAY");
         d.put("self_upgrade_time_local", "04:00");
@@ -511,8 +528,17 @@ public final class tenant_settings {
     private String normalizeValue(String key, String value) {
         String v = safe(value).trim();
 
+        if ("storage_dedup_links_enabled".equals(key)) {
+            if (v.isBlank()) return "true";
+            String b = v.toLowerCase(Locale.ROOT);
+            if ("1".equals(b) || "true".equals(b) || "on".equals(b) || "yes".equals(b)) return "true";
+            if ("0".equals(b) || "false".equals(b) || "off".equals(b) || "no".equals(b)) return "false";
+            return "true";
+        }
+
         if ("feature_advanced_assembly".equals(key) || "feature_async_sync".equals(key)
                 || "clio_enabled".equals(key) || "office365_contacts_sync_enabled".equals(key)
+                || "office365_calendar_sync_enabled".equals(key)
                 || "theme_use_location".equals(key)
                 || "email_smtp_auth".equals(key) || "email_smtp_starttls".equals(key)
                 || "email_smtp_ssl".equals(key) || "password_policy_enabled".equals(key)
@@ -622,6 +648,13 @@ public final class tenant_settings {
             return "app_credentials";
         }
 
+        if ("integration_deployment_topology".equals(key)) {
+            String mode = v.toLowerCase(Locale.ROOT);
+            if ("private".equals(mode) || "vpn".equals(mode) || "private_vpn".equals(mode)
+                    || "vpn_only".equals(mode) || "behind_vpn".equals(mode)) return "vpn";
+            return "public";
+        }
+
         if ("clio_storage_mode".equals(key)) {
             String mode = v.toLowerCase(Locale.ROOT);
             if (!"enabled".equals(mode) && !"disabled".equals(mode)) return "disabled";
@@ -646,7 +679,19 @@ public final class tenant_settings {
             return String.valueOf(n);
         }
 
+        if ("office365_calendar_sync_interval_minutes".equals(key)) {
+            int n = parseInt(v, 30);
+            if (n < 1 || n > 1440) return "30";
+            return String.valueOf(n);
+        }
+
         if ("office365_contacts_last_sync_status".equals(key)) {
+            String s = v.toLowerCase(Locale.ROOT);
+            if (!"ok".equals(s) && !"failed".equals(s) && !"never".equals(s)) return "never";
+            return s;
+        }
+
+        if ("office365_calendar_last_sync_status".equals(key)) {
             String s = v.toLowerCase(Locale.ROOT);
             if (!"ok".equals(s) && !"failed".equals(s) && !"never".equals(s)) return "never";
             return s;
@@ -689,6 +734,12 @@ public final class tenant_settings {
         }
 
         if ("office365_contacts_sync_sources_json".equals(key)) {
+            if (v.isBlank()) return "[]";
+            if (v.length() > 200000) v = v.substring(0, 200000);
+            return v;
+        }
+
+        if ("office365_calendar_sync_sources_json".equals(key)) {
             if (v.isBlank()) return "[]";
             if (v.length() > 200000) v = v.substring(0, 200000);
             return v;
@@ -879,6 +930,14 @@ public final class tenant_settings {
             String sourcesRaw = safe(cfg.get("office365_contacts_sync_sources_json")).trim();
             if (sourcesRaw.isBlank() || "[]".equals(sourcesRaw)) {
                 failures.add("tenant=" + safeFileToken(tenantUuid) + " office365 contacts sync enabled without configured sources");
+            }
+        }
+
+        boolean office365CalendarEnabled = "true".equalsIgnoreCase(safe(cfg.get("office365_calendar_sync_enabled")));
+        if (office365CalendarEnabled) {
+            String sourcesRaw = safe(cfg.get("office365_calendar_sync_sources_json")).trim();
+            if (sourcesRaw.isBlank() || "[]".equals(sourcesRaw)) {
+                failures.add("tenant=" + safeFileToken(tenantUuid) + " office365 calendar sync enabled without configured sources");
             }
         }
 

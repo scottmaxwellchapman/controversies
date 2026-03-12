@@ -143,7 +143,7 @@ public final class self_upgrade_scheduler {
     private void scheduleNextRun(String reason) {
         synchronized (scheduleLock) {
             Config cfg = loadConfig();
-            ZonedDateTime now = ZonedDateTime.now(cfg.scheduleZone);
+            ZonedDateTime now = app_clock.now(cfg.scheduleZone);
             ZonedDateTime next = cfg.enabled
                     ? nextScheduledRun(now, cfg.scheduleDay, cfg.scheduleTime)
                     : now.plus(DISABLED_RECHECK);
@@ -185,7 +185,7 @@ public final class self_upgrade_scheduler {
 
     private void runUpgradeCycle(String trigger) {
         Config cfg = loadConfig();
-        Instant startedAt = Instant.now();
+        Instant startedAt = app_clock.now();
         String status = "error";
         String error = "";
         String branch = safe(cfg.gitBranch).trim();
@@ -525,7 +525,7 @@ public final class self_upgrade_scheduler {
         } catch (Exception ignored) {
         }
 
-        String body = "pid=" + ProcessHandle.current().pid() + "\nstarted_at=" + Instant.now() + "\n";
+        String body = "pid=" + ProcessHandle.current().pid() + "\nstarted_at=" + app_clock.now() + "\n";
         try {
             Files.writeString(LOCK_FILE, body, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             return true;
@@ -554,7 +554,7 @@ public final class self_upgrade_scheduler {
             String started = safe(p.getProperty("started_at")).trim();
             Instant startedAt = started.isBlank() ? null : Instant.parse(started);
             if (startedAt == null) return true;
-            return startedAt.plus(LOCK_STALE_AFTER).isBefore(Instant.now());
+            return startedAt.plus(LOCK_STALE_AFTER).isBefore(app_clock.now());
         } catch (Exception ignored) {
             return true;
         }
@@ -775,7 +775,7 @@ public final class self_upgrade_scheduler {
                                            int gitPullExit,
                                            int buildExit,
                                            String restartCommand) {
-        Instant completedAt = Instant.now();
+        Instant completedAt = app_clock.now();
         long durationMs = Math.max(0L, Duration.between(startedAt, completedAt).toMillis());
         Properties p = readStatus();
         p.setProperty("control_tenant_uuid", safe(cfg.controlTenantUuid));

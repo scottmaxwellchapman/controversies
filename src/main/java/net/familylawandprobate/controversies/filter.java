@@ -15,6 +15,7 @@ import jakarta.servlet.http.HttpSession;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -82,13 +83,18 @@ public final class filter implements Filter {
 
     // Method allowlist
     private static final Set<String> ALLOWED_METHODS =
-            Set.of("GET", "POST", "HEAD", "OPTIONS", "PUT", "PATCH", "DELETE");
+            Set.of(
+                    "GET", "POST", "HEAD", "OPTIONS", "PUT", "PATCH", "DELETE",
+                    "PROPFIND", "PROPPATCH", "REPORT", "MKCOL", "MKCALENDAR", "COPY", "MOVE", "LOCK", "UNLOCK"
+            );
 
     // Context attribute names
     private static final String CTX_IPLISTS = "ipLists";
     private static final String API_TENANT_HEADER = "X-Tenant-UUID";
     private static final String API_KEY_HEADER = "X-API-Key";
     private static final String API_SECRET_HEADER = "X-API-Secret";
+    private static final String ONLYOFFICE_URL_ENV = "CONTROVERSIES_ONLYOFFICE_DOCSERVER_URL";
+    private static final String ONLYOFFICE_URL_PROP = "controversies.onlyoffice.docserver.url";
 
     // --- Access log (rotating XML) ---
     private boolean enableAccessLog = true;
@@ -200,7 +206,7 @@ public final class filter implements Filter {
 
         // timestamp with timezone offset + zone id (also embedded)
         ZoneId zone = ZoneId.systemDefault();
-        ZonedDateTime zdt = ZonedDateTime.now(zone);
+        ZonedDateTime zdt = app_clock.now(zone);
         String tsWithOffset = LOG_TS.format(zdt) + "[" + zone.getId() + "]";
         String tzId = zone.getId();
 
@@ -215,6 +221,8 @@ public final class filter implements Filter {
             if (!pathLooksSafe(req, wrapped)) return;
 
             boolean apiRequest = isApiRequest(req);
+            boolean editorMachineRequest = isEditorMachineEndpoint(req);
+            boolean webDavRequest = isWebDavRequest(req);
 
             // 4) IP allow/deny via ip_lists (never blocks localhost)
             if (!ipAllowed(req, wrapped, clientIp)) return;
@@ -229,15 +237,21 @@ public final class filter implements Filter {
                 return;
             }
 
-            // 5) Block non-browser clients (tools + spiders) for interactive web UI.
-            if (blockNonBrowserClients && !browserClientAllowed(req, wrapped, clientIp)) return;
-
-            // 6) CSRF (token-only; no origin/referer checks) for web UI state changes.
-            if (enableCsrf) {
-                if (!csrfOk(req, wrapped)) return;
+            if (webDavRequest) {
+                // WebDAV is machine-oriented and authenticated inside webdav_servlet.
+                chain.doFilter(req, wrapped);
+                return;
             }
 
-            documents.bindActorContext(resolveWebActor(req));
+            // 5) Block non-browser clients + enforce CSRF for interactive web UI.
+            if (!editorMachineRequest) {
+                if (blockNonBrowserClients && !browserClientAllowed(req, wrapped, clientIp)) return;
+                if (enableCsrf) {
+                    if (!csrfOk(req, wrapped)) return;
+                }
+            }
+
+            documents.bindActorContext(editorMachineRequest ? "" : resolveWebActor(req));
             chain.doFilter(req, wrapped);
 
         } finally {
@@ -292,14 +306,21 @@ public final class filter implements Filter {
             res.setDateHeader("Expires", 0L);
         }
 
-        // CSP: conservative to avoid breaking JSP UI
+        String onlyOfficeOrigin = configuredOnlyOfficeOrigin();
+        String onlyOfficeWsOrigin = websocketOrigin(onlyOfficeOrigin);
+        String scriptSrc = cspSources("'self' 'unsafe-inline'", onlyOfficeOrigin);
+        String connectSrc = cspSources("'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com", onlyOfficeOrigin, onlyOfficeWsOrigin);
+        String frameSrc = cspSources("'self'", onlyOfficeOrigin);
+
+        // CSP: conservative defaults with explicit ONLYOFFICE origin opt-in.
         res.setHeader("Content-Security-Policy",
                 "default-src 'self'; " +
                         "img-src 'self' data:; " +
                         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
                         "font-src 'self' https://fonts.gstatic.com data:; " +
-                        "script-src 'self' 'unsafe-inline'; " +
-                        "connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com; " +
+                        "script-src " + scriptSrc + "; " +
+                        "connect-src " + connectSrc + "; " +
+                        "frame-src " + frameSrc + "; " +
                         "base-uri 'self'; " +
                         "object-src 'none'; " +
                         "frame-ancestors 'self'");
@@ -451,6 +472,19 @@ public final class filter implements Filter {
 
     private static boolean isApiRequest(HttpServletRequest req) {
         return normalizedPath(req).startsWith("/api/");
+    }
+
+    private static boolean isWebDavRequest(HttpServletRequest req) {
+        String path = normalizedPath(req);
+        return "/webdav".equals(path)
+                || path.startsWith("/webdav/")
+                || "/caldav".equals(path)
+                || path.startsWith("/caldav/");
+    }
+
+    private static boolean isEditorMachineEndpoint(HttpServletRequest req) {
+        String path = normalizedPath(req);
+        return "/version_editor/file".equals(path) || "/version_editor/callback".equals(path);
     }
 
     private static boolean isPageRequest(HttpServletRequest req) {
@@ -605,6 +639,47 @@ public final class filter implements Filter {
         return r == 0;
     }
 
+    private static String cspSources(String base, String... extras) {
+        String out = safe(base).trim();
+        for (String raw : extras) {
+            String src = safe(raw).trim();
+            if (src.isBlank()) continue;
+            if (out.contains(src)) continue;
+            if (out.isBlank()) out = src;
+            else out = out + " " + src;
+        }
+        return out;
+    }
+
+    private static String configuredOnlyOfficeOrigin() {
+        String raw = safe(System.getProperty(ONLYOFFICE_URL_PROP)).trim();
+        if (raw.isBlank()) raw = safe(System.getenv(ONLYOFFICE_URL_ENV)).trim();
+        if (raw.isBlank()) return "";
+        try {
+            URI uri = URI.create(raw);
+            String scheme = safe(uri.getScheme()).trim().toLowerCase(Locale.ROOT);
+            String host = safe(uri.getHost()).trim();
+            if (host.isBlank()) return "";
+            if (!"http".equals(scheme) && !"https".equals(scheme)) return "";
+            int port = uri.getPort();
+            boolean defaultPort = ("http".equals(scheme) && port == 80)
+                    || ("https".equals(scheme) && port == 443)
+                    || port < 0;
+            if (defaultPort) return scheme + "://" + host;
+            return scheme + "://" + host + ":" + port;
+        } catch (Exception ex) {
+            return "";
+        }
+    }
+
+    private static String websocketOrigin(String origin) {
+        String raw = safe(origin).trim();
+        if (raw.isBlank()) return "";
+        if (raw.startsWith("https://")) return "wss://" + raw.substring("https://".length());
+        if (raw.startsWith("http://")) return "ws://" + raw.substring("http://".length());
+        return "";
+    }
+
     // -----------------------------
     // Access log (rotating XML)
     // -----------------------------
@@ -615,7 +690,7 @@ public final class filter implements Filter {
         Files.createDirectories(accessLogPath.getParent());
         String header =
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-                        "<accessLog created=\"" + xmlAttr(Instant.now().toString()) + "\">\n" +
+                        "<accessLog created=\"" + xmlAttr(app_clock.now().toString()) + "\">\n" +
                         "</accessLog>\n";
         Files.writeString(accessLogPath, header, StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -628,7 +703,7 @@ public final class filter implements Filter {
         long size = Files.size(accessLogPath);
         if (size <= accessLogMaxBytes) return;
 
-        String ts = ROT_TS.format(Instant.now());
+        String ts = ROT_TS.format(app_clock.now());
         Path rotated = logsDir.resolve("access_log-" + ts + ".xml");
 
         ensureEndsWithClosingTag();

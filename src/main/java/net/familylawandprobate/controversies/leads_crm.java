@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -225,7 +226,7 @@ public final class leads_crm {
             if (file.leads == null) file.leads = new ArrayList<StoredLeadRec>();
             if (file.notes == null) file.notes = new ArrayList<StoredLeadNoteRec>();
 
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             StoredLeadRec row = new StoredLeadRec();
             row.lead_uuid = "lead_" + UUID.randomUUID().toString().replace("-", "");
             row.status = normalizeStatus(input.status);
@@ -251,6 +252,8 @@ public final class leads_crm {
             file.updated_at = now;
             writeLocked(tu, file);
 
+            emitLeadMentions(tu, actorUserUuid, row, safe(row.notes), Map.of());
+
             if (!safe(actorUserUuid).trim().isBlank()) {
                 addNote(tu, row.lead_uuid, "Lead created.", actorUserUuid);
             }
@@ -275,6 +278,7 @@ public final class leads_crm {
             if (row == null) throw new IllegalArgumentException("Lead not found.");
 
             String beforeStatus = normalizeStatus(row.status);
+            String beforeNotes = safe(row.notes);
             row.status = normalizeStatus(input.status);
             row.source = safe(input.source).trim();
             row.intake_channel = safe(input.intakeChannel).trim();
@@ -291,11 +295,15 @@ public final class leads_crm {
             row.matter_uuid = safe(input.matterUuid).trim();
             row.archived = input.archived;
             if (!row.matter_uuid.isBlank() && safe(row.converted_at).trim().isBlank()) {
-                row.converted_at = Instant.now().toString();
+                row.converted_at = app_clock.now().toString();
             }
-            row.updated_at = Instant.now().toString();
+            row.updated_at = app_clock.now().toString();
             file.updated_at = row.updated_at;
             writeLocked(tu, file);
+
+            if (!beforeNotes.equals(safe(row.notes))) {
+                emitLeadMentions(tu, actorUserUuid, row, safe(row.notes), Map.of());
+            }
 
             if (!safe(actorUserUuid).trim().isBlank() && !beforeStatus.equals(row.status)) {
                 addNote(tu, row.lead_uuid, "Status changed: " + beforeStatus + " -> " + row.status, actorUserUuid);
@@ -319,7 +327,7 @@ public final class leads_crm {
             if (row == null) return false;
             if (row.archived == archived) return false;
             row.archived = archived;
-            row.updated_at = Instant.now().toString();
+            row.updated_at = app_clock.now().toString();
             file.updated_at = row.updated_at;
             writeLocked(tu, file);
             return true;
@@ -342,8 +350,8 @@ public final class leads_crm {
             if (row == null) throw new IllegalArgumentException("Lead not found.");
             row.matter_uuid = mu;
             row.status = STATUS_RETAINED;
-            if (safe(row.converted_at).trim().isBlank()) row.converted_at = Instant.now().toString();
-            row.updated_at = Instant.now().toString();
+            if (safe(row.converted_at).trim().isBlank()) row.converted_at = app_clock.now().toString();
+            row.updated_at = app_clock.now().toString();
             file.updated_at = row.updated_at;
             writeLocked(tu, file);
             if (!safe(actorUserUuid).trim().isBlank()) {
@@ -375,10 +383,18 @@ public final class leads_crm {
             row.lead_uuid = lu;
             row.body = safe(body);
             row.author_user_uuid = safe(authorUserUuid).trim();
-            row.created_at = Instant.now().toString();
+            row.created_at = app_clock.now().toString();
             file.notes.add(row);
             file.updated_at = row.created_at;
             writeLocked(tu, file);
+            StoredLeadRec lead = findLead(file, lu);
+            emitLeadMentions(
+                    tu,
+                    row.author_user_uuid,
+                    lead,
+                    safe(row.body),
+                    Map.of("note_uuid", safe(row.note_uuid))
+            );
             return toLeadNoteRec(row);
         } finally {
             lock.writeLock().unlock();
@@ -521,7 +537,7 @@ public final class leads_crm {
         Files.createDirectories(file.getParent());
         if (Files.exists(file)) return;
         FileRec empty = new FileRec();
-        empty.updated_at = Instant.now().toString();
+        empty.updated_at = app_clock.now().toString();
         writeJsonAtomic(file, empty);
     }
 
@@ -545,7 +561,7 @@ public final class leads_crm {
         if (file == null) file = new FileRec();
         if (file.leads == null) file.leads = new ArrayList<StoredLeadRec>();
         if (file.notes == null) file.notes = new ArrayList<StoredLeadNoteRec>();
-        if (safe(file.updated_at).trim().isBlank()) file.updated_at = Instant.now().toString();
+        if (safe(file.updated_at).trim().isBlank()) file.updated_at = app_clock.now().toString();
         writeJsonAtomic(storePath(tenantToken), file);
     }
 
@@ -559,6 +575,41 @@ public final class leads_crm {
             Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (Exception ex) {
             Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void emitLeadMentions(String tenantUuid,
+                                         String actorUserUuid,
+                                         StoredLeadRec lead,
+                                         String text,
+                                         Map<String, String> extras) {
+        String tu = safe(tenantUuid).trim();
+        String body = safe(text).trim();
+        if (tu.isBlank() || body.isBlank()) return;
+
+        String leadUuid = safe(lead == null ? "" : lead.lead_uuid).trim();
+        String title = safe(lead == null ? "" : lead.display_name).trim();
+        if (title.isBlank()) title = safe(lead == null ? "" : lead.email).trim();
+        if (title.isBlank()) title = "Lead";
+
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("source_type", "lead");
+        details.put("source_uuid", leadUuid);
+        details.put("source_title", title);
+        details.put("source_path", leadUuid.isBlank() ? "/leads.jsp" : ("/leads.jsp?lead_uuid=" + leadUuid));
+        details.put("lead_uuid", leadUuid);
+        details.put("matter_uuid", safe(lead == null ? "" : lead.matter_uuid));
+        if (extras != null && !extras.isEmpty()) details.putAll(extras);
+
+        try {
+            mentions.defaultService().logMentions(
+                    tu,
+                    safe(actorUserUuid).trim(),
+                    safe(lead == null ? "" : lead.matter_uuid),
+                    body,
+                    details
+            );
+        } catch (Exception ignored) {
         }
     }
 

@@ -227,7 +227,7 @@ public final class integration_webhooks {
             ensureLocked(tu);
             FileRec file = readLocked(tu);
             if (file.endpoints == null) file.endpoints = new ArrayList<StoredEndpointRec>();
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
 
             StoredEndpointRec row = new StoredEndpointRec();
             row.webhook_uuid = "wh_" + UUID.randomUUID().toString().replace("-", "");
@@ -273,7 +273,7 @@ public final class integration_webhooks {
                 row.signing_secret = safe(input.signingSecret).trim();
             }
             row.enabled = input.enabled;
-            row.updated_at = Instant.now().toString();
+            row.updated_at = app_clock.now().toString();
             file.updated_at = row.updated_at;
             writeLocked(tu, file);
             return toEndpoint(row);
@@ -294,7 +294,7 @@ public final class integration_webhooks {
             if (file.endpoints == null || file.endpoints.isEmpty()) return false;
             boolean removed = file.endpoints.removeIf(r -> r != null && id.equals(safe(r.webhook_uuid).trim()));
             if (!removed) return false;
-            file.updated_at = Instant.now().toString();
+            file.updated_at = app_clock.now().toString();
             writeLocked(tu, file);
             return true;
         } finally {
@@ -342,7 +342,7 @@ public final class integration_webhooks {
             int attempted = 0;
             int success = 0;
             int failure = 0;
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
 
             for (StoredEndpointRec endpoint : endpoints) {
                 if (endpoint == null) continue;
@@ -362,7 +362,7 @@ public final class integration_webhooks {
                             0,
                             "",
                             safe(ex.getMessage()),
-                            Instant.now().toString()
+                            app_clock.now().toString()
                     );
                 }
 
@@ -386,7 +386,7 @@ public final class integration_webhooks {
                 endpoint.updated_at = safe(delivery.attemptedAt);
             }
 
-            file.updated_at = Instant.now().toString();
+            file.updated_at = app_clock.now().toString();
             writeLocked(tu, file);
             return new DispatchResult(endpointCount, attempted, success, failure, deliveries);
         } finally {
@@ -402,10 +402,10 @@ public final class integration_webhooks {
         LinkedHashMap<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("event_type", eventType);
         body.put("tenant_uuid", tenantToken);
-        body.put("emitted_at", safe(emittedAt).trim().isBlank() ? Instant.now().toString() : safe(emittedAt).trim());
+        body.put("emitted_at", safe(emittedAt).trim().isBlank() ? app_clock.now().toString() : safe(emittedAt).trim());
         body.put("payload", payload == null ? new LinkedHashMap<String, Object>() : payload);
         byte[] jsonBytes = JSON.writeValueAsBytes(body);
-        String timestamp = Instant.now().toString();
+        String timestamp = app_clock.now().toString();
         String signature = signPayload(safe(endpoint.signing_secret), jsonBytes, timestamp);
 
         HttpRequest req = HttpRequest.newBuilder()
@@ -430,7 +430,7 @@ public final class integration_webhooks {
                 status,
                 sha256Hex(jsonBytes),
                 error,
-                Instant.now().toString()
+                app_clock.now().toString()
         );
     }
 
@@ -599,7 +599,7 @@ public final class integration_webhooks {
         Files.createDirectories(file.getParent());
         if (Files.exists(file)) return;
         FileRec empty = new FileRec();
-        empty.updated_at = Instant.now().toString();
+        empty.updated_at = app_clock.now().toString();
         writeJsonAtomic(file, empty);
     }
 
@@ -623,7 +623,7 @@ public final class integration_webhooks {
         if (file == null) file = new FileRec();
         if (file.endpoints == null) file.endpoints = new ArrayList<StoredEndpointRec>();
         if (file.deliveries == null) file.deliveries = new ArrayList<StoredDeliveryRec>();
-        if (safe(file.updated_at).trim().isBlank()) file.updated_at = Instant.now().toString();
+        if (safe(file.updated_at).trim().isBlank()) file.updated_at = app_clock.now().toString();
         writeJsonAtomic(storePath(tenantToken), file);
     }
 

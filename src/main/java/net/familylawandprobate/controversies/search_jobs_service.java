@@ -143,7 +143,7 @@ public final class search_jobs_service {
 
     private static final class JobRecord {
         final String jobId = UUID.randomUUID().toString();
-        final long createdAtMs = System.currentTimeMillis();
+        final long createdAtMs = app_clock.currentTimeMillis();
         final String createdAt = Instant.ofEpochMilli(createdAtMs).toString();
         final SearchJobRequest request;
         volatile String status = "queued";
@@ -297,7 +297,7 @@ public final class search_jobs_service {
     private void runJob(JobRecord record, search_type_handler handler) {
         if (record == null || handler == null) return;
         record.status = "running";
-        record.startedAt = Instant.now().toString();
+        record.startedAt = app_clock.now().toString();
         record.message = "Running search...";
         if (record.request != null) {
             LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
@@ -322,7 +322,7 @@ public final class search_jobs_service {
             boolean truncated = result != null && result.truncated;
             record.replaceResults(rows, truncated);
             record.status = "completed";
-            record.completedAt = Instant.now().toString();
+            record.completedAt = app_clock.now().toString();
             if (result != null && !safe(result.message).trim().isBlank()) {
                 record.message = safe(result.message).trim();
             } else {
@@ -348,7 +348,7 @@ public final class search_jobs_service {
             }
         } catch (Exception ex) {
             record.status = "failed";
-            record.completedAt = Instant.now().toString();
+            record.completedAt = app_clock.now().toString();
             record.message = safe(ex.getMessage()).trim();
             if (record.message.isBlank()) record.message = "Search failed.";
             LOG.log(Level.WARNING, "Search job failed id=" + record.jobId + ": " + safe(ex.getMessage()), ex);
@@ -476,7 +476,7 @@ public final class search_jobs_service {
     }
 
     private void pruneJobs() {
-        long cutoff = System.currentTimeMillis() - JOB_RETENTION_MS;
+        long cutoff = app_clock.currentTimeMillis() - JOB_RETENTION_MS;
         while (jobOrder.size() > MAX_JOBS_RETAINED) {
             String id = jobOrder.pollFirst();
             if (id == null) break;

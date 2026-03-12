@@ -9,6 +9,7 @@ import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationRubberStamp;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationSquareCircle;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -150,10 +151,12 @@ public class api_pdf_redaction_test {
             assertTrue(Files.size(redactedPath) > 0L);
             assertTrue(hasAnnotationSubtype(redactedPath, 0, "Text"));
             assertTrue(hasAnnotationSubtype(redactedPath, 0, "Stamp"));
+            assertTrue(hasAnnotationSubtype(redactedPath, 0, "Widget"));
             assertTrue(hasAnnotationSubtype(redactedPath, 1, PDAnnotationSquareCircle.SUB_TYPE_SQUARE));
             assertTrue(hasAnnotationContent(redactedPath, "API source comment bubble"));
             assertTrue(hasAnnotationContent(redactedPath, "API source comment box"));
             assertTrue(hasAnnotationContent(redactedPath, "API source sticker object"));
+            assertTrue(hasAnnotationContent(redactedPath, "API source signature widget"));
             if (!usedPdfRedactor) {
                 String extracted = extractText(redactedPath);
                 assertTrue(extracted.trim().isEmpty(), "Rasterized fallback should not retain extractable source text.");
@@ -236,6 +239,11 @@ public class api_pdf_redaction_test {
             sticker.setRectangle(new PDRectangle(120f, 620f, 130f, 48f));
             sticker.setContents("API source sticker object");
             page0.getAnnotations().add(sticker);
+
+            PDAnnotationWidget signatureWidget = new PDAnnotationWidget();
+            signatureWidget.setRectangle(new PDRectangle(280f, 620f, 180f, 38f));
+            signatureWidget.setContents("API source signature widget");
+            page0.getAnnotations().add(signatureWidget);
 
             PDPage page1 = doc.getNumberOfPages() > 1 ? doc.getPage(1) : page0;
             PDAnnotationSquareCircle commentBox = new PDAnnotationSquareCircle(PDAnnotationSquareCircle.SUB_TYPE_SQUARE);

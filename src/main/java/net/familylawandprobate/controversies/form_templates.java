@@ -154,7 +154,7 @@ public final class form_templates {
             ensure(tu);
 
             String id = UUID.randomUUID().toString();
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
 
             Path filePath = templateBodyPath(tu, id, ext);
             Files.createDirectories(filePath.getParent());
@@ -195,7 +195,7 @@ public final class form_templates {
             List<TemplateRec> all = readAllLocked(tu);
             List<TemplateRec> out = new ArrayList<TemplateRec>(all.size());
             boolean found = false;
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
 
             for (int i = 0; i < all.size(); i++) {
                 TemplateRec r = all.get(i);
@@ -250,7 +250,7 @@ public final class form_templates {
             List<TemplateRec> all = readAllLocked(tu);
             List<TemplateRec> out = new ArrayList<TemplateRec>(all.size());
             boolean found = false;
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
 
             for (int i = 0; i < all.size(); i++) {
                 TemplateRec r = all.get(i);
@@ -431,7 +431,7 @@ public final class form_templates {
         Path p = templatesIndexPath(tenantUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(4096);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<formTemplates updated=\"").append(xmlAttr(now)).append("\">\n");
@@ -689,7 +689,7 @@ public final class form_templates {
     }
 
     private static String emptyXml() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 + "<formTemplates created=\"" + xmlAttr(now) + "\" updated=\"" + xmlAttr(now) + "\"></formTemplates>\n";
     }

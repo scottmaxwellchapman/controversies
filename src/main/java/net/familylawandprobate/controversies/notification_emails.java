@@ -259,7 +259,7 @@ public final class notification_emails {
             this.state = normalizeState(state);
             this.attempts = Math.max(0, attempts);
             this.maxAttempts = Math.max(1, maxAttempts);
-            this.createdAt = safe(createdAt).isBlank() ? Instant.now().toString() : safe(createdAt).trim();
+            this.createdAt = safe(createdAt).isBlank() ? app_clock.now().toString() : safe(createdAt).trim();
             this.updatedAt = safe(updatedAt).isBlank() ? this.createdAt : safe(updatedAt).trim();
             this.lastAttemptAt = safe(lastAttemptAt).trim();
             this.nextAttemptAt = safe(nextAttemptAt).trim();
@@ -405,7 +405,7 @@ public final class notification_emails {
         String replyTo = safe(request.replyTo).trim();
         if (replyTo.isBlank()) replyTo = safe(cfg.get("email_reply_to")).trim();
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         EmailJob transientJob = new EmailJob(
                 UUID.randomUUID().toString(),
                 tu,
@@ -448,10 +448,10 @@ public final class notification_emails {
                 1,
                 1,
                 transientJob.createdAt,
-                Instant.now().toString(),
-                Instant.now().toString(),
+                app_clock.now().toString(),
+                app_clock.now().toString(),
                 "",
-                Instant.now().toString(),
+                app_clock.now().toString(),
                 transientJob.fromAddress,
                 transientJob.fromName,
                 transientJob.replyTo,
@@ -504,7 +504,7 @@ public final class notification_emails {
             throw new IllegalStateException("email provider configuration invalid: " + String.join("; ", cfgValidation.issues));
         }
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         String jobUuid = UUID.randomUUID().toString();
         List<QueuedAttachment> attachments = materializeAttachments(tu, request, jobUuid);
         int maxAttempts = parseInt(cfg.get("email_queue_max_attempts"), 8);
@@ -582,7 +582,7 @@ public final class notification_emails {
         boolean changed = false;
         try {
             List<EmailJob> all = readQueueLocked(tu);
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             for (int i = 0; i < all.size(); i++) {
                 EmailJob j = all.get(i);
                 if (j == null || !eu.equals(j.uuid)) continue;
@@ -654,7 +654,7 @@ public final class notification_emails {
             LinkedHashMap<String, String> cfg = settingsStore.read(tu);
             int pollSeconds = parseInt(cfg.get("email_queue_poll_seconds"), 5);
             if (pollSeconds < 1) pollSeconds = 5;
-            long nowEpoch = System.currentTimeMillis();
+            long nowEpoch = app_clock.currentTimeMillis();
             if (!force) {
                 long intervalMs = Math.max(1000L, pollSeconds * 1000L);
                 Long lastPoll = LAST_POLL_AT_MS.get(tu);
@@ -671,7 +671,7 @@ public final class notification_emails {
             if (baseBackoff < 100L) baseBackoff = 100L;
             if (maxBackoff < baseBackoff) maxBackoff = Math.max(baseBackoff, 300000L);
 
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             int processed = 0;
             boolean changed = false;
             for (int i = 0; i < all.size(); i++) {
@@ -686,7 +686,7 @@ public final class notification_emails {
                 int maxAttempts = job.maxAttempts > 0 ? job.maxAttempts : maxAttemptsFallback;
                 try {
                     SendResult sent = send(job, cfg);
-                    String attemptAt = Instant.now().toString();
+                    String attemptAt = app_clock.now().toString();
                     EmailJob updated = new EmailJob(
                             job.uuid, job.tenantUuid, job.matterUuid, job.requestedByUserUuid, job.provider, "sent",
                             attempts, maxAttempts, job.createdAt, attemptAt, attemptAt, "", attemptAt,
@@ -697,7 +697,7 @@ public final class notification_emails {
                     changed = true;
                     logSendResult(updated, true);
                 } catch (DeliveryException de) {
-                    String attemptAt = Instant.now().toString();
+                    String attemptAt = app_clock.now().toString();
                     String err = safe(de.getMessage()).isBlank() ? "email send failed" : safe(de.getMessage());
                     EmailJob updated;
                     if (attempts >= maxAttempts) {
@@ -709,7 +709,7 @@ public final class notification_emails {
                         );
                     } else {
                         long nextDelay = Math.min(maxBackoff, (long) (baseBackoff * Math.pow(2.0d, Math.max(0, attempts - 1))));
-                        String nextAt = Instant.now().plusMillis(nextDelay).toString();
+                        String nextAt = app_clock.now().plusMillis(nextDelay).toString();
                         updated = new EmailJob(
                                 job.uuid, job.tenantUuid, job.matterUuid, job.requestedByUserUuid, job.provider, "retry",
                                 attempts, maxAttempts, job.createdAt, attemptAt, attemptAt, nextAt, "",
@@ -721,7 +721,7 @@ public final class notification_emails {
                     changed = true;
                     logSendResult(updated, false);
                 } catch (Exception ex) {
-                    String attemptAt = Instant.now().toString();
+                    String attemptAt = app_clock.now().toString();
                     String err = safe(ex.getMessage()).isBlank() ? ex.getClass().getSimpleName() : safe(ex.getMessage());
                     EmailJob updated;
                     if (attempts >= maxAttempts) {
@@ -733,7 +733,7 @@ public final class notification_emails {
                         );
                     } else {
                         long nextDelay = Math.min(maxBackoff, (long) (baseBackoff * Math.pow(2.0d, Math.max(0, attempts - 1))));
-                        String nextAt = Instant.now().plusMillis(nextDelay).toString();
+                        String nextAt = app_clock.now().plusMillis(nextDelay).toString();
                         updated = new EmailJob(
                                 job.uuid, job.tenantUuid, job.matterUuid, job.requestedByUserUuid, job.provider, "retry",
                                 attempts, maxAttempts, job.createdAt, attemptAt, attemptAt, nextAt, "",
@@ -757,9 +757,38 @@ public final class notification_emails {
     private SendResult send(EmailJob job, LinkedHashMap<String, String> cfg) throws Exception {
         String provider = normalizeProvider(job.provider);
         if ("disabled".equals(provider)) provider = normalizeProvider(cfg.get("email_provider"));
-        if ("smtp".equals(provider)) return smtpSender.send(job, cfg, job.attachments);
-        if ("microsoft_graph".equals(provider)) return graphSender.send(job, cfg, job.attachments);
+        List<QueuedAttachment> attachments = validateQueuedAttachments(job);
+        if ("smtp".equals(provider)) return smtpSender.send(job, cfg, attachments);
+        if ("microsoft_graph".equals(provider)) return graphSender.send(job, cfg, attachments);
         throw new DeliveryException("unsupported email provider: " + provider, 0, "");
+    }
+
+    private List<QueuedAttachment> validateQueuedAttachments(EmailJob job) throws Exception {
+        List<QueuedAttachment> xs = job == null || job.attachments == null ? List.of() : job.attachments;
+        if (xs.isEmpty()) return List.of();
+
+        ArrayList<QueuedAttachment> out = new ArrayList<QueuedAttachment>(xs.size());
+        for (int i = 0; i < xs.size(); i++) {
+            QueuedAttachment a = xs.get(i);
+            if (a == null) continue;
+            if (safe(a.storedPath).trim().isBlank()) {
+                out.add(a);
+                continue;
+            }
+            Path p = resolveQueuedAttachmentPath(job, a);
+            byte[] bytes = Files.readAllBytes(p);
+            verifyQueuedAttachmentChecksum(a, bytes);
+            out.add(new QueuedAttachment(
+                    a.fileName,
+                    a.contentType,
+                    p.toString(),
+                    a.sourceType,
+                    a.sourceRef,
+                    bytes.length,
+                    a.checksumSha256
+            ));
+        }
+        return out;
     }
 
     private SendResult sendViaSmtp(EmailJob job, LinkedHashMap<String, String> cfg, List<QueuedAttachment> attachments) throws Exception {
@@ -824,7 +853,7 @@ public final class notification_emails {
         addRecipients(message, Message.RecipientType.CC, job.cc);
         addRecipients(message, Message.RecipientType.BCC, job.bcc);
         message.setSubject(job.subject, StandardCharsets.UTF_8.name());
-        message.setSentDate(java.util.Date.from(Instant.now()));
+        message.setSentDate(java.util.Date.from(app_clock.now()));
 
         MimeMultipart mixed = new MimeMultipart("mixed");
         MimeBodyPart contentPart = new MimeBodyPart();
@@ -850,9 +879,9 @@ public final class notification_emails {
         for (int i = 0; i < (attachments == null ? 0 : attachments.size()); i++) {
             QueuedAttachment a = attachments.get(i);
             if (a == null || a.storedPath.isBlank()) continue;
-            Path p = Paths.get(a.storedPath).toAbsolutePath().normalize();
-            if (!Files.exists(p)) throw new DeliveryException("attachment missing: " + p, 0, "");
+            Path p = resolveQueuedAttachmentPath(job, a);
             byte[] bytes = Files.readAllBytes(p);
+            verifyQueuedAttachmentChecksum(a, bytes);
             MimeBodyPart attachmentPart = new MimeBodyPart();
             ByteArrayDataSource ds = new ByteArrayDataSource(bytes, contentTypeOrDefault(a.contentType));
             attachmentPart.setDataHandler(new DataHandler(ds));
@@ -963,9 +992,9 @@ public final class notification_emails {
             for (int i = 0; i < attachments.size(); i++) {
                 QueuedAttachment a = attachments.get(i);
                 if (a == null || a.storedPath.isBlank()) continue;
-                Path p = Paths.get(a.storedPath).toAbsolutePath().normalize();
-                if (!Files.exists(p)) throw new IllegalStateException("attachment missing: " + p);
+                Path p = resolveQueuedAttachmentPath(job, a);
                 byte[] bytes = Files.readAllBytes(p);
+                verifyQueuedAttachmentChecksum(a, bytes);
                 if (n++ > 0) sb.append(",");
                 sb.append("{\"@odata.type\":\"#microsoft.graph.fileAttachment\",");
                 sb.append("\"name\":\"").append(jsonEscape(nonBlank(a.fileName, p.getFileName() == null ? "attachment.bin" : p.getFileName().toString()))).append("\",");
@@ -1027,11 +1056,7 @@ public final class notification_emails {
             } else {
                 String localPath = safe(spec.localPath).trim();
                 if (localPath.isBlank()) throw new IllegalArgumentException("attachment local path is required");
-                Path p = Paths.get(localPath);
-                if (!p.isAbsolute()) p = Paths.get(".").toAbsolutePath().resolve(p).normalize();
-                if (!Files.exists(p) || !Files.isRegularFile(p)) {
-                    throw new IllegalStateException("local attachment file missing: " + p);
-                }
+                Path p = requireTenantScopedLocalAttachmentPath(tenantUuid, localPath);
                 bytes = Files.readAllBytes(p);
                 sourceRef = "local_file:" + p;
                 if (fileName.isBlank()) fileName = nameFromPath(p.toString(), "attachment-" + (i + 1) + ".bin");
@@ -1149,7 +1174,7 @@ public final class notification_emails {
     private static void writeQueueLocked(String tenantUuid, List<EmailJob> jobs) throws Exception {
         Path p = queuePath(tenantUuid);
         Files.createDirectories(p.getParent());
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(4096);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<notification_email_queue updated=\"").append(xmlAttr(now)).append("\">\n");
@@ -1210,6 +1235,68 @@ public final class notification_emails {
 
     private static Path attachmentRootDir(String tenantUuid, String emailUuid) {
         return Paths.get("data", "tenants", safeFileToken(tenantUuid), "sync", "email_queue_attachments", safeFileToken(emailUuid)).toAbsolutePath();
+    }
+
+    private static Path tenantRootDir(String tenantUuid) {
+        return Paths.get("data", "tenants", safeFileToken(tenantUuid)).toAbsolutePath().normalize();
+    }
+
+    private static Path resolveQueuedAttachmentPath(EmailJob job, QueuedAttachment attachment) throws Exception {
+        if (job == null) throw new DeliveryException("email job missing", 0, "");
+        if (attachment == null || safe(attachment.storedPath).trim().isBlank()) {
+            throw new DeliveryException("attachment path missing", 0, "");
+        }
+
+        Path root = attachmentRootDir(job.tenantUuid, job.uuid).toAbsolutePath().normalize();
+        if (!Files.exists(root) || !Files.isDirectory(root)) {
+            throw new DeliveryException("attachment storage missing for queued email", 0, "");
+        }
+
+        Path p = Paths.get(attachment.storedPath).toAbsolutePath().normalize();
+        if (!p.startsWith(root)) {
+            throw new DeliveryException("attachment path is outside tenant queue scope", 0, "");
+        }
+        if (!Files.exists(p) || !Files.isRegularFile(p)) {
+            throw new DeliveryException("attachment missing: " + p, 0, "");
+        }
+
+        Path rootReal = root.toRealPath();
+        Path fileReal = p.toRealPath();
+        if (!fileReal.startsWith(rootReal)) {
+            throw new DeliveryException("attachment path is outside tenant queue scope", 0, "");
+        }
+        return fileReal;
+    }
+
+    private static void verifyQueuedAttachmentChecksum(QueuedAttachment attachment, byte[] bytes) throws Exception {
+        String expected = safe(attachment == null ? "" : attachment.checksumSha256).trim().toLowerCase(Locale.ROOT);
+        if (expected.isBlank()) return;
+        String actual = safe(StorageCrypto.checksumSha256Hex(bytes)).trim().toLowerCase(Locale.ROOT);
+        if (!expected.equals(actual)) {
+            throw new DeliveryException("attachment integrity check failed", 0, "");
+        }
+    }
+
+    private static Path requireTenantScopedLocalAttachmentPath(String tenantUuid, String localPath) throws Exception {
+        Path tenantRoot = tenantRootDir(tenantUuid);
+        Files.createDirectories(tenantRoot);
+
+        Path p = Paths.get(safe(localPath).trim());
+        if (!p.isAbsolute()) p = Paths.get(".").toAbsolutePath().resolve(p);
+        p = p.normalize();
+        if (!p.startsWith(tenantRoot)) {
+            throw new IllegalArgumentException("local attachment path must be within tenant data directory");
+        }
+        if (!Files.exists(p) || !Files.isRegularFile(p)) {
+            throw new IllegalStateException("local attachment file missing: " + p);
+        }
+
+        Path rootReal = tenantRoot.toRealPath();
+        Path fileReal = p.toRealPath();
+        if (!fileReal.startsWith(rootReal)) {
+            throw new IllegalArgumentException("local attachment path must be within tenant data directory");
+        }
+        return fileReal;
     }
 
     private static ReentrantReadWriteLock queueLockFor(String tenantUuid) {

@@ -242,6 +242,7 @@ public final class tasks {
             out = refreshTaskReport(tu, out.uuid, actor);
         }
         if (out != null) {
+            emitTaskMentions(tu, actor, out, taskMentionText(out), Map.of());
             audit("tasks.task.created", tu, actor, safe(out.matterUuid), Map.of("task_uuid", safe(out.uuid)));
             publishTaskEvent(
                     tu,
@@ -264,6 +265,8 @@ public final class tasks {
 
         boolean changed = false;
         boolean refreshReport = false;
+        boolean mentionTextChanged = false;
+        String mentionText = "";
 
         ReentrantReadWriteLock lock = lockFor(tu);
         lock.writeLock().lock();
@@ -279,6 +282,10 @@ public final class tasks {
 
             if (!sameTask(current, rec)) {
                 changed = true;
+                String beforeMentionText = taskMentionText(current);
+                String afterMentionText = taskMentionText(rec);
+                mentionTextChanged = !beforeMentionText.equals(afterMentionText);
+                mentionText = afterMentionText;
                 replaceTaskByUuid(all, rec);
                 sortTasks(all);
                 writeTasksLocked(tu, all);
@@ -314,6 +321,7 @@ public final class tasks {
         if (changed) {
             TaskRec latest = getTask(tu, id);
             if (latest != null) {
+                if (mentionTextChanged) emitTaskMentions(tu, actor, latest, mentionText, Map.of());
                 audit("tasks.task.updated", tu, actor, safe(latest.matterUuid), Map.of("task_uuid", safe(id)));
                 publishTaskEvent(
                         tu,
@@ -420,6 +428,13 @@ public final class tasks {
         }
 
         if (task != null && rec != null) {
+            emitTaskMentions(
+                    tu,
+                    actor,
+                    task,
+                    safe(rec.body),
+                    Map.of("note_uuid", safe(rec.uuid))
+            );
             audit("tasks.note.added", tu, actor, safe(task.matterUuid), Map.of("task_uuid", safe(id), "note_uuid", safe(rec.uuid)));
             publishTaskEvent(
                     tu,
@@ -1626,6 +1641,15 @@ public final class tasks {
         return s == null ? "" : s;
     }
 
+    private static String firstNonBlank(String... values) {
+        if (values == null) return "";
+        for (int i = 0; i < values.length; i++) {
+            String v = safe(values[i]).trim();
+            if (!v.isBlank()) return v;
+        }
+        return "";
+    }
+
     private static String displayActor(String raw) {
         String v = safe(raw).trim();
         if (v.isBlank()) return "";
@@ -1654,7 +1678,7 @@ public final class tasks {
     }
 
     private static String nowIso() {
-        return Instant.now().toString();
+        return app_clock.now().toString();
     }
 
     private static Document parseXml(Path p) throws Exception {
@@ -1713,6 +1737,43 @@ public final class tasks {
             Files.move(tmp, p, StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         } catch (Exception ignored) {
             Files.move(tmp, p, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static String taskMentionText(TaskRec task) {
+        if (task == null) return "";
+        return (safe(task.title).trim() + "\n" + safe(task.description).trim()).trim();
+    }
+
+    private static void emitTaskMentions(String tenantUuid,
+                                         String actor,
+                                         TaskRec task,
+                                         String text,
+                                         Map<String, String> extras) {
+        String tu = safe(tenantUuid).trim();
+        if (tu.isBlank() || task == null) return;
+        String body = safe(text).trim();
+        if (body.isBlank()) return;
+
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("source_type", "task");
+        details.put("source_uuid", safe(task.uuid));
+        details.put("source_title", firstNonBlank(safe(task.title), "Task"));
+        details.put("source_path", "/tasks.jsp?task_uuid=" + safe(task.uuid));
+        details.put("task_uuid", safe(task.uuid));
+        details.put("matter_uuid", safe(task.matterUuid));
+        details.put("due_at", safe(task.dueAt));
+        if (extras != null && !extras.isEmpty()) details.putAll(extras);
+        try {
+            mentions.defaultService().logMentions(
+                    tu,
+                    safe(actor).trim(),
+                    safe(task.matterUuid),
+                    body,
+                    details
+            );
+        } catch (Exception ex) {
+            LOG.log(Level.FINE, "Task mention logging skipped: " + safe(ex.getMessage()), ex);
         }
     }
 

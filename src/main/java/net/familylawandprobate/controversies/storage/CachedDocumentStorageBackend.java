@@ -1,5 +1,7 @@
 package net.familylawandprobate.controversies.storage;
 
+import net.familylawandprobate.controversies.app_clock;
+
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -191,7 +193,7 @@ public final class CachedDocumentStorageBackend implements DocumentStorageBacken
 
     private void touch(Path p) {
         try {
-            Files.setLastModifiedTime(p, FileTime.from(Instant.now()));
+            Files.setLastModifiedTime(p, FileTime.from(app_clock.now()));
         } catch (Exception ignored) {
         }
     }

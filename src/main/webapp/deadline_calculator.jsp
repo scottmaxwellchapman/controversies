@@ -204,8 +204,8 @@
   String holidayXml = "";
   class_dealine_calculator.DeadlineDefinition definition = null;
 
-  int holidayYear = parseIntSafe(request.getParameter("holiday_year"), LocalDate.now().getYear());
-  if (holidayYear < 1900 || holidayYear > 2200) holidayYear = LocalDate.now().getYear();
+  int holidayYear = parseIntSafe(request.getParameter("holiday_year"), net.familylawandprobate.controversies.app_clock.today().getYear());
+  if (holidayYear < 1900 || holidayYear > 2200) holidayYear = net.familylawandprobate.controversies.app_clock.today().getYear();
 
   String zoneInput = safe(request.getParameter("zone_id")).trim();
   if (zoneInput.isBlank()) zoneInput = "America/Chicago";

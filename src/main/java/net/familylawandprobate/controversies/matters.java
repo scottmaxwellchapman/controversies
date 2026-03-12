@@ -413,7 +413,7 @@ public MatterRec(String uuid,
         Files.createDirectories(marker.getParent());
         Files.writeString(
                 marker,
-                Instant.now().toString(),
+                app_clock.now().toString(),
                 StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING
@@ -478,7 +478,7 @@ public MatterRec(String uuid,
         Path p = mattersPath(tenantUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
 
         StringBuilder sb = new StringBuilder(16384);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -901,7 +901,7 @@ public MatterRec(String uuid,
     }
 
     private static String emptyMattersXml() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
              + "<matters created=\"" + xmlAttr(now) + "\" updated=\"" + xmlAttr(now) + "\"></matters>\n";
     }

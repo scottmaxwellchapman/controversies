@@ -79,7 +79,7 @@
         if (eventType.isBlank()) throw new IllegalArgumentException("event_type is required.");
         LinkedHashMap<String, Object> payload = new LinkedHashMap<String, Object>();
         payload.put("message", safe(request.getParameter("event_message")).trim());
-        payload.put("timestamp", java.time.Instant.now().toString());
+        payload.put("timestamp", net.familylawandprobate.controversies.app_clock.now().toString());
         integration_webhooks.DispatchResult res = store.dispatchEvent(tenantUuid, eventType, payload);
         message = "Event dispatched. Attempted=" + res.attemptedCount + ", success=" + res.successCount + ", failed=" + res.failureCount + ".";
       }

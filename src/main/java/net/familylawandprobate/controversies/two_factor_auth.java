@@ -247,7 +247,7 @@ public final class two_factor_auth {
         String code = randomSixDigitCode();
         String salt = randomSalt();
         String codeHash = sha256Hex(salt + ":" + code);
-        Instant now = Instant.now();
+        Instant now = app_clock.now();
 
         ChallengeRec rec = new ChallengeRec(
                 challengeId,
@@ -365,7 +365,7 @@ public final class two_factor_auth {
                 return new VerifyResult(false, false, 0, "Client verification context changed. Start over and try again.");
             }
 
-            Instant now = Instant.now();
+            Instant now = app_clock.now();
             Instant expiry = parseInstant(rec.expiresAt);
             if (expiry == null || now.isAfter(expiry)) {
                 deleteChallengeLocked(tu, cid);
@@ -744,7 +744,7 @@ public final class two_factor_auth {
         Files.createDirectories(p.getParent());
         StringBuilder sb = new StringBuilder(512);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        sb.append("<two_factor_challenge updated=\"").append(xmlAttr(Instant.now().toString())).append("\">\n");
+        sb.append("<two_factor_challenge updated=\"").append(xmlAttr(app_clock.now().toString())).append("\">\n");
         sb.append("  <challenge_id>").append(xmlText(rec.challengeId)).append("</challenge_id>\n");
         sb.append("  <user_uuid>").append(xmlText(rec.userUuid)).append("</user_uuid>\n");
         sb.append("  <engine>").append(xmlText(rec.engine)).append("</engine>\n");
@@ -763,7 +763,7 @@ public final class two_factor_auth {
     private static void cleanupStaleChallengesLocked(String tenantUuid) {
         Path dir = challengeDir(tenantUuid);
         if (!Files.isDirectory(dir)) return;
-        Instant cutoff = Instant.now().minus(CHALLENGE_RETENTION);
+        Instant cutoff = app_clock.now().minus(CHALLENGE_RETENTION);
         try (java.util.stream.Stream<Path> files = Files.list(dir)) {
             for (Path p : files.toList()) {
                 if (p == null || !Files.isRegularFile(p)) continue;
@@ -775,7 +775,7 @@ public final class two_factor_auth {
                     }
                     Instant expiry = parseInstant(rec.expiresAt);
                     Instant created = parseInstant(rec.createdAt);
-                    if ((expiry != null && expiry.isBefore(Instant.now())) || (created != null && created.isBefore(cutoff))) {
+                    if ((expiry != null && expiry.isBefore(app_clock.now())) || (created != null && created.isBefore(cutoff))) {
                         Files.deleteIfExists(p);
                     }
                 } catch (Exception ignored) {

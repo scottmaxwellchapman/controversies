@@ -102,7 +102,7 @@ public final class api_servlet extends HttpServlet {
             out.put("ok", true);
             out.put("service", "controversies-api");
             out.put("version", "v1");
-            out.put("time", Instant.now().toString());
+            out.put("time", app_clock.now().toString());
             writeJson(resp, 200, out);
             return;
         }
@@ -355,6 +355,9 @@ public final class api_servlet extends HttpServlet {
         LinkedHashMap<String, Object> tasks = executeTasksOperation(operation, params, tenantUuid);
         if (tasks != null) return tasks;
 
+        LinkedHashMap<String, Object> calendars = executeCalendarOperation(operation, params, tenantUuid);
+        if (calendars != null) return calendars;
+
         LinkedHashMap<String, Object> mail = executeMailOperation(operation, params, tenantUuid);
         if (mail != null) return mail;
 
@@ -405,6 +408,64 @@ public final class api_servlet extends HttpServlet {
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
                 out.put("items", items);
                 out.put("count", items.size());
+                return out;
+            }
+
+            case "inbox.unified.list": {
+                String viewerUserUuid = firstNonBlank(
+                        str(params, "viewer_user_uuid"),
+                        str(params, "user_uuid"),
+                        str(params, "assigned_user_uuid")
+                );
+                if (viewerUserUuid.isBlank()) throw new IllegalArgumentException("user_uuid is required.");
+
+                boolean allowTasks = credentialHasPermission(credentialScope, "tasks.access");
+                boolean allowThreads = credentialHasPermission(credentialScope, "threads.access");
+                boolean allowReviews = credentialHasPermission(credentialScope, "business_process_reviews.manage");
+                boolean allowActivity = credentialHasPermission(credentialScope, "logs.view");
+                boolean allowMentions = true;
+
+                unified_inbox.QueryOptions query = new unified_inbox.QueryOptions();
+                query.includeTasks = allowTasks && boolVal(params, "include_tasks", allowTasks);
+                query.includeThreads = allowThreads && boolVal(params, "include_threads", allowThreads);
+                query.includeReviews = allowReviews && boolVal(params, "include_reviews", allowReviews);
+                query.includeActivities = allowActivity && boolVal(params, "include_activities", allowActivity);
+                query.includeMentions = allowMentions && boolVal(params, "include_mentions", allowMentions);
+                query.includeArchived = boolVal(params, "include_archived", false);
+                query.includeClosed = boolVal(params, "include_closed", false);
+                query.limit = clampInt(intVal(params, "limit", 100), 1, 500);
+                query.activityFetchLimit = clampInt(intVal(params, "activity_limit", 600), 50, 2000);
+                query.mentionFetchLimit = clampInt(intVal(params, "mention_limit", 600), 50, 2000);
+
+                List<unified_inbox.ItemRec> rows = unified_inbox.defaultService()
+                        .listForUser(tenantUuid, viewerUserUuid, query);
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                LinkedHashMap<String, Integer> counts = new LinkedHashMap<String, Integer>();
+                counts.put("tasks", 0);
+                counts.put("threads", 0);
+                counts.put("process_reviews", 0);
+                counts.put("activities", 0);
+                counts.put("mentions", 0);
+                for (unified_inbox.ItemRec r : rows) {
+                    if (r == null) continue;
+                    items.add(unifiedInboxItemMap(r));
+                    String key = unifiedInboxTypeCountKey(r.itemType);
+                    counts.put(key, counts.getOrDefault(key, 0) + 1);
+                }
+
+                LinkedHashMap<String, Object> includedSections = new LinkedHashMap<String, Object>();
+                includedSections.put("tasks", query.includeTasks);
+                includedSections.put("threads", query.includeThreads);
+                includedSections.put("process_reviews", query.includeReviews);
+                includedSections.put("activities", query.includeActivities);
+                includedSections.put("mentions", query.includeMentions);
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("user_uuid", viewerUserUuid);
+                out.put("items", items);
+                out.put("count", items.size());
+                out.put("counts", counts);
+                out.put("included_sections", includedSections);
                 return out;
             }
 
@@ -653,12 +714,7 @@ public final class api_servlet extends HttpServlet {
                 ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
                 for (users_roles.UserRec r : rows) {
                     if (r == null) continue;
-                    LinkedHashMap<String, Object> m = new LinkedHashMap<String, Object>();
-                    m.put("uuid", r.uuid);
-                    m.put("enabled", r.enabled);
-                    m.put("role_uuid", r.roleUuid);
-                    m.put("email_address", r.emailAddress);
-                    items.add(m);
+                    items.add(userMap(r));
                 }
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
                 out.put("items", items);
@@ -668,12 +724,16 @@ public final class api_servlet extends HttpServlet {
 
             case "users.create": {
                 users_roles store = users_roles.defaultStore();
+                long defaultHourlyRateCents = moneyCents(params, "default_hourly_rate", "default_hourly_rate_cents");
                 users_roles.UserRec rec = store.createUser(
                         tenantUuid,
                         str(params, "email"),
                         str(params, "role_uuid"),
                         boolVal(params, "enabled", true),
-                        str(params, "password").toCharArray()
+                        str(params, "password").toCharArray(),
+                        str(params, "billing_initials"),
+                        defaultHourlyRateCents,
+                        boolVal(params, "bypass_password_policy", false)
                 );
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
                 out.put("user", userMap(rec));
@@ -692,6 +752,13 @@ public final class api_servlet extends HttpServlet {
                 }
                 if (hasParam(params, "enabled")) {
                     changed = store.updateUserEnabled(tenantUuid, userUuid, boolVal(params, "enabled", true)) || changed;
+                }
+                if (hasParam(params, "billing_initials")) {
+                    changed = store.updateUserBillingInitials(tenantUuid, userUuid, str(params, "billing_initials")) || changed;
+                }
+                if (hasParam(params, "default_hourly_rate_cents") || hasParam(params, "default_hourly_rate")) {
+                    long cents = moneyCents(params, "default_hourly_rate", "default_hourly_rate_cents");
+                    changed = store.updateUserDefaultHourlyRateCents(tenantUuid, userUuid, cents) || changed;
                 }
                 if (hasParam(params, "password")) {
                     changed = store.updateUserPassword(tenantUuid, userUuid, str(params, "password").toCharArray()) || changed;
@@ -1950,7 +2017,7 @@ public final class api_servlet extends HttpServlet {
 
                 ArrayList<custom_objects.ObjectRec> next = new ArrayList<custom_objects.ObjectRec>(all.size());
                 boolean changed = false;
-                String now = Instant.now().toString();
+                String now = app_clock.now().toString();
 
                 for (custom_objects.ObjectRec r : all) {
                     if (r == null) continue;
@@ -2650,6 +2717,320 @@ public final class api_servlet extends HttpServlet {
         }
     }
 
+    private static LinkedHashMap<String, Object> executeCalendarOperation(String operation,
+                                                                           Map<String, Object> params,
+                                                                           String tenantUuid) throws Exception {
+        String op = safe(operation).trim().toLowerCase(Locale.ROOT);
+        if (!(op.startsWith("calendars.")
+                || op.startsWith("calendar.events.")
+                || "calendar.sync.office365".equals(op))) {
+            return null;
+        }
+
+        calendar_system store = calendar_system.defaultStore();
+
+        switch (op) {
+            case "calendars.list": {
+                String userUuid = firstNonBlank(
+                        str(params, "user_uuid"),
+                        str(params, "viewer_user_uuid"),
+                        str(params, "actor_user_uuid")
+                );
+                if (userUuid.isBlank()) throw new IllegalArgumentException("user_uuid is required.");
+
+                boolean includeTrashed = boolVal(params, "include_trashed", false);
+                boolean includeDisabled = boolVal(params, "include_disabled", false);
+
+                List<calendar_system.CalendarRec> rows = store.listCalendarsForUser(
+                        tenantUuid,
+                        userUuid,
+                        includeTrashed,
+                        includeDisabled
+                );
+
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (calendar_system.CalendarRec row : rows) {
+                    if (row == null) continue;
+                    items.add(calendarMap(row, userUuid));
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                out.put("user_uuid", userUuid);
+                return out;
+            }
+
+            case "calendars.get": {
+                String userUuid = firstNonBlank(
+                        str(params, "user_uuid"),
+                        str(params, "viewer_user_uuid"),
+                        str(params, "actor_user_uuid")
+                );
+                if (userUuid.isBlank()) throw new IllegalArgumentException("user_uuid is required.");
+
+                String calendarUuid = str(params, "calendar_uuid");
+                if (calendarUuid.isBlank()) throw new IllegalArgumentException("calendar_uuid is required.");
+
+                calendar_system.CalendarRec rec = store.getCalendarForUser(
+                        tenantUuid,
+                        calendarUuid,
+                        userUuid,
+                        false
+                );
+                if (rec == null) throw new IllegalArgumentException("Calendar not found or access denied.");
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("calendar", calendarMap(rec, userUuid));
+                return out;
+            }
+
+            case "calendars.create": {
+                String actorUserUuid = firstNonBlank(str(params, "actor_user_uuid"), str(params, "user_uuid"));
+                if (actorUserUuid.isBlank()) throw new IllegalArgumentException("actor_user_uuid is required.");
+
+                calendar_system.CalendarInput in = calendarInputFromParams(params);
+                if (safe(in.ownerUserUuid).trim().isBlank()) in.ownerUserUuid = actorUserUuid;
+
+                calendar_system.CalendarRec created = store.createCalendar(tenantUuid, in, actorUserUuid);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("calendar", calendarMap(created, actorUserUuid));
+                return out;
+            }
+
+            case "calendars.update": {
+                String actorUserUuid = firstNonBlank(str(params, "actor_user_uuid"), str(params, "user_uuid"));
+                if (actorUserUuid.isBlank()) throw new IllegalArgumentException("actor_user_uuid is required.");
+
+                String calendarUuid = str(params, "calendar_uuid");
+                if (calendarUuid.isBlank()) throw new IllegalArgumentException("calendar_uuid is required.");
+
+                calendar_system.CalendarRec current = store.getCalendarForUser(
+                        tenantUuid,
+                        calendarUuid,
+                        actorUserUuid,
+                        true
+                );
+                if (current == null) throw new IllegalArgumentException("Calendar not found or write access denied.");
+
+                calendar_system.CalendarInput in = calendarInputFromParams(params);
+                if (!hasParam(params, "name")) in.name = current.name;
+                if (!hasParam(params, "color")) in.color = current.color;
+                if (!hasParam(params, "timezone")) in.timezone = current.timezone;
+                if (!hasParam(params, "owner_user_uuid")) in.ownerUserUuid = current.ownerUserUuid;
+                if (!hasParam(params, "enabled")) in.enabled = current.enabled;
+
+                calendar_system.CalendarRec updated = store.updateCalendar(
+                        tenantUuid,
+                        calendarUuid,
+                        in,
+                        actorUserUuid
+                );
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("calendar", calendarMap(updated, actorUserUuid));
+                return out;
+            }
+
+            case "calendars.share": {
+                String actorUserUuid = firstNonBlank(str(params, "actor_user_uuid"), str(params, "user_uuid"));
+                if (actorUserUuid.isBlank()) throw new IllegalArgumentException("actor_user_uuid is required.");
+
+                String calendarUuid = str(params, "calendar_uuid");
+                if (calendarUuid.isBlank()) throw new IllegalArgumentException("calendar_uuid is required.");
+
+                String readCsv = hasParam(params, "read_user_uuids_csv")
+                        ? str(params, "read_user_uuids_csv")
+                        : String.join(",", csvOrList(params.get("read_user_uuids")));
+                String writeCsv = hasParam(params, "write_user_uuids_csv")
+                        ? str(params, "write_user_uuids_csv")
+                        : String.join(",", csvOrList(params.get("write_user_uuids")));
+
+                calendar_system.CalendarRec updated = store.setCalendarAccess(
+                        tenantUuid,
+                        calendarUuid,
+                        readCsv,
+                        writeCsv,
+                        actorUserUuid
+                );
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("calendar", calendarMap(updated, actorUserUuid));
+                return out;
+            }
+
+            case "calendar.events.list": {
+                String userUuid = firstNonBlank(
+                        str(params, "user_uuid"),
+                        str(params, "viewer_user_uuid"),
+                        str(params, "actor_user_uuid")
+                );
+                if (userUuid.isBlank()) throw new IllegalArgumentException("user_uuid is required.");
+
+                String calendarUuid = str(params, "calendar_uuid");
+                if (calendarUuid.isBlank()) throw new IllegalArgumentException("calendar_uuid is required.");
+
+                String start = firstNonBlank(str(params, "start"), str(params, "from"), str(params, "start_at"));
+                String end = firstNonBlank(str(params, "end"), str(params, "to"), str(params, "end_at"));
+                boolean includeTrashed = boolVal(params, "include_trashed", false);
+
+                List<calendar_system.EventRec> rows = store.listEventsForUser(
+                        tenantUuid,
+                        calendarUuid,
+                        userUuid,
+                        start,
+                        end,
+                        includeTrashed
+                );
+
+                ArrayList<LinkedHashMap<String, Object>> items = new ArrayList<LinkedHashMap<String, Object>>();
+                for (calendar_system.EventRec row : rows) {
+                    if (row == null) continue;
+                    items.add(calendarEventMap(row));
+                }
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("items", items);
+                out.put("count", items.size());
+                out.put("calendar_uuid", calendarUuid);
+                return out;
+            }
+
+            case "calendar.events.get": {
+                String userUuid = firstNonBlank(
+                        str(params, "user_uuid"),
+                        str(params, "viewer_user_uuid"),
+                        str(params, "actor_user_uuid")
+                );
+                if (userUuid.isBlank()) throw new IllegalArgumentException("user_uuid is required.");
+
+                String calendarUuid = str(params, "calendar_uuid");
+                if (calendarUuid.isBlank()) throw new IllegalArgumentException("calendar_uuid is required.");
+                String eventUuid = str(params, "event_uuid");
+                if (eventUuid.isBlank()) throw new IllegalArgumentException("event_uuid is required.");
+
+                calendar_system.EventRec event = store.getEventByUuidForUser(
+                        tenantUuid,
+                        calendarUuid,
+                        eventUuid,
+                        userUuid,
+                        false
+                );
+                if (event == null) throw new IllegalArgumentException("Event not found or access denied.");
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("event", calendarEventMap(event));
+                return out;
+            }
+
+            case "calendar.events.create": {
+                String actorUserUuid = firstNonBlank(str(params, "actor_user_uuid"), str(params, "user_uuid"));
+                if (actorUserUuid.isBlank()) throw new IllegalArgumentException("actor_user_uuid is required.");
+
+                String calendarUuid = str(params, "calendar_uuid");
+                if (calendarUuid.isBlank()) throw new IllegalArgumentException("calendar_uuid is required.");
+
+                calendar_system.EventInput in = calendarEventInputFromParams(params);
+                if (safe(in.organizerUserUuid).trim().isBlank()) in.organizerUserUuid = actorUserUuid;
+
+                calendar_system.EventRec created = store.putEventForUser(
+                        tenantUuid,
+                        calendarUuid,
+                        in,
+                        actorUserUuid
+                );
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("event", calendarEventMap(created));
+                return out;
+            }
+
+            case "calendar.events.update": {
+                String actorUserUuid = firstNonBlank(str(params, "actor_user_uuid"), str(params, "user_uuid"));
+                if (actorUserUuid.isBlank()) throw new IllegalArgumentException("actor_user_uuid is required.");
+
+                String calendarUuid = str(params, "calendar_uuid");
+                if (calendarUuid.isBlank()) throw new IllegalArgumentException("calendar_uuid is required.");
+                String eventUuid = str(params, "event_uuid");
+                if (eventUuid.isBlank()) throw new IllegalArgumentException("event_uuid is required.");
+
+                calendar_system.EventRec current = store.getEventByUuidForUser(
+                        tenantUuid,
+                        calendarUuid,
+                        eventUuid,
+                        actorUserUuid,
+                        true
+                );
+                if (current == null) throw new IllegalArgumentException("Event not found or write access denied.");
+
+                calendar_system.EventInput in = calendarEventInputFromParams(params);
+                in.eventUuid = eventUuid;
+                if (!hasParam(params, "uid")) in.uid = current.uid;
+                if (!hasParam(params, "summary")) in.summary = current.summary;
+                if (!hasParam(params, "description")) in.description = current.description;
+                if (!hasParam(params, "location")) in.location = current.location;
+                if (!hasParam(params, "start_at") && !hasParam(params, "start")) in.startAt = current.startAt;
+                if (!hasParam(params, "end_at") && !hasParam(params, "end")) in.endAt = current.endAt;
+                if (!hasParam(params, "all_day")) in.allDay = current.allDay;
+                if (!hasParam(params, "status")) in.status = current.status;
+                if (!hasParam(params, "organizer_user_uuid")) in.organizerUserUuid = current.organizerUserUuid;
+                if (!hasParam(params, "attendees_csv") && !hasParam(params, "attendees")) in.attendeesCsv = current.attendeesCsv;
+
+                calendar_system.EventRec updated = store.putEventForUser(
+                        tenantUuid,
+                        calendarUuid,
+                        in,
+                        actorUserUuid
+                );
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("event", calendarEventMap(updated));
+                return out;
+            }
+
+            case "calendar.events.delete": {
+                String actorUserUuid = firstNonBlank(str(params, "actor_user_uuid"), str(params, "user_uuid"));
+                if (actorUserUuid.isBlank()) throw new IllegalArgumentException("actor_user_uuid is required.");
+
+                String calendarUuid = str(params, "calendar_uuid");
+                if (calendarUuid.isBlank()) throw new IllegalArgumentException("calendar_uuid is required.");
+                String eventUuid = str(params, "event_uuid");
+                if (eventUuid.isBlank()) throw new IllegalArgumentException("event_uuid is required.");
+
+                boolean deleted = store.deleteEventByUuidForUser(
+                        tenantUuid,
+                        calendarUuid,
+                        eventUuid,
+                        actorUserUuid
+                );
+
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("deleted", deleted);
+                out.put("calendar_uuid", calendarUuid);
+                out.put("event_uuid", eventUuid);
+                return out;
+            }
+
+            case "calendar.sync.office365": {
+                net.familylawandprobate.controversies.integrations.office365.Office365CalendarSyncService.SyncResult result =
+                        new net.familylawandprobate.controversies.integrations.office365.Office365CalendarSyncService()
+                                .syncCalendars(tenantUuid, true);
+                LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+                out.put("ok", result.ok);
+                out.put("sources_configured", result.sourcesConfigured);
+                out.put("sources_processed", result.sourcesProcessed);
+                out.put("calendars_processed", result.calendarsProcessed);
+                out.put("events_upserted", result.eventsUpserted);
+                out.put("error", result.error);
+                out.put("per_source_upserts", new LinkedHashMap<String, String>(result.perSourceUpserts));
+                return out;
+            }
+
+            default:
+                throw new UnsupportedOperationException("Unknown operation: " + op);
+        }
+    }
+
     private static LinkedHashMap<String, Object> executeLeadsOperation(String operation,
                                                                         Map<String, Object> params,
                                                                         String tenantUuid) throws Exception {
@@ -2955,7 +3336,8 @@ public final class api_servlet extends HttpServlet {
                         taxCents,
                         str(params, "currency").isBlank() ? "USD" : str(params, "currency"),
                         !boolVal(params, "non_billable", false),
-                        str(params, "incurred_at")
+                        str(params, "incurred_at"),
+                        firstNonBlank(str(params, "utbms_expense_code"), str(params, "expense_code"))
                 );
                 LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
                 out.put("expense_entry", billingExpenseEntryMap(row));
@@ -5005,6 +5387,13 @@ public final class api_servlet extends HttpServlet {
         if (!matterUuid.isBlank()) {
             mergedValues.putAll(buildMatterMergeValues(tenantUuid, matterUuid));
         }
+        assembly_identity_tokens.addUserIdentityTokens(
+                mergedValues,
+                tenantUuid,
+                str(params, "user_uuid"),
+                str(params, "user_email"),
+                ""
+        );
 
         LinkedHashMap<String, String> values = stringMap(params.get("values"));
         for (Map.Entry<String, String> e : values.entrySet()) {
@@ -5093,6 +5482,8 @@ public final class api_servlet extends HttpServlet {
         putToken(out, "tenant.async_sync_enabled", async ? "true" : "false");
         putToken(out, "async_sync_enabled", async ? "true" : "false");
         putToken(out, "kv.async_sync_enabled", async ? "true" : "false");
+
+        assembly_identity_tokens.addTenantIdentityTokens(out, tenantUuid, "", tenantKv);
 
         return out;
     }
@@ -5282,6 +5673,8 @@ public final class api_servlet extends HttpServlet {
         secretKeys.add("clio_client_secret");
         secretKeys.add("clio_access_token");
         secretKeys.add("clio_refresh_token");
+        secretKeys.add("office365_contacts_sync_sources_json");
+        secretKeys.add("office365_calendar_sync_sources_json");
         secretKeys.add("email_smtp_password");
         secretKeys.add("email_graph_client_secret");
 
@@ -5326,6 +5719,7 @@ public final class api_servlet extends HttpServlet {
 
         ops.put("auth.whoami", "Credential identity and tenant scope");
         ops.put("activity.recent", "Recent tenant activity log events");
+        ops.put("inbox.unified.list", "Unified user inbox across threads, tasks, reviews, mentions, and activity");
         ops.put("permissions.catalog", "List permission definitions and built-in profiles");
 
         ops.put("api.credentials.list", "List API credentials for tenant");
@@ -5399,6 +5793,18 @@ public final class api_servlet extends HttpServlet {
         ops.put("tasks.assignments.list", "List task assignment history");
         ops.put("tasks.round_robin.next_assignee", "Choose next assignee from task round-robin queue");
         ops.put("tasks.report.refresh", "Regenerate matter-linked task PDF report");
+
+        ops.put("calendars.list", "List calendars visible to a user");
+        ops.put("calendars.get", "Get one calendar");
+        ops.put("calendars.create", "Create calendar");
+        ops.put("calendars.update", "Update calendar");
+        ops.put("calendars.share", "Update calendar read/write sharing");
+        ops.put("calendar.events.list", "List events for a calendar");
+        ops.put("calendar.events.get", "Get one calendar event");
+        ops.put("calendar.events.create", "Create calendar event");
+        ops.put("calendar.events.update", "Update calendar event");
+        ops.put("calendar.events.delete", "Delete calendar event");
+        ops.put("calendar.sync.office365", "Trigger Office 365 / Graph calendar sync");
 
         ops.put("leads.list", "List intake/CRM leads");
         ops.put("leads.get", "Get one lead");
@@ -5682,6 +6088,9 @@ public final class api_servlet extends HttpServlet {
 
         if ("auth.whoami".equals(op)) return List.of();
         if ("activity.recent".equals(op)) return List.of("logs.view");
+        if (op.startsWith("inbox.unified.")) {
+            return List.of("tasks.access", "threads.access", "business_process_reviews.manage", "logs.view");
+        }
         if ("permissions.catalog".equals(op)) return List.of("permissions.manage");
 
         if (op.startsWith("api.credentials.")) return List.of("api.credentials.manage");
@@ -5698,6 +6107,8 @@ public final class api_servlet extends HttpServlet {
 
         if (op.startsWith("task.attributes.")) return List.of("attributes.manage");
         if (op.startsWith("task.fields.") || op.startsWith("tasks.")) return List.of("tasks.access");
+        if (op.startsWith("calendars.") || op.startsWith("calendar.events.")) return List.of("calendar.access");
+        if ("calendar.sync.office365".equals(op)) return List.of("integrations.manage");
         if (op.startsWith("leads.")) return List.of("cases.access");
 
         if (op.startsWith("billing.")
@@ -5898,6 +6309,7 @@ curl -k -X POST "%s/execute" \\
 - Case conflicts XML scan/list/search management
 - Facts case plans (Claims->Elements->Facts), source document linkage, landscape report refresh
 - Tasks (custom attributes/fields, subtasks, associations, notes, assignments, round-robin, task report refresh)
+- Multi-user calendars/events with Office365 Graph sync and built-in CalDAV compatibility
 - Postal mail module (inbound/outbound workflow, recipients, multi-part artifacts, address validation, tracking, custom carriers/APIs)
 - Document taxonomy, attributes, documents, parts, versions
 - PDF version rendering and redaction
@@ -6006,6 +6418,8 @@ When features are added or changed in the application, matching API operations s
         out.put("currency", safe(r.currency));
         out.put("billable", r.billable);
         out.put("worked_at", safe(r.workedAt));
+        out.put("utbms_task_code", safe(r.utbmsTaskCode));
+        out.put("utbms_activity_code", safe(r.utbmsActivityCode));
         out.put("created_at", safe(r.createdAt));
         out.put("updated_at", safe(r.updatedAt));
         out.put("billed_invoice_uuid", safe(r.billedInvoiceUuid));
@@ -6025,6 +6439,7 @@ When features are added or changed in the application, matching API operations s
         out.put("currency", safe(r.currency));
         out.put("billable", r.billable);
         out.put("incurred_at", safe(r.incurredAt));
+        out.put("utbms_expense_code", safe(r.utbmsExpenseCode));
         out.put("created_at", safe(r.createdAt));
         out.put("updated_at", safe(r.updatedAt));
         out.put("billed_invoice_uuid", safe(r.billedInvoiceUuid));
@@ -6332,6 +6747,9 @@ When features are added or changed in the application, matching API operations s
         m.put("enabled", r.enabled);
         m.put("role_uuid", r.roleUuid);
         m.put("email_address", r.emailAddress);
+        m.put("billing_initials", r.billingInitials);
+        m.put("default_hourly_rate_cents", r.defaultHourlyRateCents);
+        m.put("default_hourly_rate", String.format(Locale.ROOT, "%.2f", (Math.max(0L, r.defaultHourlyRateCents) / 100.0d)));
         m.put("two_factor_enabled", r.twoFactorEnabled);
         m.put("two_factor_engine", r.twoFactorEngine);
         m.put("two_factor_phone", r.twoFactorPhone);
@@ -6447,6 +6865,122 @@ When features are added or changed in the application, matching API operations s
             linkRows.add(row);
         }
         out.put("matter_links", linkRows);
+        return out;
+    }
+
+    private static calendar_system.CalendarInput calendarInputFromParams(Map<String, Object> params) {
+        calendar_system.CalendarInput in = new calendar_system.CalendarInput();
+        if (params == null) return in;
+
+        in.name = str(params, "name");
+        in.color = str(params, "color");
+        in.timezone = str(params, "timezone");
+        in.ownerUserUuid = str(params, "owner_user_uuid");
+        in.enabled = boolVal(params, "enabled", true);
+
+        if (hasParam(params, "read_user_uuids_csv")) {
+            in.readUserUuidsCsv = str(params, "read_user_uuids_csv");
+        } else {
+            in.readUserUuidsCsv = String.join(",", csvOrList(params.get("read_user_uuids")));
+        }
+
+        if (hasParam(params, "write_user_uuids_csv")) {
+            in.writeUserUuidsCsv = str(params, "write_user_uuids_csv");
+        } else {
+            in.writeUserUuidsCsv = String.join(",", csvOrList(params.get("write_user_uuids")));
+        }
+
+        return in;
+    }
+
+    private static calendar_system.EventInput calendarEventInputFromParams(Map<String, Object> params) {
+        calendar_system.EventInput in = new calendar_system.EventInput();
+        if (params == null) return in;
+
+        in.eventUuid = str(params, "event_uuid");
+        in.uid = str(params, "uid");
+        in.summary = str(params, "summary");
+        in.description = str(params, "description");
+        in.location = str(params, "location");
+        in.startAt = firstNonBlank(str(params, "start_at"), str(params, "start"));
+        in.endAt = firstNonBlank(str(params, "end_at"), str(params, "end"));
+        in.allDay = boolVal(params, "all_day", false);
+        in.status = str(params, "status");
+        in.organizerUserUuid = str(params, "organizer_user_uuid");
+
+        if (hasParam(params, "attendees_csv")) {
+            in.attendeesCsv = str(params, "attendees_csv");
+        } else {
+            in.attendeesCsv = String.join(",", csvOrList(params.get("attendees")));
+        }
+
+        if (hasParam(params, "sequence")) {
+            try {
+                in.sequence = Integer.valueOf(Math.max(0, Integer.parseInt(str(params, "sequence").trim())));
+            } catch (Exception ignored) {
+                in.sequence = Integer.valueOf(0);
+            }
+        }
+
+        return in;
+    }
+
+    private static LinkedHashMap<String, Object> calendarMap(calendar_system.CalendarRec rec, String viewerUserUuid) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (rec == null) return out;
+
+        calendar_system store = calendar_system.defaultStore();
+
+        out.put("calendar_uuid", safe(rec.uuid));
+        out.put("uuid", safe(rec.uuid));
+        out.put("name", safe(rec.name));
+        out.put("enabled", rec.enabled);
+        out.put("trashed", rec.trashed);
+        out.put("color", safe(rec.color));
+        out.put("timezone", safe(rec.timezone));
+        out.put("owner_user_uuid", safe(rec.ownerUserUuid));
+        out.put("read_user_uuids_csv", safe(rec.readUserUuidsCsv));
+        out.put("write_user_uuids_csv", safe(rec.writeUserUuidsCsv));
+        out.put("read_user_uuids", csvOrList(rec.readUserUuidsCsv));
+        out.put("write_user_uuids", csvOrList(rec.writeUserUuidsCsv));
+        out.put("source", safe(rec.source));
+        out.put("source_calendar_id", safe(rec.sourceCalendarId));
+        out.put("created_at", safe(rec.createdAt));
+        out.put("updated_at", safe(rec.updatedAt));
+        out.put("can_read", store.canReadCalendar(rec, safe(viewerUserUuid)));
+        out.put("can_write", store.canWriteCalendar(rec, safe(viewerUserUuid)));
+        out.put("caldav_segment", calendar_system.calendarSegment(rec));
+        return out;
+    }
+
+    private static LinkedHashMap<String, Object> calendarEventMap(calendar_system.EventRec rec) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (rec == null) return out;
+
+        out.put("event_uuid", safe(rec.uuid));
+        out.put("uuid", safe(rec.uuid));
+        out.put("calendar_uuid", safe(rec.calendarUuid));
+        out.put("uid", safe(rec.uid));
+        out.put("etag", safe(rec.etag));
+        out.put("sequence", rec.sequence);
+        out.put("summary", safe(rec.summary));
+        out.put("description", safe(rec.description));
+        out.put("location", safe(rec.location));
+        out.put("start_at", safe(rec.startAt));
+        out.put("end_at", safe(rec.endAt));
+        out.put("all_day", rec.allDay);
+        out.put("status", safe(rec.status));
+        out.put("organizer_user_uuid", safe(rec.organizerUserUuid));
+        out.put("attendees_csv", safe(rec.attendeesCsv));
+        out.put("attendees", csvOrList(rec.attendeesCsv));
+        out.put("source", safe(rec.source));
+        out.put("source_event_id", safe(rec.sourceEventId));
+        out.put("source_change_key", safe(rec.sourceChangeKey));
+        out.put("source_ical_uid", safe(rec.sourceIcalUid));
+        out.put("created_at", safe(rec.createdAt));
+        out.put("updated_at", safe(rec.updatedAt));
+        out.put("trashed", rec.trashed);
+        out.put("caldav_object_name", calendar_system.eventFileName(rec));
         return out;
     }
 
@@ -7060,6 +7594,38 @@ When features are added or changed in the application, matching API operations s
         out.put("required_input_keys", new ArrayList<String>(r.requiredInputKeys));
         out.put("input", new LinkedHashMap<String, String>(r.input));
         out.put("context", new LinkedHashMap<String, String>(r.context));
+        return out;
+    }
+
+    private static String unifiedInboxTypeCountKey(String itemType) {
+        String t = safe(itemType).trim().toLowerCase(Locale.ROOT);
+        if ("task".equals(t)) return "tasks";
+        if ("thread".equals(t)) return "threads";
+        if ("process_review".equals(t)) return "process_reviews";
+        if ("activity".equals(t)) return "activities";
+        if ("mention".equals(t)) return "mentions";
+        return "other";
+    }
+
+    private static LinkedHashMap<String, Object> unifiedInboxItemMap(unified_inbox.ItemRec r) {
+        LinkedHashMap<String, Object> out = new LinkedHashMap<String, Object>();
+        if (r == null) return out;
+        out.put("item_type", safe(r.itemType));
+        out.put("item_uuid", safe(r.itemUuid));
+        out.put("title", safe(r.title));
+        out.put("summary", safe(r.summary));
+        out.put("status", safe(r.status));
+        out.put("priority", safe(r.priority));
+        out.put("due_at", safe(r.dueAt));
+        out.put("created_at", safe(r.createdAt));
+        out.put("updated_at", safe(r.updatedAt));
+        out.put("matter_uuid", safe(r.matterUuid));
+        out.put("link_path", safe(r.linkPath));
+        out.put("source_ref", safe(r.sourceRef));
+        out.put("deadline_bucket", safe(r.deadlineBucket));
+        out.put("overdue", r.overdue);
+        out.put("urgency_score", r.urgencyScore);
+        out.put("meta", new LinkedHashMap<String, String>(r.meta));
         return out;
     }
 

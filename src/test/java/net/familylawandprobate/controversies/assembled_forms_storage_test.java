@@ -10,12 +10,66 @@ import net.familylawandprobate.controversies.storage.AssembledFormsStoragePromot
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
 public class assembled_forms_storage_test {
+
+    @Test
+    void completed_assemblies_emit_bpm_events_for_follow_on_document_workflows() throws Exception {
+        String tenantUuid = "tenant-bpm-assembly-event-" + UUID.randomUUID();
+        matters.MatterRec matter = matters.defaultStore().create(
+                tenantUuid,
+                "Assembly Event Matter",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+        );
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Assembly Completed Listener";
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "assembly.completed";
+        process.triggers.add(trigger);
+        business_process_manager.ProcessStep step = new business_process_manager.ProcessStep();
+        step.stepId = "capture_assembly";
+        step.order = 10;
+        step.action = "set_case_field";
+        step.settings.put("matter_uuid", "{{event.matter_uuid}}");
+        step.settings.put("field_key", "last_assembly_uuid");
+        step.settings.put("field_value", "{{event.assembly_uuid}}");
+        process.steps.add(step);
+        bpm.saveProcess(tenantUuid, process);
+
+        assembled_forms store = assembled_forms.defaultStore();
+        assembled_forms.AssemblyRec completed = store.markCompleted(
+                tenantUuid,
+                matter.uuid,
+                "",
+                "tmpl-bpm",
+                "BPM Template",
+                "txt",
+                "user-1",
+                "user@example.com",
+                Map.of(),
+                "assembly-event.txt",
+                "txt",
+                "assembly event payload".getBytes()
+        );
+
+        List<business_process_manager.RunResult> runs = bpm.listRuns(tenantUuid, 10);
+        assertEquals(1, runs.size());
+        assertEquals("completed", runs.get(0).status);
+        assertEquals(completed.uuid, case_fields.defaultStore().read(tenantUuid, matter.uuid).get("last_assembly_uuid"));
+    }
 
     @Test
     void completed_records_persist_storage_metadata_and_can_be_promoted() throws Exception {

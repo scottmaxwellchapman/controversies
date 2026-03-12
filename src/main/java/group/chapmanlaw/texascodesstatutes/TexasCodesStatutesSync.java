@@ -1,5 +1,7 @@
 package group.chapmanlaw.texascodesstatutes;
 
+import net.familylawandprobate.controversies.app_clock;
+
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -120,7 +122,7 @@ public class TexasCodesStatutesSync {
         long cycle = 0;
         while (true) {
             cycle++;
-            Instant cycleStartedAt = Instant.now();
+            Instant cycleStartedAt = app_clock.now();
             System.out.printf("Starting scheduled sync cycle #%d (%s interval).%n", cycle, interval);
             try {
                 executeSingleSync(config);
@@ -128,7 +130,7 @@ public class TexasCodesStatutesSync {
                 System.err.println("Scheduled sync cycle #" + cycle + " failed: " + ex.getMessage());
             }
 
-            long elapsedMillis = Duration.between(cycleStartedAt, Instant.now()).toMillis();
+            long elapsedMillis = Duration.between(cycleStartedAt, app_clock.now()).toMillis();
             long sleepMillis = Math.max(1L, interval.toMillis() - elapsedMillis);
             System.out.printf("Scheduled sync cycle #%d complete. Sleeping for %d ms.%n", cycle, sleepMillis);
             Thread.sleep(sleepMillis);
@@ -375,14 +377,14 @@ public class TexasCodesStatutesSync {
 
     private static Instant enforcePoliteDelay(Instant lastDownloadStartedAt) throws InterruptedException {
         if (lastDownloadStartedAt == null) {
-            return Instant.now();
+            return app_clock.now();
         }
-        long elapsedMillis = Duration.between(lastDownloadStartedAt, Instant.now()).toMillis();
+        long elapsedMillis = Duration.between(lastDownloadStartedAt, app_clock.now()).toMillis();
         long delayMillis = POLITE_DOWNLOAD_DELAY.toMillis() - elapsedMillis;
         if (delayMillis > 0) {
             Thread.sleep(delayMillis);
         }
-        return Instant.now();
+        return app_clock.now();
     }
 
     private static Map<String, String> fetchChapterTitleLookup(
@@ -727,7 +729,7 @@ public class TexasCodesStatutesSync {
         marker.etag = probe.etag();
         marker.lastModified = probe.lastModified();
         marker.contentLength = probe.contentLength();
-        marker.downloadedAtUtc = Instant.now().toString();
+        marker.downloadedAtUtc = app_clock.now().toString();
         marker.files = new ArrayList<>(files);
         marker.corruptEntries = corruptEntries == null ? new ArrayList<>() : new ArrayList<>(corruptEntries);
         marker.complete = complete && marker.corruptEntries.isEmpty();
@@ -1639,7 +1641,7 @@ public class TexasCodesStatutesSync {
             payload.put("statuteName", code.codeName());
             payload.put("newFileName", fileNameFromRelativePath(outputRelativePath));
             payload.put("relativePath", outputRelativePath);
-            payload.put("timestampUtc", Instant.now().toString());
+            payload.put("timestampUtc", app_clock.now().toString());
             post(payload);
         }
 
@@ -1656,7 +1658,7 @@ public class TexasCodesStatutesSync {
             payload.put("relativePath", markerPath);
             payload.put("fileCount", fileCount);
             payload.put("partial", partial);
-            payload.put("timestampUtc", Instant.now().toString());
+            payload.put("timestampUtc", app_clock.now().toString());
             post(payload);
         }
 

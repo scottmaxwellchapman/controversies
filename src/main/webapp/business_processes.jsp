@@ -596,6 +596,7 @@
                   <option value="update_fact" <%= "update_fact".equalsIgnoreCase(s.action) ? "selected" : "" %>>Update Fact</option>
                   <option value="refresh_facts_report" <%= "refresh_facts_report".equalsIgnoreCase(s.action) ? "selected" : "" %>>Refresh Facts Report</option>
                   <option value="document_assembly" <%= "document_assembly".equalsIgnoreCase(s.action) ? "selected" : "" %>>Document Assembly</option>
+                  <option value="assembly_to_document_version" <%= "assembly_to_document_version".equalsIgnoreCase(s.action) ? "selected" : "" %>>Assembly To Document Version</option>
                   <option value="notice_communication" <%= "notice_communication".equalsIgnoreCase(s.action) ? "selected" : "" %>>Notice Communication</option>
                   <option value="send_for_signature" <%= "send_for_signature".equalsIgnoreCase(s.action) ? "selected" : "" %>>Send For Signature</option>
                   <option value="conflict_check" <%= "conflict_check".equalsIgnoreCase(s.action) ? "selected" : "" %>>Conflict Check</option>
@@ -644,6 +645,7 @@
                   <option value="update_fact">Update Fact</option>
                   <option value="refresh_facts_report">Refresh Facts Report</option>
                   <option value="document_assembly">Document Assembly</option>
+                  <option value="assembly_to_document_version">Assembly To Document Version</option>
                   <option value="notice_communication">Notice Communication</option>
                   <option value="send_for_signature">Send For Signature</option>
                   <option value="conflict_check">Conflict Check</option>
@@ -694,6 +696,7 @@
               <tr><td><code>update_thread</code></td><td><code>thread_uuid</code></td><td>Patch thread status/priority/assignees and SLA fields.</td></tr>
               <tr><td><code>add_thread_note</code></td><td><code>thread_uuid</code>, <code>body</code></td><td>Adds internal note (not external-facing).</td></tr>
               <tr><td><code>document_assembly</code></td><td><code>matter_uuid</code>, <code>template_uuid</code></td><td>Builds + stores assembled output from template values.</td></tr>
+              <tr><td><code>assembly_to_document_version</code></td><td><code>matter_uuid</code>, <code>document_uuid</code></td><td>Attaches assembled output to a document part/version; can create the part automatically.</td></tr>
               <tr><td><code>notice_communication</code></td><td><code>to</code>, <code>subject</code></td><td>Queues/sends outbound legal notices using tenant email provider.</td></tr>
               <tr><td><code>send_for_signature</code></td><td><code>to</code>, <code>subject</code></td><td>Signature notice with optional wait-for-confirmation review loop.</td></tr>
               <tr><td><code>conflict_check</code></td><td><code>matter_uuid</code></td><td>Writes clear/potential status variables and can require review.</td></tr>
@@ -998,6 +1001,7 @@
         '<option value="update_fact">Update Fact</option>' +
         '<option value="refresh_facts_report">Refresh Facts Report</option>' +
         '<option value="document_assembly">Document Assembly</option>' +
+        '<option value="assembly_to_document_version">Assembly To Document Version</option>' +
         '<option value="notice_communication">Notice Communication</option>' +
         '<option value="send_for_signature">Send For Signature</option>' +
         '<option value="conflict_check">Conflict Check</option>' +

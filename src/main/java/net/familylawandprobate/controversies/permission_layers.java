@@ -607,7 +607,7 @@ public final class permission_layers {
         Object guard = session.getAttribute(SESSION_REFRESH_GUARD);
         if (guard instanceof Boolean b && b.booleanValue()) return false;
 
-        long now = System.currentTimeMillis();
+        long now = app_clock.currentTimeMillis();
         Object last = session.getAttribute(SESSION_PERMS_LAST_REFRESH_MS);
         if (last instanceof Long l && (now - l.longValue()) < SESSION_REFRESH_THROTTLE_MS) {
             return false;
@@ -989,7 +989,7 @@ public final class permission_layers {
         Path p = groupsPath(tenantUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(4096);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<groups updated=\"").append(xmlAttr(now)).append("\">\n");
@@ -1076,7 +1076,7 @@ public final class permission_layers {
         Path p = layersPath(tenantUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(4096);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<permissionLayers updated=\"").append(xmlAttr(now)).append("\">\n");
@@ -1115,13 +1115,13 @@ public final class permission_layers {
     }
 
     private static String emptyGroupsXml() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 + "<groups created=\"" + xmlAttr(now) + "\" updated=\"" + xmlAttr(now) + "\"></groups>\n";
     }
 
     private static String emptyLayersXml() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 + "<permissionLayers created=\"" + xmlAttr(now) + "\" updated=\"" + xmlAttr(now) + "\">"
                 + "<tenantPermissions></tenantPermissions><userPermissions></userPermissions>"
@@ -1227,6 +1227,7 @@ public final class permission_layers {
         out.add(def("documents.access", "Documents", "Access document storage, versions, parts, preview, and redaction pages.", "Core", false));
         out.add(def("facts.access", "Facts Case Plan", "Use claims/elements/facts workflows and related actions.", "Core", false));
         out.add(def("tasks.access", "Tasks", "Manage task workflows and task list operations.", "Core", false));
+        out.add(def("calendar.access", "Calendars", "Use calendar operations and CalDAV calendar/event workflows.", "Core", false));
         out.add(def("mail.access", "Postal Mail", "Manage inbound/outbound postal mail workflows, recipients, proof, and tracking.", "Core", false));
         out.add(def("threads.access", "Omnichannel Threads", "Use omnichannel thread inbox and manifest screens.", "Core", false));
         out.add(def("wiki.access", "Knowledge Wiki", "View and edit wiki pages and attachments (subject to wiki page keys).", "Core", false));
@@ -1283,6 +1284,7 @@ public final class permission_layers {
         legacy.put("documents.access", "true");
         legacy.put("facts.access", "true");
         legacy.put("tasks.access", "true");
+        legacy.put("calendar.access", "true");
         legacy.put("mail.access", "true");
         legacy.put("threads.access", "true");
         legacy.put("wiki.access", "true");
@@ -1323,6 +1325,7 @@ public final class permission_layers {
         review.put("cases.access", "true");
         review.put("conflicts.access", "true");
         review.put("documents.access", "true");
+        review.put("calendar.access", "true");
         review.put("mail.access", "true");
         review.put("forms.access", "true");
         review.put("help.access", "true");

@@ -127,7 +127,7 @@
             boolLike((enabled != null && i < enabled.length) ? enabled[i] : "true"),
             boolLike((published != null && i < published.length) ? published[i] : "false"),
             intLike((sort != null && i < sort.length) ? sort[i] : "", (i + 1) * 10),
-            Instant.now().toString()
+            net.familylawandprobate.controversies.app_clock.now().toString()
           ));
         }
 
@@ -140,7 +140,7 @@
           "",
           Map.of(
             "row_count", String.valueOf(rows.size()),
-            "time", Instant.now().toString()
+            "time", net.familylawandprobate.controversies.app_clock.now().toString()
           )
         );
 

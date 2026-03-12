@@ -349,7 +349,7 @@ public final class case_attributes {
                     true,
                     true,
                     order,
-                    Instant.now().toString()
+                    app_clock.now().toString()
             ));
             order += 10;
         }
@@ -380,7 +380,7 @@ public final class case_attributes {
                     r.enabled,
                     r.builtIn || isBuiltInKey(key),
                     r.sortOrder > 0 ? r.sortOrder : order,
-                    safe(r.updatedAt).isBlank() ? Instant.now().toString() : r.updatedAt
+                    safe(r.updatedAt).isBlank() ? app_clock.now().toString() : r.updatedAt
             );
 
             // First row for each key wins, preserving UI order.
@@ -418,7 +418,7 @@ public final class case_attributes {
                         true,
                         true,
                         order,
-                        Instant.now().toString()
+                        app_clock.now().toString()
                 ));
             } else {
                 byKey.put(key, new AttributeRec(
@@ -431,7 +431,7 @@ public final class case_attributes {
                         r.enabled,
                         true,
                         r.sortOrder > 0 ? r.sortOrder : order,
-                        safe(r.updatedAt).isBlank() ? Instant.now().toString() : r.updatedAt
+                        safe(r.updatedAt).isBlank() ? app_clock.now().toString() : r.updatedAt
                 ));
             }
             order += 10;
@@ -514,7 +514,7 @@ public final class case_attributes {
 
         List<AttributeRec> out = mergeBuiltIns(rows);
         sortRows(out);
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
 
         StringBuilder sb = new StringBuilder(4096);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");

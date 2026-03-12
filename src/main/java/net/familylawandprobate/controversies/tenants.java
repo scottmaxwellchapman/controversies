@@ -508,7 +508,7 @@ public final class tenants {
         Files.createDirectories(tenantsPath.getParent());
         String xml =
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-                "<" + ROOT + " created=\"" + escAttr(Instant.now().toString()) + "\">\n" +
+                "<" + ROOT + " created=\"" + escAttr(app_clock.now().toString()) + "\">\n" +
                 "</" + ROOT + ">\n";
         Files.writeString(tenantsPath, xml, StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);

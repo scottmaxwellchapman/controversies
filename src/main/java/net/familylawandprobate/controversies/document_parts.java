@@ -83,7 +83,7 @@ public final class document_parts {
             if (!document_workflow_support.safe(partUuid).trim().equals(document_workflow_support.safe(rec.uuid).trim())) continue;
             target = rec;
             rec.trashed = trashed;
-            rec.updatedAt = Instant.now().toString();
+            rec.updatedAt = app_clock.now().toString();
             changed = true;
         }
         if (changed) {
@@ -103,6 +103,13 @@ public final class document_parts {
                     document_workflow_support.safe(matterUuid).trim(),
                     document_workflow_support.safe(docUuid).trim(),
                     details
+            );
+            publishPartEvent(
+                    tenantUuid,
+                    matterUuid,
+                    docUuid,
+                    trashed ? "document.part.archived" : "document.part.restored",
+                    target
             );
         }
         return changed;
@@ -166,6 +173,37 @@ public final class document_parts {
           .append("</").append(tag).append(">\n");
     }
 
+    private static void publishPartEvent(String tenantUuid,
+                                         String matterUuid,
+                                         String docUuid,
+                                         String eventType,
+                                         PartRec rec) {
+        if (rec == null) return;
+        try {
+            LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+            payload.put("matter_uuid", document_workflow_support.safe(matterUuid));
+            payload.put("doc_uuid", document_workflow_support.safe(docUuid));
+            payload.put("part_uuid", document_workflow_support.safe(rec.uuid));
+            payload.put("part_label", document_workflow_support.safe(rec.label));
+            payload.put("part_type", canonicalCategory(rec.partType));
+            payload.put("sequence", document_workflow_support.safe(rec.sequence));
+            payload.put("confidentiality", document_workflow_support.safe(rec.confidentiality));
+            payload.put("author", document_workflow_support.safe(rec.author));
+            payload.put("notes", document_workflow_support.safe(rec.notes));
+            payload.put("created_at", document_workflow_support.safe(rec.createdAt));
+            payload.put("updated_at", document_workflow_support.safe(rec.updatedAt));
+            payload.put("trashed", rec.trashed ? "true" : "false");
+            business_process_manager.defaultService().triggerEvent(
+                    document_workflow_support.safe(tenantUuid),
+                    document_workflow_support.safe(eventType),
+                    payload,
+                    "",
+                    "document_parts.store"
+            );
+        } catch (Exception ignored) {
+        }
+    }
+
     private static Path partsPath(String tenantUuid, String matterUuid, String docUuid) {
         documents docs = documents.defaultStore();
         Path docFolder = docs.documentFolder(tenantUuid, matterUuid, docUuid);
@@ -217,7 +255,7 @@ public final class document_parts {
         rec.confidentiality = document_workflow_support.safe(confidentiality).trim();
         rec.author = document_workflow_support.safe(author).trim();
         rec.notes = document_workflow_support.safe(notes).trim();
-        rec.createdAt = Instant.now().toString();
+        rec.createdAt = app_clock.now().toString();
         rec.updatedAt = rec.createdAt;
         rec.trashed = false;
         all.add(rec);
@@ -238,6 +276,7 @@ public final class document_parts {
                 document_workflow_support.safe(docUuid).trim(),
                 details
         );
+        publishPartEvent(tenantUuid, matterUuid, docUuid, "document.part.created", rec);
         return rec;
     }
 }

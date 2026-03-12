@@ -1,5 +1,7 @@
 package net.familylawandprobate.controversies.integrations.clio;
 
+import net.familylawandprobate.controversies.app_clock;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -663,7 +665,7 @@ public final class ClioClient {
             this.refreshToken = safe(refreshToken);
             this.tokenType = safe(tokenType);
             this.scope = safe(scope);
-            this.createdAt = safe(createdAt).isBlank() ? Instant.now().toString() : safe(createdAt);
+            this.createdAt = safe(createdAt).isBlank() ? app_clock.now().toString() : safe(createdAt);
             this.expiresInSeconds = Math.max(0L, expiresInSeconds);
         }
 

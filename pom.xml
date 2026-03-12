@@ -25,9 +25,11 @@
                     <argLine>-Djava.awt.headless=true</argLine>
                     <systemPropertyVariables>
                         <CONTROVERSIES_BOOTSTRAP_PASSWORD>TestBootstrapPass_2026!</CONTROVERSIES_BOOTSTRAP_PASSWORD>
+                        <CONTROVERSIES_NTP_ENABLED>false</CONTROVERSIES_NTP_ENABLED>
                     </systemPropertyVariables>
                     <environmentVariables>
                         <CONTROVERSIES_BOOTSTRAP_PASSWORD>TestBootstrapPass_2026!</CONTROVERSIES_BOOTSTRAP_PASSWORD>
+                        <CONTROVERSIES_NTP_ENABLED>false</CONTROVERSIES_NTP_ENABLED>
                     </environmentVariables>
                     <includes>
                         <include>**/*Test.java</include>
@@ -133,7 +135,6 @@
   <groupId>commons-net</groupId>
   <artifactId>commons-net</artifactId>
   <version>3.11.1</version>
-  <scope>test</scope>
  </dependency>
  <dependency>
   <groupId>org.apache.ftpserver</groupId>

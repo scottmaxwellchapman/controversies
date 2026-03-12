@@ -42,6 +42,8 @@
           || __path.endsWith("/case_lists.jsp") || __path.endsWith("case_lists.jsp")
           || __path.endsWith("/case_focus.jsp") || __path.endsWith("case_focus.jsp")) {
     __requiredPerm = "cases.access";
+  } else if (__path.endsWith("/inbox.jsp") || __path.endsWith("inbox.jsp")) {
+    __requiredPerm = "home.access";
   } else if (__path.endsWith("/case_conflicts.jsp") || __path.endsWith("case_conflicts.jsp")) {
     __requiredPerm = "conflicts.access";
   } else if (__path.endsWith("/case_fields.jsp") || __path.endsWith("case_fields.jsp")) {

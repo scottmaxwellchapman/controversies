@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -80,11 +81,39 @@ public final class activity_log {
         log("error", action, tenantUuid, userUuid, caseUuid, documentUuid, details);
     }
 
+    public void write(String level,
+                      String action,
+                      String tenantUuid,
+                      String userUuid,
+                      String caseUuid,
+                      Map<String, String> details) {
+        write(level, action, tenantUuid, userUuid, caseUuid, "", details);
+    }
+
+    public void write(String level,
+                      String action,
+                      String tenantUuid,
+                      String userUuid,
+                      String caseUuid,
+                      String documentUuid,
+                      Map<String, String> details) {
+        String normalized = safe(level).trim().toLowerCase(Locale.ROOT);
+        if ("error".equals(normalized)) {
+            logError(action, tenantUuid, userUuid, caseUuid, documentUuid, details);
+            return;
+        }
+        if ("warn".equals(normalized) || "warning".equals(normalized)) {
+            logWarning(action, tenantUuid, userUuid, caseUuid, documentUuid, details);
+            return;
+        }
+        logVerbose(action, tenantUuid, userUuid, caseUuid, documentUuid, details);
+    }
+
     private void log(String level, String action, String tenantUuid, String userUuid, String caseUuid, String documentUuid, Map<String, String> details) {
         String tenant = safe(tenantUuid).trim();
         if (tenant.isBlank()) return;
         String caseId = safe(caseUuid).trim();
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder detailXml = new StringBuilder(256);
         if (details != null) {
             for (Map.Entry<String, String> e : details.entrySet()) {
@@ -256,7 +285,7 @@ public final class activity_log {
     }
 
     private static Path logPath(String tenantUuid) {
-        String day = DAY.format(Instant.now());
+        String day = DAY.format(app_clock.now());
         return Paths.get("data", "tenants", safeFile(tenantUuid), "logs", "activity_" + day + ".xml").toAbsolutePath();
     }
 

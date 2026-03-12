@@ -125,7 +125,7 @@ public final class custom_object_records {
             ensure(tu, ou);
             List<RecordRec> all = readAllLocked(tu, ou);
 
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             RecordRec rec = new RecordRec(
                     UUID.randomUUID().toString(),
                     lbl,
@@ -170,7 +170,7 @@ public final class custom_object_records {
             ensure(tu, ou);
             List<RecordRec> all = readAllLocked(tu, ou);
             ArrayList<RecordRec> out = new ArrayList<RecordRec>(all.size());
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             LinkedHashMap<String, String> sanitizedValues = sanitizeFieldValues(values);
 
             for (int i = 0; i < all.size(); i++) {
@@ -231,7 +231,7 @@ public final class custom_object_records {
             ensure(tu, ou);
             List<RecordRec> all = readAllLocked(tu, ou);
             ArrayList<RecordRec> out = new ArrayList<RecordRec>(all.size());
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
 
             for (int i = 0; i < all.size(); i++) {
                 RecordRec r = all.get(i);
@@ -342,7 +342,7 @@ public final class custom_object_records {
         Path p = recordsPath(tenantUuid, objectUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(4096);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<customObjectRecords object_uuid=\"").append(xmlAttr(objectUuid)).append("\" updated=\"").append(xmlAttr(now)).append("\">\n");

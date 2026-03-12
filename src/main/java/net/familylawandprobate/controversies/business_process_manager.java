@@ -600,6 +600,15 @@ public final class business_process_manager {
                         "value.*", "values.*", "override.*", "overrides.*", "on_error")
         ));
         out.add(actionDescriptor(
+                "assembly_to_document_version",
+                "Attach assembled output to a document part/version, optionally creating the part.",
+                false,
+                List.of("matter_uuid", "document_uuid"),
+                List.of("assembly_uuid", "part_uuid", "part_label", "part_type", "part_sequence",
+                        "part_confidentiality", "part_author", "part_notes", "version_label", "source",
+                        "mime_type", "created_by", "notes", "make_current", "on_error")
+        ));
+        out.add(actionDescriptor(
                 "notice_communication",
                 "Queue or send an outbound legal notice email.",
                 false,
@@ -852,7 +861,7 @@ public final class business_process_manager {
         int runningCutoffMinutes = Math.max(1, Math.min(43200, runningStaleMinutes));
         int reviewCutoffMinutes = Math.max(1, Math.min(43200, reviewStaleMinutes));
         int max = Math.max(1, Math.min(2000, limit));
-        Instant now = Instant.now();
+        Instant now = app_clock.now();
 
         ReentrantReadWriteLock lock = lockFor(tu);
         lock.readLock().lock();
@@ -2556,6 +2565,11 @@ public final class business_process_manager {
                 }
             }
 
+            String userUuid = resolveTemplate(step.settings.get("user_uuid"), context).trim();
+            if (userUuid.isBlank()) userUuid = safe(exec.actorUserUuid).trim();
+            String userEmail = resolveTemplate(step.settings.get("user_email"), context).trim();
+            assembly_identity_tokens.addUserIdentityTokens(mergeValues, exec.tenantUuid, userUuid, userEmail, "");
+
             document_assembler.AssembledFile assembled = new document_assembler().assemble(templateBytes, templateExtOrName, mergeValues);
             String templateLabel = resolveTemplate(step.settings.get("template_label"), context).trim();
             if (templateLabel.isBlank()) templateLabel = safe(template.label).trim();
@@ -2564,9 +2578,6 @@ public final class business_process_manager {
             String requestedFileName = resolveTemplate(step.settings.get("output_file_name"), context).trim();
             String outputName = suggestOutputFileName(requestedFileName, templateLabel, assembled == null ? "" : assembled.extension);
             String preferredAssemblyUuid = resolveTemplate(step.settings.get("assembly_uuid"), context).trim();
-            String userUuid = resolveTemplate(step.settings.get("user_uuid"), context).trim();
-            if (userUuid.isBlank()) userUuid = safe(exec.actorUserUuid).trim();
-            String userEmail = resolveTemplate(step.settings.get("user_email"), context).trim();
 
             assembled_forms.AssemblyRec rec = assembled_forms.defaultStore().markCompleted(
                     exec.tenantUuid,
@@ -2592,6 +2603,134 @@ public final class business_process_manager {
             context.put("vars.last_document_assembly_status", "completed");
 
             return StepOutcome.continueWithMessage("Document assembled: " + safe(rec.outputFileName));
+        });
+
+        handlers.put("assembly_to_document_version", (exec, step, context) -> {
+            String matterUuid = resolveTemplate(step.settings.get("matter_uuid"), context).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("event.matter_uuid")).trim();
+            if (matterUuid.isBlank()) matterUuid = safe(context.get("vars.last_matter_uuid")).trim();
+            if (matterUuid.isBlank()) throw new IllegalArgumentException("matter_uuid is required for assembly_to_document_version.");
+
+            String docUuid = resolveTemplate(step.settings.get("document_uuid"), context).trim();
+            if (docUuid.isBlank()) docUuid = safe(context.get("event.doc_uuid")).trim();
+            if (docUuid.isBlank()) docUuid = safe(context.get("event.document_uuid")).trim();
+            if (docUuid.isBlank()) docUuid = safe(context.get("vars.last_document_uuid")).trim();
+            if (docUuid.isBlank()) throw new IllegalArgumentException("document_uuid is required for assembly_to_document_version.");
+
+            String assemblyUuid = resolveTemplate(step.settings.get("assembly_uuid"), context).trim();
+            if (assemblyUuid.isBlank()) assemblyUuid = safe(context.get("vars.last_assembly_uuid")).trim();
+            if (assemblyUuid.isBlank()) assemblyUuid = safe(context.get("event.assembly_uuid")).trim();
+            if (assemblyUuid.isBlank()) throw new IllegalArgumentException("assembly_uuid is required for assembly_to_document_version.");
+
+            assembled_forms assembledStore = assembled_forms.defaultStore();
+            assembled_forms.AssemblyRec assembly = assembledStore.getByUuid(exec.tenantUuid, matterUuid, assemblyUuid);
+            if (assembly == null) throw new IllegalArgumentException("Assembled output not found for assembly_to_document_version.");
+
+            byte[] outputBytes = assembledStore.readOutputBytes(exec.tenantUuid, matterUuid, assemblyUuid);
+            if (outputBytes == null || outputBytes.length == 0) {
+                throw new IllegalArgumentException("Assembled output file is unavailable for assembly_to_document_version.");
+            }
+
+            String partUuid = resolveTemplate(step.settings.get("part_uuid"), context).trim();
+            document_parts parts = document_parts.defaultStore();
+            document_parts.PartRec part;
+            if (partUuid.isBlank()) {
+                String partLabel = resolveTemplate(step.settings.get("part_label"), context).trim();
+                if (partLabel.isBlank()) partLabel = safe(assembly.templateLabel).trim();
+                if (partLabel.isBlank()) partLabel = safe(assembly.outputFileName).trim();
+                if (partLabel.isBlank()) partLabel = "Assembled Output";
+
+                String partType = resolveTemplate(step.settings.get("part_type"), context).trim();
+                if (partType.isBlank()) partType = "attachment";
+                String partSequence = resolveTemplate(step.settings.get("part_sequence"), context).trim();
+                String partConfidentiality = resolveTemplate(step.settings.get("part_confidentiality"), context).trim();
+                String partAuthor = resolveTemplate(step.settings.get("part_author"), context).trim();
+                if (partAuthor.isBlank()) partAuthor = safe(exec.actorUserUuid).trim();
+                String partNotes = resolveTemplate(step.settings.get("part_notes"), context).trim();
+
+                part = parts.create(
+                        exec.tenantUuid,
+                        matterUuid,
+                        docUuid,
+                        partLabel,
+                        partType,
+                        partSequence,
+                        partConfidentiality,
+                        partAuthor,
+                        partNotes
+                );
+                partUuid = safe(part == null ? "" : part.uuid).trim();
+            } else {
+                part = parts.get(exec.tenantUuid, matterUuid, docUuid, partUuid);
+                if (part == null) throw new IllegalArgumentException("Part not found for assembly_to_document_version.");
+                if (part.trashed) throw new IllegalArgumentException("Part is trashed for assembly_to_document_version.");
+            }
+            if (partUuid.isBlank()) throw new IllegalStateException("Unable to resolve document part for assembly_to_document_version.");
+
+            String outputExt = normalizeExtension(safe(assembly.outputFileExt));
+            if (outputExt.isBlank()) outputExt = normalizeExtension(safe(assembly.templateExt));
+            if (outputExt.isBlank()) outputExt = extensionFromFileName(safe(assembly.outputFileName));
+            if (outputExt.isBlank()) outputExt = "bin";
+
+            String assembledOutputName = safe(assembly.outputFileName).trim();
+            if (assembledOutputName.isBlank()) assembledOutputName = "assembled." + outputExt;
+            String outputFileName = suggestOutputFileName(assembledOutputName, safe(assembly.templateLabel), outputExt);
+
+            Path partFolder = parts.partFolder(exec.tenantUuid, matterUuid, docUuid, partUuid);
+            if (partFolder == null) throw new IllegalArgumentException("Part folder unavailable for assembly_to_document_version.");
+            Path outputDir = partFolder.resolve("version_files");
+            Files.createDirectories(outputDir);
+            Path outputPath = outputDir.resolve(UUID.randomUUID().toString().replace("-", "_") + "__" + outputFileName);
+            Files.write(outputPath, outputBytes);
+
+            String versionLabel = resolveTemplate(step.settings.get("version_label"), context).trim();
+            if (versionLabel.isBlank()) {
+                versionLabel = safe(assembly.templateLabel).trim();
+                if (versionLabel.isBlank()) versionLabel = stripExtension(outputFileName);
+                if (versionLabel.isBlank()) versionLabel = "Assembled Output";
+            }
+
+            String source = resolveTemplate(step.settings.get("source"), context).trim();
+            if (source.isBlank()) source = "assembled_form:" + assemblyUuid;
+            String mimeType = resolveTemplate(step.settings.get("mime_type"), context).trim();
+            if (mimeType.isBlank()) mimeType = mimeTypeForExtension(outputExt);
+
+            String createdBy = resolveTemplate(step.settings.get("created_by"), context).trim();
+            if (createdBy.isBlank()) createdBy = safe(assembly.userEmail).trim();
+            if (createdBy.isBlank()) createdBy = safe(assembly.userUuid).trim();
+            if (createdBy.isBlank()) createdBy = safe(exec.actorUserUuid).trim();
+
+            String notes = resolveTemplate(step.settings.get("notes"), context).trim();
+            if (notes.isBlank()) notes = "Created from assembled form " + assemblyUuid;
+
+            boolean makeCurrent = parseBool(resolveTemplate(step.settings.get("make_current"), context), true);
+            String checksum = sha256Hex(outputBytes);
+            part_versions.VersionRec created = part_versions.defaultStore().create(
+                    exec.tenantUuid,
+                    matterUuid,
+                    docUuid,
+                    partUuid,
+                    versionLabel,
+                    source,
+                    mimeType,
+                    checksum,
+                    String.valueOf(outputBytes.length),
+                    outputPath.toUri().toString(),
+                    createdBy,
+                    notes,
+                    makeCurrent
+            );
+
+            context.put("vars.last_matter_uuid", matterUuid);
+            context.put("vars.last_document_uuid", docUuid);
+            context.put("vars.last_part_uuid", partUuid);
+            context.put("vars.last_version_uuid", safe(created == null ? "" : created.uuid));
+            context.put("vars.last_version_label", safe(created == null ? versionLabel : created.versionLabel));
+            context.put("vars.last_version_storage_path", safe(created == null ? outputPath.toUri().toString() : created.storagePath));
+            context.put("vars.last_assembly_uuid", assemblyUuid);
+            context.put("vars.last_assembly_to_document_status", "completed");
+
+            return StepOutcome.continueWithMessage("Assembly output attached as version " + safe(created == null ? "" : created.uuid));
         });
 
         handlers.put("notice_communication", (exec, step, context) -> {
@@ -2942,7 +3081,7 @@ public final class business_process_manager {
             if (title.isBlank()) throw new IllegalArgumentException("title is required for court_filing_service.");
 
             String dueAt = resolveTemplate(step.settings.get("due_at"), context).trim();
-            if (dueAt.isBlank()) dueAt = Instant.now().plusSeconds(86400L).toString();
+            if (dueAt.isBlank()) dueAt = app_clock.now().plusSeconds(86400L).toString();
 
             int estimateMinutes = parseInt(resolveTemplate(step.settings.get("estimate_minutes"), context).trim(), 60);
             if (estimateMinutes <= 0) estimateMinutes = 60;
@@ -3146,7 +3285,7 @@ public final class business_process_manager {
             if (title.isBlank()) throw new IllegalArgumentException("title is required for escalation.");
 
             String dueAt = resolveTemplate(step.settings.get("due_at"), context).trim();
-            if (dueAt.isBlank()) dueAt = Instant.now().plusSeconds(4L * 3600L).toString();
+            if (dueAt.isBlank()) dueAt = app_clock.now().plusSeconds(4L * 3600L).toString();
             int estimateMinutes = parseInt(resolveTemplate(step.settings.get("estimate_minutes"), context).trim(), 30);
             if (estimateMinutes <= 0) estimateMinutes = 30;
 
@@ -4093,6 +4232,20 @@ public final class business_process_manager {
         }
     }
 
+    private static String sha256Hex(byte[] raw) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(raw == null ? new byte[0] : raw);
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(String.format(Locale.ROOT, "%02x", Integer.valueOf(b & 0xff)));
+            }
+            return sb.toString();
+        } catch (Exception ex) {
+            return "";
+        }
+    }
+
     private static String normalizeComparable(String raw) {
         String s = safe(raw).trim().toLowerCase(Locale.ROOT);
         if (s.isBlank()) return "";
@@ -4208,6 +4361,8 @@ public final class business_process_manager {
         putToken(out, "async_sync_enabled", async ? "true" : "false");
         putToken(out, "kv.async_sync_enabled", async ? "true" : "false");
 
+        assembly_identity_tokens.addTenantIdentityTokens(out, tenantUuid, "", tenantKv);
+
         return out;
     }
 
@@ -4255,10 +4410,43 @@ public final class business_process_manager {
         v = v.replaceAll("[^A-Za-z0-9.]", "_");
         if (v.isBlank()) v = "assembled";
         if (!v.contains(".")) {
-            String e = safe(ext).trim().toLowerCase(Locale.ROOT);
+            String e = normalizeExtension(ext);
             if (!e.isBlank()) v = v + "." + e;
         }
         return v;
+    }
+
+    private static String normalizeExtension(String raw) {
+        String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+        if (v.startsWith(".")) v = v.substring(1);
+        v = v.replaceAll("[^a-z0-9]", "");
+        if (v.length() > 12) v = v.substring(0, 12);
+        return v;
+    }
+
+    private static String extensionFromFileName(String fileName) {
+        String v = safe(fileName).trim();
+        int dot = v.lastIndexOf('.');
+        if (dot < 0 || dot + 1 >= v.length()) return "";
+        return normalizeExtension(v.substring(dot + 1));
+    }
+
+    private static String stripExtension(String fileName) {
+        String v = safe(fileName).trim();
+        int dot = v.lastIndexOf('.');
+        if (dot <= 0) return v;
+        return v.substring(0, dot);
+    }
+
+    private static String mimeTypeForExtension(String ext) {
+        String e = normalizeExtension(ext);
+        if ("pdf".equals(e)) return "application/pdf";
+        if ("docx".equals(e)) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        if ("doc".equals(e)) return "application/msword";
+        if ("rtf".equals(e)) return "application/rtf";
+        if ("odt".equals(e)) return "application/vnd.oasis.opendocument.text";
+        if ("txt".equals(e)) return "text/plain; charset=UTF-8";
+        return "application/octet-stream";
     }
 
     private static RunHealthIssue baseRunIssue(RunResult run) {
@@ -5049,14 +5237,14 @@ public final class business_process_manager {
     private static long ageMinutes(String startedAt, Instant now) {
         Instant start = parseInstant(startedAt);
         if (start == null) return -1L;
-        Instant ref = now == null ? Instant.now() : now;
+        Instant ref = now == null ? app_clock.now() : now;
         long seconds = ref.getEpochSecond() - start.getEpochSecond();
         if (seconds < 0) return 0L;
         return seconds / 60L;
     }
 
     private static String nowIso() {
-        return Instant.now().toString();
+        return app_clock.now().toString();
     }
 
     private static String safe(String s) {

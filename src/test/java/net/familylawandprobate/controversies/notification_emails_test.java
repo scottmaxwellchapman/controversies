@@ -16,6 +16,7 @@ import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class notification_emails_test {
@@ -170,6 +171,150 @@ public class notification_emails_test {
         }
     }
 
+    @Test
+    void enqueue_rejects_local_attachment_outside_tenant_directory() throws Exception {
+        String tenantUuid = "tenant-email-scope-" + UUID.randomUUID();
+        String matterUuid = "matter-email-scope-" + UUID.randomUUID();
+        Path tenantRoot = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();
+        Path outsideFile = Paths.get("data", "outside-email-attachment-" + UUID.randomUUID() + ".txt").toAbsolutePath();
+        deleteQuietly(tenantRoot);
+        deleteQuietly(outsideFile);
+
+        try {
+            ensurePepper();
+            Files.createDirectories(outsideFile.getParent());
+            Files.writeString(outsideFile, "outside tenant", StandardCharsets.UTF_8);
+
+            tenant_settings settingsStore = tenant_settings.defaultStore();
+            settingsStore.write(tenantUuid, Map.of(
+                    "email_provider", "smtp",
+                    "email_from_address", "notify@example.com",
+                    "email_smtp_host", "smtp.example.test",
+                    "email_smtp_port", "587",
+                    "email_smtp_auth", "false",
+                    "email_queue_max_attempts", "3"
+            ));
+
+            notification_emails queue = new notification_emails(
+                    settingsStore,
+                    new StorageBackendResolver(),
+                    activity_log.defaultStore(),
+                    (job, cfg, atts) -> new notification_emails.SendResult(250, "noop", "250 queued"),
+                    (job, cfg, atts) -> new notification_emails.SendResult(202, "", "202 accepted"),
+                    false
+            );
+
+            IllegalArgumentException ex = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> queue.enqueue(
+                            tenantUuid,
+                            "user-1",
+                            new notification_emails.NotificationEmailRequest(
+                                    matterUuid,
+                                    "",
+                                    "",
+                                    "",
+                                    "Attachment Scope",
+                                    "Reject outside local paths",
+                                    "",
+                                    List.of("recipient@example.com"),
+                                    List.of(),
+                                    List.of(),
+                                    List.of(notification_emails.AttachmentSpec.localFile(
+                                            outsideFile.toString(),
+                                            "outside.txt",
+                                            "text/plain"
+                                    ))
+                            )
+                    )
+            );
+            assertTrue(ex.getMessage().contains("within tenant data directory"));
+        } finally {
+            deleteQuietly(tenantRoot);
+            deleteQuietly(outsideFile);
+        }
+    }
+
+    @Test
+    void retry_rejects_tampered_attachment_path_outside_tenant_queue_scope() throws Exception {
+        String tenantUuid = "tenant-email-tamper-" + UUID.randomUUID();
+        String matterUuid = "matter-email-tamper-" + UUID.randomUUID();
+        String otherTenant = "tenant-email-other-" + UUID.randomUUID();
+        Path tenantRoot = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();
+        Path otherTenantFile = Paths.get("data", "tenants", otherTenant, "sync", "secret.txt").toAbsolutePath();
+        deleteQuietly(tenantRoot);
+        deleteQuietly(otherTenantFile);
+
+        try {
+            ensurePepper();
+            Files.createDirectories(otherTenantFile.getParent());
+            Files.writeString(otherTenantFile, "cross-tenant", StandardCharsets.UTF_8);
+
+            tenant_settings settingsStore = tenant_settings.defaultStore();
+            settingsStore.write(tenantUuid, Map.of(
+                    "email_provider", "smtp",
+                    "email_from_address", "notify@example.com",
+                    "email_smtp_host", "smtp.example.test",
+                    "email_smtp_port", "587",
+                    "email_smtp_auth", "false",
+                    "email_queue_max_attempts", "1"
+            ));
+
+            notification_emails queue = new notification_emails(
+                    settingsStore,
+                    new StorageBackendResolver(),
+                    activity_log.defaultStore(),
+                    (job, cfg, atts) -> new notification_emails.SendResult(250, "noop", "250 queued"),
+                    (job, cfg, atts) -> new notification_emails.SendResult(202, "", "202 accepted"),
+                    false
+            );
+
+            Path localAttachment = tenantRoot.resolve("tmp/local_note.txt");
+            Files.createDirectories(localAttachment.getParent());
+            Files.writeString(localAttachment, "local attachment", StandardCharsets.UTF_8);
+
+            String emailUuid = queue.enqueue(
+                    tenantUuid,
+                    "user-1",
+                    new notification_emails.NotificationEmailRequest(
+                            matterUuid,
+                            "",
+                            "",
+                            "",
+                            "Tamper Scope",
+                            "Body",
+                            "",
+                            List.of("recipient@example.com"),
+                            List.of(),
+                            List.of(),
+                            List.of(notification_emails.AttachmentSpec.localFile(
+                                    localAttachment.toString(),
+                                    "local_note.txt",
+                                    "text/plain"
+                            ))
+                    )
+            );
+
+            Path queuePath = Paths.get("data", "tenants", tenantUuid, "sync", "notification_email_queue.xml").toAbsolutePath();
+            String xml = Files.readString(queuePath, StandardCharsets.UTF_8);
+            String tamperedXml = xml.replaceFirst(
+                    "(?s)<stored_path>.*?</stored_path>",
+                    "<stored_path>" + xmlEscape(otherTenantFile.toString()) + "</stored_path>"
+            );
+            Files.writeString(queuePath, tamperedXml, StandardCharsets.UTF_8);
+
+            boolean retried = queue.retryNow(tenantUuid, emailUuid);
+            assertTrue(retried);
+
+            String after = Files.readString(queuePath, StandardCharsets.UTF_8);
+            assertTrue(after.contains("<state>dead_letter</state>"));
+            assertTrue(after.contains("outside tenant queue scope"));
+        } finally {
+            deleteQuietly(tenantRoot);
+            deleteQuietly(otherTenantFile);
+        }
+    }
+
     private static void ensurePepper() throws Exception {
         Path pepper = Paths.get("data", "sec", "random_pepper.bin").toAbsolutePath();
         Files.createDirectories(pepper.getParent());
@@ -187,5 +332,13 @@ public class notification_emails_test {
         } catch (Exception ignored) {
         }
     }
-}
 
+    private static String xmlEscape(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&apos;");
+    }
+}

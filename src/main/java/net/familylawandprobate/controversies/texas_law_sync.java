@@ -125,7 +125,7 @@ public final class texas_law_sync {
 
     private void scheduleNextRun(String reason) {
         synchronized (scheduleLock) {
-            ZonedDateTime now = ZonedDateTime.now(SCHEDULE_ZONE);
+            ZonedDateTime now = app_clock.now(SCHEDULE_ZONE);
             ZonedDateTime next = now
                     .withHour(DAILY_RUN_TIME.getHour())
                     .withMinute(DAILY_RUN_TIME.getMinute())
@@ -153,7 +153,7 @@ public final class texas_law_sync {
     }
 
     private void runSyncCycle(String trigger) {
-        Instant startedAt = Instant.now();
+        Instant startedAt = app_clock.now();
         int rulesExit = -1;
         int codesExit = -1;
         String error = "";
@@ -170,7 +170,7 @@ public final class texas_law_sync {
             error = safe(ex.getMessage());
             LOG.log(Level.SEVERE, "Texas law sync cycle failed (" + trigger + "): " + error, ex);
         } finally {
-            Instant completedAt = Instant.now();
+            Instant completedAt = app_clock.now();
             long durationMs = Math.max(0L, Duration.between(startedAt, completedAt).toMillis());
             updateStatusForCompletion(trigger, startedAt, completedAt, rulesExit, codesExit, error);
             logSyncCycleToActivityLogs(trigger, rulesExit, codesExit, error, durationMs);

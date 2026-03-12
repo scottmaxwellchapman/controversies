@@ -388,7 +388,7 @@
         response.sendError(400, "No contacts available to export.");
         return;
       }
-      String stamp = String.valueOf(Instant.now().toEpochMilli());
+      String stamp = String.valueOf(net.familylawandprobate.controversies.app_clock.now().toEpochMilli());
       String name = "export_vcard_all".equals(reqAction) ? ("contacts-all-" + stamp + ".vcf") : ("contacts-filtered-" + stamp + ".vcf");
       writeVCardDownload(response, name, contact_vcards.exportMany(rows));
       return;

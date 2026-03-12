@@ -182,7 +182,7 @@ public final class external_storage_data_sync {
     private BackupResult backupInternal(SourceConfig cfg, boolean force) throws Exception {
         synchronized (lock) {
             SnapshotInfo latest = readLatestSnapshot(cfg);
-            Instant now = Instant.now();
+            Instant now = app_clock.now();
             Instant last = parseInstantSafe(latest.completedAt);
             if (!force && last != null && now.isBefore(last.plus(DEFAULT_MIN_SYNC_INTERVAL))) {
                 return BackupResult.skipped(
@@ -280,7 +280,7 @@ public final class external_storage_data_sync {
             if (dataParent == null) throw new IllegalStateException("Unable to determine data directory parent.");
             Files.createDirectories(dataParent);
             boolean dataExisted = Files.exists(dataRoot);
-            String stamp = String.valueOf(System.currentTimeMillis());
+            String stamp = String.valueOf(app_clock.currentTimeMillis());
             Path localRollback = dataParent.resolve(dataRoot.getFileName().toString() + ".pre_restore." + stamp);
 
             try {
@@ -385,7 +385,7 @@ public final class external_storage_data_sync {
         String zipSha256 = checksumFileSha256(zipPath);
         String manifestSha256 = checksumFileSha256(manifestPath);
         String snapshotId = snapshotIdNow();
-        String createdAt = Instant.now().toString();
+        String createdAt = app_clock.now().toString();
 
         Properties meta = new Properties();
         meta.setProperty("snapshot_id", snapshotId);
@@ -686,7 +686,7 @@ public final class external_storage_data_sync {
     }
 
     private static String snapshotIdNow() {
-        return System.currentTimeMillis() + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        return app_clock.currentTimeMillis() + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
     }
 
     private static String encodeManifestPath(String path) {

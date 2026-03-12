@@ -1643,7 +1643,7 @@ public final class postal_mail {
     }
 
     private static String nowIso() {
-        return Instant.now().toString();
+        return app_clock.now().toString();
     }
 
     private static void writeTag(StringBuilder sb, String tag, String value) {

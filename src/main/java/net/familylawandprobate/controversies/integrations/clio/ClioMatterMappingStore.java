@@ -1,5 +1,7 @@
 package net.familylawandprobate.controversies.integrations.clio;
 
+import net.familylawandprobate.controversies.app_clock;
+
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -60,7 +62,7 @@ public final class ClioMatterMappingStore {
     private void write(String tenantUuid, Map<String, String> mappings) throws Exception {
         Path p = path(tenantUuid);
         Files.createDirectories(p.getParent());
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder();
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<clio_matter_mappings updated=\"").append(xml(now)).append("\">\n");

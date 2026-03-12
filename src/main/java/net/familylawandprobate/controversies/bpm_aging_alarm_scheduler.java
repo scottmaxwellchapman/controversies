@@ -97,7 +97,7 @@ public final class bpm_aging_alarm_scheduler {
         int reviewStaleMinutes = clampInt(cfg.get("bpm_aging_alarm_review_stale_minutes"), DEFAULT_REVIEW_STALE_MINUTES, 1, 43200);
         int maxIssues = clampInt(cfg.get("bpm_aging_alarm_max_issues_per_scan"), DEFAULT_MAX_ISSUES, 1, 2000);
 
-        Instant now = Instant.now();
+        Instant now = app_clock.now();
         Instant due = nextRunByTenant.computeIfAbsent(tenantUuid, t -> now);
         if (now.isBefore(due)) return;
         if (!inFlightTenants.add(tenantUuid)) return;

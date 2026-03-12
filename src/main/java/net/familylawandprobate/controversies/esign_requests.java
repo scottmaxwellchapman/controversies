@@ -213,7 +213,7 @@ public final class esign_requests {
             if (file.requests == null) file.requests = new ArrayList<StoredRequestRec>();
             if (file.events == null) file.events = new ArrayList<StoredEventRec>();
 
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             StoredRequestRec row = new StoredRequestRec();
             row.request_uuid = "sig_" + UUID.randomUUID().toString().replace("-", "");
             row.provider_key = normalizeProvider(input.providerKey);
@@ -305,7 +305,7 @@ public final class esign_requests {
             StoredRequestRec row = findRequest(file, id);
             if (row == null) throw new IllegalArgumentException("Signature request not found.");
 
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             String nextStatus = normalizeStatus(status);
             row.status = nextStatus;
             if (!safe(providerRequestId).trim().isBlank()) row.provider_request_id = safe(providerRequestId).trim();
@@ -495,7 +495,7 @@ public final class esign_requests {
         Files.createDirectories(file.getParent());
         if (Files.exists(file)) return;
         FileRec empty = new FileRec();
-        empty.updated_at = Instant.now().toString();
+        empty.updated_at = app_clock.now().toString();
         writeJsonAtomic(file, empty);
     }
 
@@ -519,7 +519,7 @@ public final class esign_requests {
         if (file == null) file = new FileRec();
         if (file.requests == null) file.requests = new ArrayList<StoredRequestRec>();
         if (file.events == null) file.events = new ArrayList<StoredEventRec>();
-        if (safe(file.updated_at).trim().isBlank()) file.updated_at = Instant.now().toString();
+        if (safe(file.updated_at).trim().isBlank()) file.updated_at = app_clock.now().toString();
         writeJsonAtomic(storePath(tenantToken), file);
     }
 

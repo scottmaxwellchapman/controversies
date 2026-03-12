@@ -26,7 +26,7 @@ final class document_workflow_support {
 
     static String safe(String s) { return s == null ? "" : s; }
 
-    static String nowIso() { return Instant.now().toString(); }
+    static String nowIso() { return app_clock.now().toString(); }
 
     static String normalizeToken(String token) {
         String k = safe(token).trim().toLowerCase(Locale.ROOT);

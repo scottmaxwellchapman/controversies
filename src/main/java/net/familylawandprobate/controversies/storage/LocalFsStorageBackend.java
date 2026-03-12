@@ -10,19 +10,32 @@ import java.util.Map;
 
 public final class LocalFsStorageBackend implements DocumentStorageBackend {
     private final Path root;
+    private final Path objectRoot;
+    private final boolean dedupLinksEnabled;
 
     public LocalFsStorageBackend(String tenantUuid, String matterUuid) {
-        this.root = Paths.get("data", "tenants", safeFileToken(tenantUuid), "matters", safeFileToken(matterUuid), "assembled", "files").toAbsolutePath();
+        this(tenantUuid, matterUuid, true);
+    }
+
+    public LocalFsStorageBackend(String tenantUuid, String matterUuid, boolean dedupLinksEnabled) {
+        String tenantToken = safeFileToken(tenantUuid);
+        this.root = Paths.get("data", "tenants", tenantToken, "matters", safeFileToken(matterUuid), "assembled", "files").toAbsolutePath();
+        this.objectRoot = Paths.get("data", "tenants", tenantToken, "dedup_objects").toAbsolutePath();
+        this.dedupLinksEnabled = dedupLinksEnabled;
     }
 
     @Override
     public String put(String key, byte[] bytes) throws Exception {
         String normalized = normalizeKey(key);
         Path p = pathFor(normalized);
-        Files.createDirectories(p.getParent());
         byte[] src = bytes == null ? new byte[0] : bytes;
-        Files.write(p, src, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        verifyWriteIntegrity(p, src);
+        if (dedupLinksEnabled) {
+            DeduplicatedFileStore.write(p, src, objectRoot);
+        } else {
+            Files.createDirectories(p.getParent());
+            Files.write(p, src, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            verifyWriteIntegrity(p, src);
+        }
         return normalized;
     }
 

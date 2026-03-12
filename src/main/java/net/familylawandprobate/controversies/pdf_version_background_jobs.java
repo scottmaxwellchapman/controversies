@@ -45,12 +45,12 @@ public final class pdf_version_background_jobs {
     }
 
     public boolean isPdfSandwichAvailable() {
-        long now = System.currentTimeMillis();
+        long now = app_clock.currentTimeMillis();
         if (now - pdfsandwichCheckedAtMs <= PDFSANDWICH_AVAILABILITY_CACHE_MS) {
             return pdfsandwichAvailable;
         }
         synchronized (availabilityLock) {
-            now = System.currentTimeMillis();
+            now = app_clock.currentTimeMillis();
             if (now - pdfsandwichCheckedAtMs <= PDFSANDWICH_AVAILABILITY_CACHE_MS) {
                 return pdfsandwichAvailable;
             }

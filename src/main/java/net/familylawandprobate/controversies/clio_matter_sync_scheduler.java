@@ -93,7 +93,7 @@ public final class clio_matter_sync_scheduler {
         if (safe(cfg.get("clio_access_token")).isBlank()) return;
 
         int intervalMinutes = parseIntervalMinutes(cfg.get("clio_matters_sync_interval_minutes"));
-        Instant now = Instant.now();
+        Instant now = app_clock.now();
         Instant due = nextRunByTenant.computeIfAbsent(tenantUuid, t -> now);
         if (now.isBefore(due)) return;
         if (!inFlightTenants.add(tenantUuid)) return;

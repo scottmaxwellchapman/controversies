@@ -29,7 +29,7 @@ public final class document_taxonomy {
         Path p = taxonomyPath(tu);
         Files.createDirectories(p.getParent());
         if (!Files.exists(p)) {
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             document_workflow_support.writeAtomic(p,
                     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                   + "<document-taxonomy created=\"" + document_workflow_support.xmlText(now)
@@ -66,7 +66,7 @@ public final class document_taxonomy {
     private void write(String tenantUuid, Taxonomy tx) throws Exception {
         String tu = document_workflow_support.safe(tenantUuid).trim();
         if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder();
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<document-taxonomy updated=\"").append(document_workflow_support.xmlText(now)).append("\">\n");

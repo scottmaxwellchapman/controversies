@@ -3,6 +3,7 @@ package net.familylawandprobate.controversies;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import net.familylawandprobate.controversies.storage.CachedDocumentStorageBackend;
@@ -47,6 +48,64 @@ public class storage_backend_integrity_test {
         Map<String, String> metadata = backend.metadata(key);
         assertEquals(StorageCrypto.checksumMd5Hex(bytes), metadata.get("checksum_md5"));
         assertEquals(StorageCrypto.checksumSha256Hex(bytes), metadata.get("checksum_sha256"));
+    }
+
+    @Test
+    void dedup_links_reuse_single_object_across_local_and_external_backends() throws Exception {
+        String tenantUuid = "tenant-dedup-shared-" + UUID.randomUUID();
+        String matterUuid = "matter-dedup-shared-" + UUID.randomUUID();
+        byte[] bytes = "same-content-across-backends".getBytes(StandardCharsets.UTF_8);
+
+        LocalFsStorageBackend local = new LocalFsStorageBackend(tenantUuid, matterUuid, true);
+        FilesystemRemoteStorageBackend remote = new FilesystemRemoteStorageBackend("webdav", tenantUuid, 0, 0, true);
+
+        String localKey = local.put("checks/local-copy.txt", bytes);
+        String remoteKey = remote.put("checks/remote-copy.txt", bytes);
+
+        Path localPath = Paths.get("data", "tenants", tenantUuid, "matters", matterUuid, "assembled", "files", localKey).toAbsolutePath();
+        Path remotePath = Paths.get("data", "tenants", tenantUuid, "assembled_remote", "webdav", remoteKey).toAbsolutePath();
+        assertTrue(Files.isSameFile(localPath, remotePath));
+
+        String sha = StorageCrypto.checksumSha256Hex(bytes);
+        Path objectPath = Paths.get(
+                "data",
+                "tenants",
+                tenantUuid,
+                "dedup_objects",
+                "sha256",
+                sha.substring(0, 2),
+                sha.substring(2, 4),
+                sha + ".bin"
+        ).toAbsolutePath();
+        assertTrue(Files.exists(objectPath));
+    }
+
+    @Test
+    void dedup_write_fails_closed_when_object_integrity_is_tampered() throws Exception {
+        String tenantUuid = "tenant-dedup-tamper-" + UUID.randomUUID();
+        String matterUuid = "matter-dedup-tamper-" + UUID.randomUUID();
+        byte[] bytes = "tamper-check".getBytes(StandardCharsets.UTF_8);
+
+        LocalFsStorageBackend local = new LocalFsStorageBackend(tenantUuid, matterUuid, true);
+        local.put("checks/first.txt", bytes);
+
+        String sha = StorageCrypto.checksumSha256Hex(bytes);
+        Path objectPath = Paths.get(
+                "data",
+                "tenants",
+                tenantUuid,
+                "dedup_objects",
+                "sha256",
+                sha.substring(0, 2),
+                sha.substring(2, 4),
+                sha + ".bin"
+        ).toAbsolutePath();
+        Files.writeString(objectPath, "corrupted", StandardCharsets.UTF_8);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                local.put("checks/second.txt", bytes)
+        );
+        assertTrue(ex.getMessage().contains("dedup object integrity check failed"));
     }
 
     @Test
@@ -361,6 +420,25 @@ public class storage_backend_integrity_test {
     }
 
     @Test
+    void resolver_can_disable_dedup_links_and_keep_physical_copies_separate() throws Exception {
+        String tenantUuid = "tenant-dedup-disabled-" + UUID.randomUUID();
+        String matterUuid = "matter-dedup-disabled-" + UUID.randomUUID();
+        LinkedHashMap<String, String> settings = tenant_settings.defaultStore().read(tenantUuid);
+        settings.put("storage_backend", "local");
+        settings.put("storage_dedup_links_enabled", "false");
+        tenant_settings.defaultStore().write(tenantUuid, settings);
+
+        StorageBackendResolver resolver = new StorageBackendResolver();
+        DocumentStorageBackend local = resolver.resolve(tenantUuid, matterUuid, "local");
+        String first = local.put("checks/a.txt", "same".getBytes(StandardCharsets.UTF_8));
+        String second = local.put("checks/b.txt", "same".getBytes(StandardCharsets.UTF_8));
+
+        Path firstPath = Paths.get("data", "tenants", tenantUuid, "matters", matterUuid, "assembled", "files", first).toAbsolutePath();
+        Path secondPath = Paths.get("data", "tenants", tenantUuid, "matters", matterUuid, "assembled", "files", second).toAbsolutePath();
+        assertFalse(Files.isSameFile(firstPath, secondPath));
+    }
+
+    @Test
     void onedrive_business_backend_works_with_tenant_managed_encryption() throws Exception {
         String tenantUuid = "tenant-" + UUID.randomUUID();
         String matterUuid = "matter-" + UUID.randomUUID();
@@ -382,6 +460,74 @@ public class storage_backend_integrity_test {
         byte[] stored = remote.get(key);
         assertFalse(Arrays.equals(plaintext, stored));
         assertEquals("onedrive encrypted payload", new String(backend.get(key), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void local_dedup_with_tenant_managed_encryption_stores_ciphertext_and_reads_plaintext() throws Exception {
+        String tenantUuid = "tenant-encrypted-local-" + UUID.randomUUID();
+        String matterUuid = "matter-encrypted-local-" + UUID.randomUUID();
+        LinkedHashMap<String, String> settings = tenant_settings.defaultStore().read(tenantUuid);
+        settings.put("storage_backend", "local");
+        settings.put("storage_encryption_mode", "tenant_managed");
+        settings.put("storage_encryption_key", "tenant-key-local-123");
+        settings.put("storage_dedup_links_enabled", "true");
+        tenant_settings.defaultStore().write(tenantUuid, settings);
+
+        StorageBackendResolver resolver = new StorageBackendResolver();
+        DocumentStorageBackend encrypted = resolver.resolve(tenantUuid, matterUuid, "local");
+        LocalFsStorageBackend rawLocal = new LocalFsStorageBackend(tenantUuid, matterUuid, true);
+
+        byte[] plaintext = "local encrypted payload".getBytes(StandardCharsets.UTF_8);
+        String key = encrypted.put("checks/encrypted-local.txt", plaintext);
+        byte[] stored = rawLocal.get(key);
+
+        assertFalse(Arrays.equals(plaintext, stored));
+        assertTrue(stored.length >= 4);
+        assertEquals("CVE1", new String(Arrays.copyOfRange(stored, 0, 4), StandardCharsets.UTF_8));
+        assertEquals("local encrypted payload", new String(encrypted.get(key), StandardCharsets.UTF_8));
+
+        String sha = StorageCrypto.checksumSha256Hex(stored);
+        Path objectPath = Paths.get(
+                "data",
+                "tenants",
+                tenantUuid,
+                "dedup_objects",
+                "sha256",
+                sha.substring(0, 2),
+                sha.substring(2, 4),
+                sha + ".bin"
+        ).toAbsolutePath();
+        assertTrue(Files.exists(objectPath));
+    }
+
+    @Test
+    void local_dedup_encrypted_blob_tamper_fails_on_read() throws Exception {
+        String tenantUuid = "tenant-encrypted-tamper-" + UUID.randomUUID();
+        String matterUuid = "matter-encrypted-tamper-" + UUID.randomUUID();
+        LinkedHashMap<String, String> settings = tenant_settings.defaultStore().read(tenantUuid);
+        settings.put("storage_backend", "local");
+        settings.put("storage_encryption_mode", "tenant_managed");
+        settings.put("storage_encryption_key", "tenant-key-tamper-123");
+        settings.put("storage_dedup_links_enabled", "true");
+        tenant_settings.defaultStore().write(tenantUuid, settings);
+
+        StorageBackendResolver resolver = new StorageBackendResolver();
+        DocumentStorageBackend encrypted = resolver.resolve(tenantUuid, matterUuid, "local");
+        String key = encrypted.put("checks/encrypted-tamper.txt", "sensitive".getBytes(StandardCharsets.UTF_8));
+
+        Path refPath = Paths.get(
+                "data",
+                "tenants",
+                tenantUuid,
+                "matters",
+                matterUuid,
+                "assembled",
+                "files",
+                key
+        ).toAbsolutePath();
+        Files.write(refPath, "tampered".getBytes(StandardCharsets.UTF_8));
+
+        assertThrows(Exception.class, () -> encrypted.get(key));
     }
 
     @Test

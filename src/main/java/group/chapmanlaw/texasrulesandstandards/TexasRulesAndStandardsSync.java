@@ -1,5 +1,7 @@
 package group.chapmanlaw.texasrulesandstandards;
 
+import net.familylawandprobate.controversies.app_clock;
+
 import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
@@ -879,7 +881,7 @@ public class TexasRulesAndStandardsSync {
         updatedMetadata.setProperty("tracked.count", Integer.toString(ids.size()));
         updatedMetadata.setProperty("source.page", SOURCE_PAGE_URI.toString());
         updatedMetadata.setProperty("source.pages", joinUris(TRACKED_SOURCE_PAGE_URIS));
-        updatedMetadata.setProperty("source.lastCheckedAt", Instant.now().toString());
+        updatedMetadata.setProperty("source.lastCheckedAt", app_clock.now().toString());
 
         return new SyncStats(downloaded, updated, skipped, failed, updatedDocumentIds);
     }
@@ -1209,7 +1211,7 @@ public class TexasRulesAndStandardsSync {
         setOptionalProperty(
                 updatedMetadata,
                 "combined.new.lastBuiltAt",
-                combinedBuild.builtCombinedNew() ? Instant.now().toString() : previousMetadata.getProperty("combined.new.lastBuiltAt")
+                combinedBuild.builtCombinedNew() ? app_clock.now().toString() : previousMetadata.getProperty("combined.new.lastBuiltAt")
         );
 
         if (retainPreviousEnabled) {
@@ -1223,7 +1225,7 @@ public class TexasRulesAndStandardsSync {
                     updatedMetadata,
                     "combined.previous.lastBuiltAt",
                     combinedBuild.builtCombinedPrevious()
-                            ? Instant.now().toString()
+                            ? app_clock.now().toString()
                             : previousMetadata.getProperty("combined.previous.lastBuiltAt")
             );
         } else {
@@ -1356,7 +1358,7 @@ public class TexasRulesAndStandardsSync {
                 byte[] textBytes = extractPdfTextWithPageMarkers(pdfBytes).getBytes(StandardCharsets.UTF_8);
                 storageEngine.write(textFileName, textBytes);
                 textMd5 = md5Hex(textBytes);
-                updatedMetadata.setProperty(metadataPrefix + ".lastExtractedAt", Instant.now().toString());
+                updatedMetadata.setProperty(metadataPrefix + ".lastExtractedAt", app_clock.now().toString());
             } else {
                 textMd5 = firstNonBlank(previousTextMd5, computeStoredMd5IfPresent(storageEngine, textFileName));
                 setOptionalProperty(updatedMetadata, metadataPrefix + ".lastExtractedAt", previousLastExtractedAt);
@@ -1539,7 +1541,7 @@ public class TexasRulesAndStandardsSync {
         json.append("\"lastAmended\":\"").append(escapeJson(safeValue(document.lastAmendedRaw()))).append("\",");
         json.append("\"md5\":\"").append(escapeJson(safeValue(md5NewVersion))).append("\",");
         json.append("\"fileSizeBytes\":").append(fileSizeBytes).append(",");
-        json.append("\"downloadedAt\":\"").append(escapeJson(Instant.now().toString())).append("\"");
+        json.append("\"downloadedAt\":\"").append(escapeJson(app_clock.now().toString())).append("\"");
         json.append("}");
         return json.toString();
     }
@@ -1620,7 +1622,7 @@ public class TexasRulesAndStandardsSync {
         setOptionalProperty(metadata, metadataPrefix + "md5.new", md5NewChecksum);
         setOptionalProperty(metadata, metadataPrefix + "md5.previous", retainPreviousEnabled ? md5PreviousChecksum : null);
         setOptionalProperty(metadata, metadataPrefix + "md5", md5NewChecksum);
-        metadata.setProperty(metadataPrefix + "lastSyncedAt", Instant.now().toString());
+        metadata.setProperty(metadataPrefix + "lastSyncedAt", app_clock.now().toString());
         metadata.remove(metadataPrefix + "lastAttemptFailedAt");
     }
 
@@ -1663,7 +1665,7 @@ public class TexasRulesAndStandardsSync {
             updatedMetadata.remove(metadataPrefix + "md5.previous");
         }
 
-        updatedMetadata.setProperty(metadataPrefix + "lastAttemptFailedAt", Instant.now().toString());
+        updatedMetadata.setProperty(metadataPrefix + "lastAttemptFailedAt", app_clock.now().toString());
     }
 
     private static Element findHeadingByText(Document document, String headingText) {
@@ -2427,7 +2429,7 @@ public class TexasRulesAndStandardsSync {
         public void write(String fileName, byte[] bytes) throws IOException {
             String targetPath = remotePath(fileName);
             String parentDirectoryPath = parentDirectory(targetPath);
-            String tempPath = targetPath + ".tmp-" + Instant.now().toEpochMilli();
+            String tempPath = targetPath + ".tmp-" + app_clock.now().toEpochMilli();
             try {
                 ensureRemoteDirectory(channel, parentDirectoryPath);
             } catch (SftpException ex) {

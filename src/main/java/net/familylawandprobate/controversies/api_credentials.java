@@ -159,7 +159,7 @@ public final class api_credentials {
             FileRec rec = readLocked(tu);
             if (rec.credentials == null) rec.credentials = new ArrayList<StoredRec>();
 
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             String credentialId = "cred_" + randomToken(9);
             String apiKey = "trs_" + randomToken(12);
             String apiSecret = "sec_" + randomToken(24);
@@ -250,7 +250,7 @@ public final class api_credentials {
             }
 
             if (changed) {
-                rec.updated_at = Instant.now().toString();
+                rec.updated_at = app_clock.now().toString();
                 writeLocked(tu, rec);
             }
             return changed;
@@ -288,7 +288,7 @@ public final class api_credentials {
             target.secret_hash = hashSecret(tu, apiKey, apiSecret);
             target.last_used_at = "";
             target.last_used_from_ip = "";
-            rec.updated_at = Instant.now().toString();
+            rec.updated_at = app_clock.now().toString();
             writeLocked(tu, rec);
 
             return new GeneratedCredential(toPublic(target), apiKey, apiSecret);
@@ -319,7 +319,7 @@ public final class api_credentials {
                 }
             }
             if (changed) {
-                rec.updated_at = Instant.now().toString();
+                rec.updated_at = app_clock.now().toString();
                 writeLocked(tu, rec);
             }
             return changed;
@@ -345,7 +345,7 @@ public final class api_credentials {
                 return new VerificationResult(false, tu, "", "", "");
             }
 
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             String providedHash = hashSecret(tu, key, secret);
 
             StoredRec matched = null;
@@ -392,7 +392,7 @@ public final class api_credentials {
         if (Files.exists(p)) return;
 
         FileRec seed = new FileRec();
-        seed.updated_at = Instant.now().toString();
+        seed.updated_at = app_clock.now().toString();
         writeJsonAtomic(p, seed);
     }
 

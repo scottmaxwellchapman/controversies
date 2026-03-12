@@ -199,7 +199,7 @@ public final class contacts {
     }
 
     public void ensure(String tenantUuid) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
 
         ReentrantReadWriteLock lock = lockFor(tu);
@@ -214,7 +214,7 @@ public final class contacts {
     }
 
     public List<ContactRec> listAll(String tenantUuid) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         if (tu.isBlank()) return List.of();
 
         ReentrantReadWriteLock lock = lockFor(tu);
@@ -227,7 +227,7 @@ public final class contacts {
     }
 
     public ContactRec getByUuid(String tenantUuid, String contactUuid) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         String cu = safe(contactUuid).trim();
         if (tu.isBlank() || cu.isBlank()) return null;
 
@@ -246,7 +246,7 @@ public final class contacts {
     }
 
     public ContactRec getBySourceContactId(String tenantUuid, String source, String sourceContactId) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         String src = safe(source).trim().toLowerCase();
         String sid = safe(sourceContactId).trim();
         if (tu.isBlank() || src.isBlank() || sid.isBlank()) return null;
@@ -280,7 +280,7 @@ public final class contacts {
                                      String source,
                                      String sourceContactId,
                                      String sourceUpdatedAt) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         String src = normalizeSourceKey(source);
         String sourceId = safe(sourceContactId).trim();
         if (tu.isBlank() || src.isBlank() || sourceId.isBlank()) {
@@ -293,7 +293,7 @@ public final class contacts {
         try {
             ensure(tu);
             List<ContactRec> all = readAllLocked(tu);
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
 
             ContactRec existing = null;
             for (ContactRec c : all) {
@@ -422,7 +422,7 @@ public final class contacts {
     }
 
     public boolean updateNative(String tenantUuid, String contactUuid, ContactInput input) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         String cu = safe(contactUuid).trim();
         if (tu.isBlank() || cu.isBlank()) throw new IllegalArgumentException("tenantUuid/contactUuid required");
 
@@ -482,7 +482,7 @@ public final class contacts {
                                 c.source,
                                 c.sourceContactId,
                                 c.clioUpdatedAt,
-                                Instant.now().toString()
+                                app_clock.now().toString()
                         )
                 );
                 out.add(next);
@@ -566,7 +566,7 @@ public final class contacts {
                                         String source,
                                         String sourceContactId,
                                         String clioUpdatedAt) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
 
         ReentrantReadWriteLock lock = lockFor(tu);
@@ -613,7 +613,7 @@ public final class contacts {
                             safe(source),
                             safe(sourceContactId),
                             safe(clioUpdatedAt),
-                            Instant.now().toString()
+                            app_clock.now().toString()
                     )
             );
             all.add(rec);
@@ -628,7 +628,7 @@ public final class contacts {
     }
 
     private boolean setTrash(String tenantUuid, String contactUuid, boolean trashed) throws Exception {
-        String tu = safe(tenantUuid).trim();
+        String tu = safeFileToken(tenantUuid);
         String cu = safe(contactUuid).trim();
         if (tu.isBlank() || cu.isBlank()) return false;
 
@@ -687,7 +687,7 @@ public final class contacts {
                         c.source,
                         c.sourceContactId,
                         c.clioUpdatedAt,
-                        Instant.now().toString()
+                        app_clock.now().toString()
                 );
                 out.add(next);
                 changed = true;
@@ -759,7 +759,7 @@ public final class contacts {
                 sourceType(rec.source),
                 safe(rec.sourceContactId).trim(),
                 safe(rec.clioUpdatedAt).trim(),
-                safe(rec.updatedAt).trim().isBlank() ? Instant.now().toString() : safe(rec.updatedAt).trim()
+                safe(rec.updatedAt).trim().isBlank() ? app_clock.now().toString() : safe(rec.updatedAt).trim()
         );
     }
 
@@ -839,7 +839,7 @@ public final class contacts {
     private static void writeAllLocked(String tenantUuid, List<ContactRec> rows) throws Exception {
         Path p = contactsPath(tenantUuid);
         Files.createDirectories(p.getParent());
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
 
         StringBuilder sb = new StringBuilder(16384);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -893,11 +893,11 @@ public final class contacts {
     }
 
     private static ReentrantReadWriteLock lockFor(String tenantUuid) {
-        return LOCKS.computeIfAbsent(safe(tenantUuid), k -> new ReentrantReadWriteLock());
+        return LOCKS.computeIfAbsent(safeFileToken(tenantUuid), k -> new ReentrantReadWriteLock());
     }
 
     private static Path contactsPath(String tenantUuid) {
-        return Paths.get("data", "tenants", safe(tenantUuid).trim(), "contacts.xml").toAbsolutePath();
+        return Paths.get("data", "tenants", safeFileToken(tenantUuid), "contacts.xml").toAbsolutePath();
     }
 
     private static Document parseXml(Path p) throws Exception {
@@ -958,7 +958,7 @@ public final class contacts {
     }
 
     private static String emptyContactsXml() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 + "<contacts created=\"" + xmlAttr(now) + "\" updated=\"" + xmlAttr(now) + "\"></contacts>\n";
     }
@@ -1070,5 +1070,11 @@ public final class contacts {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static String safeFileToken(String s) {
+        String t = safe(s).trim();
+        if (t.isBlank()) return "";
+        return t.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 }

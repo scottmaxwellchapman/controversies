@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <menu>
   <item label="Home" href="/index.jsp" />
+  <item label="Unified Inbox" href="/inbox.jsp" />
   <item label="Cases" href="/cases.jsp" />
   <item label="Case Conflicts" href="/case_conflicts.jsp" />
   <item label="Contacts" href="/contacts.jsp" />

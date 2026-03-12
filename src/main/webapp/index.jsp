@@ -59,6 +59,12 @@
   <h2>Workflow</h2>
   <div class="grid grid-4">
     <article class="card card-compact">
+      <h3 class="u-mt-0">0. Unified Inbox</h3>
+      <p class="muted">Single queue for assigned omnichannel threads, tasks, process reviews, and directed activity.</p>
+      <a class="btn" href="<%= request.getContextPath() %>/inbox.jsp">Open Unified Inbox</a>
+    </article>
+
+    <article class="card card-compact">
       <h3 class="u-mt-0">1. Users & Security</h3>
       <p class="muted">Manage users, passwords, roles, and permission keys that control access.</p>
       <a class="btn" href="<%= request.getContextPath() %>/users_roles.jsp">Open Users &amp; Security</a>

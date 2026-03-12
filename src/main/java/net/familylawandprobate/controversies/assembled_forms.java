@@ -273,7 +273,7 @@ public final class assembled_forms {
             ensure(tu, mu);
             List<AssemblyRec> all = readAllLocked(tu, mu);
 
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             String preferred = safe(preferredAssemblyUuid).trim();
             String uid = safe(userUuid).trim();
             String eml = safe(userEmail).trim();
@@ -393,7 +393,7 @@ public final class assembled_forms {
             ensure(tu, mu);
             List<AssemblyRec> all = readAllLocked(tu, mu);
 
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             String preferred = safe(preferredAssemblyUuid).trim();
             String uid = safe(userUuid).trim();
             String eml = safe(userEmail).trim();
@@ -478,6 +478,7 @@ public final class assembled_forms {
                 markSyncState(tu, mu, assemblyUuid, "synced", 0, "", "", "");
             }
             clioIntegrationService.enqueueUploadTaskIfEligible(tu, mu, assemblyUuid);
+            publishAssemblyEvent(tu, mu, "assembly.completed", completed);
             return completed;
         } finally {
             lock.writeLock().unlock();
@@ -549,7 +550,7 @@ public final class assembled_forms {
                         current.templateExt,
                         current.status,
                         current.createdAt,
-                        Instant.now().toString(),
+                        app_clock.now().toString(),
                         current.userUuid,
                         current.userEmail,
                         current.overrideCount,
@@ -584,6 +585,7 @@ public final class assembled_forms {
         try {
             List<AssemblyRec> all = readAllLocked(tu, mu);
             boolean changed = false;
+            AssemblyRec updatedRec = null;
             for (int i = 0; i < all.size(); i++) {
                 AssemblyRec current = all.get(i);
                 if (current == null) continue;
@@ -598,7 +600,7 @@ public final class assembled_forms {
                         current.templateExt,
                         current.status,
                         current.createdAt,
-                        Instant.now().toString(),
+                        app_clock.now().toString(),
                         current.userUuid,
                         current.userEmail,
                         current.overrideCount,
@@ -613,11 +615,13 @@ public final class assembled_forms {
                 );
                 all.set(i, updated);
                 changed = true;
+                updatedRec = updated;
                 break;
             }
             if (!changed) return false;
             sortByUpdatedDesc(all);
             writeAllLocked(tu, mu, all);
+            publishAssemblyEvent(tu, mu, trashed ? "assembly.trashed" : "assembly.restored", updatedRec);
             return true;
         } finally {
             lock.writeLock().unlock();
@@ -657,7 +661,7 @@ public final class assembled_forms {
                 SyncRec rec = all.get(i);
                 if (rec == null) continue;
                 if (!mu.equals(rec.matterUuid) || !au.equals(rec.assemblyUuid)) continue;
-                SyncRec updated = new SyncRec(tu, mu, au, rec.targetBackendType, rec.targetObjectKey, "pending", 0, "", Instant.now().toString(), "", Instant.now().toString());
+                SyncRec updated = new SyncRec(tu, mu, au, rec.targetBackendType, rec.targetObjectKey, "pending", 0, "", app_clock.now().toString(), "", app_clock.now().toString());
                 all.set(i, updated);
                 writeSyncQueueLocked(tu, all);
                 queued = true;
@@ -696,6 +700,39 @@ public final class assembled_forms {
         String cleanExt = normalizeExtension(ext);
         if (cleanExt.isBlank()) cleanExt = "txt";
         return outputsDir(tenantUuid, matterUuid).resolve(id + "." + cleanExt);
+    }
+
+    private static void publishAssemblyEvent(String tenantUuid, String matterUuid, String eventType, AssemblyRec rec) {
+        if (rec == null) return;
+        try {
+            LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+            payload.put("matter_uuid", safe(matterUuid));
+            payload.put("assembly_uuid", safe(rec.uuid));
+            payload.put("template_uuid", safe(rec.templateUuid));
+            payload.put("template_label", safe(rec.templateLabel));
+            payload.put("template_ext", safe(rec.templateExt));
+            payload.put("status", safe(rec.status));
+            payload.put("created_at", safe(rec.createdAt));
+            payload.put("updated_at", safe(rec.updatedAt));
+            payload.put("user_uuid", safe(rec.userUuid));
+            payload.put("user_email", safe(rec.userEmail));
+            payload.put("override_count", String.valueOf(Math.max(0, rec.overrideCount)));
+            payload.put("output_file_name", safe(rec.outputFileName));
+            payload.put("output_file_ext", safe(rec.outputFileExt));
+            payload.put("output_size_bytes", String.valueOf(Math.max(0L, rec.outputSizeBytes)));
+            payload.put("storage_backend", safe(rec.storageBackendType));
+            payload.put("storage_object_key", safe(rec.storageObjectKey));
+            payload.put("storage_checksum_sha256", safe(rec.storageChecksumSha256));
+            payload.put("trashed", rec.trashed ? "true" : "false");
+            business_process_manager.defaultService().triggerEvent(
+                    safe(tenantUuid),
+                    safe(eventType),
+                    payload,
+                    safe(rec.userUuid),
+                    "assembled_forms.store"
+            );
+        } catch (Exception ignored) {
+        }
     }
 
     private static List<AssemblyRec> readAllLocked(String tenantUuid, String matterUuid) throws Exception {
@@ -789,7 +826,7 @@ public final class assembled_forms {
         Path p = indexPath(tenantUuid, matterUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(8192);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<assembled_forms updated=\"").append(xmlAttr(now)).append("\">\n");
@@ -969,7 +1006,7 @@ public final class assembled_forms {
         lock.writeLock().lock();
         try {
             List<SyncRec> all = readSyncQueueLocked(tu);
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             boolean replaced = false;
             for (int i = 0; i < all.size(); i++) {
                 SyncRec rec = all.get(i);
@@ -996,7 +1033,7 @@ public final class assembled_forms {
             List<SyncRec> all = readSyncQueueLocked(tu);
             String mu = safeFileToken(matterUuid);
             String au = safe(assemblyUuid).trim();
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             boolean found = false;
             for (int i = 0; i < all.size(); i++) {
                 SyncRec rec = all.get(i);
@@ -1075,7 +1112,7 @@ public final class assembled_forms {
     private static void writeSyncQueueLocked(String tenantUuid, List<SyncRec> rows) throws Exception {
         Path p = syncQueuePath(tenantUuid);
         Files.createDirectories(p.getParent());
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(2048);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<storage_sync_queue updated=\"").append(xmlAttr(now)).append("\">\n");
@@ -1138,7 +1175,7 @@ public final class assembled_forms {
         try {
             List<SyncRec> all = readSyncQueueLocked(tenantUuid);
             boolean changed = false;
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             for (int i = 0; i < all.size(); i++) {
                 SyncRec rec = all.get(i);
                 if (rec == null) continue;
@@ -1162,7 +1199,7 @@ public final class assembled_forms {
                     } else {
                         long delay = Math.min(SYNC_MAX_BACKOFF_MS, (long) (SYNC_BASE_BACKOFF_MS * Math.pow(2.0d, Math.max(0, attempts - 1))));
                         long jitter = ThreadLocalRandom.current().nextLong(250L, 1200L);
-                        String nextAt = Instant.now().plusMillis(delay + jitter).toString();
+                        String nextAt = app_clock.now().plusMillis(delay + jitter).toString();
                         all.set(i, new SyncRec(tenantUuid, rec.matterUuid, rec.assemblyUuid, rec.targetBackendType, rec.targetObjectKey, "retry", attempts, now, nextAt, err, now));
                     }
                     changed = true;
@@ -1296,7 +1333,7 @@ public final class assembled_forms {
     }
 
     private static String emptyXml() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 + "<assembled_forms created=\"" + xmlAttr(now) + "\" updated=\"" + xmlAttr(now) + "\"></assembled_forms>\n";
     }

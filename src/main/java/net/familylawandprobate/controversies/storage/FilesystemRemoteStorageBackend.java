@@ -26,19 +26,32 @@ public final class FilesystemRemoteStorageBackend implements DocumentStorageBack
 
     private final String backendType;
     private final Path root;
+    private final Path objectRoot;
     private final int maxPathLength;
     private final int maxFilenameLength;
+    private final boolean dedupLinksEnabled;
 
     public FilesystemRemoteStorageBackend(String backendType, String tenantUuid) {
-        this(backendType, tenantUuid, DEFAULT_MAX_PATH_LENGTH, DEFAULT_MAX_FILENAME_LENGTH);
+        this(backendType, tenantUuid, DEFAULT_MAX_PATH_LENGTH, DEFAULT_MAX_FILENAME_LENGTH, true);
     }
 
     public FilesystemRemoteStorageBackend(String backendType,
                                           String tenantUuid,
                                           int maxPathLength,
                                           int maxFilenameLength) {
+        this(backendType, tenantUuid, maxPathLength, maxFilenameLength, true);
+    }
+
+    public FilesystemRemoteStorageBackend(String backendType,
+                                          String tenantUuid,
+                                          int maxPathLength,
+                                          int maxFilenameLength,
+                                          boolean dedupLinksEnabled) {
         this.backendType = normalizeBackendType(backendType);
-        this.root = Paths.get("data", "tenants", safeFileToken(tenantUuid), "assembled_remote", this.backendType).toAbsolutePath();
+        String tenantToken = safeFileToken(tenantUuid);
+        this.root = Paths.get("data", "tenants", tenantToken, "assembled_remote", this.backendType).toAbsolutePath();
+        this.objectRoot = Paths.get("data", "tenants", tenantToken, "dedup_objects").toAbsolutePath();
+        this.dedupLinksEnabled = dedupLinksEnabled;
         int effectiveMaxPathLength = maxPathLength;
         int effectiveMaxFilenameLength = maxFilenameLength;
         if (isOneDriveBackend(this.backendType)) {
@@ -55,9 +68,13 @@ public final class FilesystemRemoteStorageBackend implements DocumentStorageBack
         String normalized = normalizeKey(key);
         String writableKey = resolveNonDestructiveKey(normalized, src);
         Path p = pathFor(writableKey);
-        Files.createDirectories(p.getParent());
-        Files.write(p, src, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        verifyWriteIntegrity(p, src);
+        if (dedupLinksEnabled) {
+            DeduplicatedFileStore.write(p, src, objectRoot);
+        } else {
+            Files.createDirectories(p.getParent());
+            Files.write(p, src, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            verifyWriteIntegrity(p, src);
+        }
         return writableKey;
     }
 

@@ -33,6 +33,7 @@ It supports:
 - [Tenant settings guide (first-time and advanced)](#tenant-settings-guide-first-time-and-advanced)
 - [Clio integration by deployment topology](#clio-integration-by-deployment-topology)
 - [API (n8n/OpenClaw)](#api-n8nopenclaw)
+- [WebDAV](#webdav)
 - [Business process built-ins](#business-process-built-ins)
 - [Logging and audit visibility](#logging-and-audit-visibility)
 - [Troubleshooting](#troubleshooting)
@@ -352,6 +353,7 @@ Open **Tenant Settings** from the main navigation to configure storage, Clio int
 - Leave password/secret fields blank if you are not rotating secrets.
 - Use **Rotate Storage Secret** or **Rotate Clio Secret** to timestamp key rotation activity before final save.
 - Feature flags can be toggled independently without changing integration credentials.
+- `storage_dedup_links_enabled` (default `true`) enables content-addressed link references to avoid duplicate file bytes across local/external tenant storage.
 - Security Controls summarizes current status, last check times, and redaction policy.
 
 Validation behavior:
@@ -563,6 +565,43 @@ When application features are added or changed, corresponding API operations sho
 
 ---
 
+## WebDAV
+
+Controversies exposes a WebDAV endpoint at `/webdav/*`.
+
+### Authentication
+
+- Uses HTTP Basic auth.
+- Username format must be realm-style: `tenant_slug\\email_address`
+- Password is the user account password for that tenant.
+- Example username: `default-tenant\\paralegal@example.com`
+
+### Folder layout
+
+- `/webdav/` → all active cases
+- `/webdav/<case_label>__<case_uuid>/` → all active documents in that case
+- `/webdav/<case...>/<document_label>__<document_uuid>/` → all active parts in that document
+- `/webdav/<case...>/<document...>/<part_label>__<part_uuid>/` → version files + a `Current - ...` alias file
+
+### Upload behavior
+
+- `PUT` to a part folder file path creates a new current version on that part.
+- `PUT` to a document folder file path is treated as an orphan document upload:
+  - if the document has no parts, a lead part is auto-created;
+  - if it has one part, that part is used;
+  - if it has multiple parts, uploads are routed to (or create) an `Orphan Uploads` part.
+
+### Supported WebDAV methods
+
+- `OPTIONS`, `PROPFIND`, `GET`, `HEAD`, `PUT`, `MKCOL`, `DELETE`, `LOCK`, `UNLOCK`
+
+### Delete behavior
+
+- `DELETE` on case/document/part folders performs soft-delete (archive/trash in the app model).
+- Deleting individual version files is intentionally blocked.
+
+---
+
 ## Business process built-ins
 
 Built-in BPM step actions now include:
@@ -582,6 +621,7 @@ Built-in BPM step actions now include:
 - `update_fact`
 - `refresh_facts_report`
 - `document_assembly`
+- `assembly_to_document_version`
 - `notice_communication`
 - `send_for_signature`
 - `conflict_check`

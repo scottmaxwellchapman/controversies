@@ -204,7 +204,7 @@
 
     private static int noteFailure(ServletContext app, String ip) {
         if (ip == null) ip = "";
-        long now = System.currentTimeMillis();
+        long now = net.familylawandprobate.controversies.app_clock.currentTimeMillis();
         ConcurrentHashMap<String, FailInfo> m = failMap(app);
 
         FailInfo f = m.compute(ip, (k, v) -> {
@@ -252,7 +252,7 @@
 
     private static String formatRemaining(Instant until) {
         if (until == null) return "";
-        long sec = Duration.between(Instant.now(), until).getSeconds();
+        long sec = Duration.between(net.familylawandprobate.controversies.app_clock.now(), until).getSeconds();
         if (sec <= 0) return "a moment";
         long min = (sec + 59) / 60;
         if (min <= 1) return "about 1 minute";
@@ -361,7 +361,7 @@
         if (p == null || b == null) return;
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = net.familylawandprobate.controversies.app_clock.now().toString();
 
         String xml =
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +

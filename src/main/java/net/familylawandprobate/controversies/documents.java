@@ -61,7 +61,7 @@ public final class documents {
         if (p == null) throw new IllegalArgumentException("tenantUuid and matterUuid required");
         Files.createDirectories(p.getParent());
         if (!Files.exists(p)) {
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             document_workflow_support.writeAtomic(p,
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<documents updated=\""
                 + document_workflow_support.xmlText(now) + "\"></documents>\n");
@@ -263,7 +263,7 @@ public final class documents {
     }
 
     public static boolean isCheckoutActive(DocumentRec rec) {
-        return isCheckoutActive(rec, Instant.now());
+        return isCheckoutActive(rec, app_clock.now());
     }
 
     public static boolean isCheckoutActive(DocumentRec rec, Instant now) {
@@ -271,12 +271,12 @@ public final class documents {
         if (normalizeActor(rec.checkedOutBy).isBlank()) return false;
         Instant checkedOutAt = parseInstant(rec.checkedOutAt);
         if (checkedOutAt == null) return false;
-        Instant clock = now == null ? Instant.now() : now;
+        Instant clock = now == null ? app_clock.now() : now;
         return checkedOutAt.plus(CHECKOUT_TTL).isAfter(clock);
     }
 
     public static boolean isCheckedOutBy(DocumentRec rec, String actor) {
-        return isCheckedOutBy(rec, actor, Instant.now());
+        return isCheckedOutBy(rec, actor, app_clock.now());
     }
 
     public static boolean isCheckedOutBy(DocumentRec rec, String actor, Instant now) {
@@ -285,7 +285,7 @@ public final class documents {
     }
 
     public static boolean isCheckedOutByOther(DocumentRec rec, String actor) {
-        return isCheckedOutByOther(rec, actor, Instant.now());
+        return isCheckedOutByOther(rec, actor, app_clock.now());
     }
 
     public static boolean isCheckedOutByOther(DocumentRec rec, String actor, Instant now) {
@@ -314,7 +314,7 @@ public final class documents {
     }
 
     public static String checkoutMessage(DocumentRec rec, String actor) {
-        if (!isCheckedOutByOther(rec, actor, Instant.now())) return "";
+        if (!isCheckedOutByOther(rec, actor, app_clock.now())) return "";
         String lockOwner = checkoutBy(rec);
         if (lockOwner.isBlank()) lockOwner = "another user";
         String expiresAt = checkoutExpiresAt(rec);
@@ -330,7 +330,7 @@ public final class documents {
 
     public static void requireEditable(DocumentRec rec, String actor) {
         if (isReadOnly(rec)) throw new IllegalStateException(readOnlyMessage(rec));
-        if (isCheckedOutByOther(rec, actor, Instant.now())) {
+        if (isCheckedOutByOther(rec, actor, app_clock.now())) {
             throw new IllegalStateException(checkoutMessage(rec, actor));
         }
     }
@@ -345,7 +345,7 @@ public final class documents {
         List<DocumentRec> all = listAll(tenantUuid, matterUuid);
         boolean changed = false;
         DocumentRec changedRec = null;
-        Instant now = Instant.now();
+        Instant now = app_clock.now();
         String nowIso = now.toString();
         for (DocumentRec rec : all) {
             if (!document_workflow_support.safe(docUuid).trim().equals(document_workflow_support.safe(rec.uuid).trim())) continue;
@@ -374,7 +374,7 @@ public final class documents {
         List<DocumentRec> all = listAll(tenantUuid, matterUuid);
         boolean changed = false;
         DocumentRec changedRec = null;
-        Instant now = Instant.now();
+        Instant now = app_clock.now();
         String nowIso = now.toString();
         for (DocumentRec rec : all) {
             if (!document_workflow_support.safe(docUuid).trim().equals(document_workflow_support.safe(rec.uuid).trim())) continue;

@@ -24,9 +24,10 @@ public final class StorageBackendResolver {
         LinkedHashMap<String, String> settings = tenant_settings.defaultStore().read(tenantUuid);
         int maxPathLength = parseInt(settings.get("storage_max_path_length"), 0);
         int maxFilenameLength = parseInt(settings.get("storage_max_filename_length"), 0);
+        boolean dedupLinksEnabled = parseBoolean(settings.get("storage_dedup_links_enabled"), true);
         DocumentStorageBackend base = "local".equals(normalized)
-                ? new LocalFsStorageBackend(tenantUuid, matterUuid)
-                : new FilesystemRemoteStorageBackend(normalized, tenantUuid, maxPathLength, maxFilenameLength);
+                ? new LocalFsStorageBackend(tenantUuid, matterUuid, dedupLinksEnabled)
+                : new FilesystemRemoteStorageBackend(normalized, tenantUuid, maxPathLength, maxFilenameLength, dedupLinksEnabled);
         if (!"local".equals(normalized)) {
             long cacheMaxBytes = resolveCacheBytes(settings, normalized);
             if (cacheMaxBytes > 0L) {
@@ -126,5 +127,13 @@ public final class StorageBackendResolver {
         } catch (Exception ignored) {
             return fallback;
         }
+    }
+
+    private static boolean parseBoolean(String raw, boolean fallback) {
+        String v = safe(raw).trim().toLowerCase(Locale.ROOT);
+        if (v.isBlank()) return fallback;
+        if ("1".equals(v) || "true".equals(v) || "on".equals(v) || "yes".equals(v)) return true;
+        if ("0".equals(v) || "false".equals(v) || "off".equals(v) || "no".equals(v)) return false;
+        return fallback;
     }
 }

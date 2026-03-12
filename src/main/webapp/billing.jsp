@@ -203,6 +203,7 @@
 
   if ("POST".equalsIgnoreCase(request.getMethod()) && error.isBlank()) {
     try {
+      String actor = userUuid.isBlank() ? userEmail : userUuid;
       if ("create_time_entry".equals(action)) {
         if (selectedMatterUuid.isBlank()) throw new IllegalArgumentException("Select a matter first.");
         int minutes = Math.max(0, parseIntSafe(request.getParameter("time_minutes"), 0));
@@ -211,7 +212,6 @@
         String note = safe(request.getParameter("time_note")).trim();
         String workedAt = safe(request.getParameter("time_worked_at")).trim();
         boolean billable = !boolLike(request.getParameter("time_nonbillable"));
-        String actor = userUuid.isBlank() ? userEmail : userUuid;
         ledger.createTimeEntry(
                 selectedMatterUuid,
                 actor,
@@ -230,6 +230,7 @@
         long taxCents = Math.max(0L, dollarsToCents(request.getParameter("expense_tax")));
         String description = safe(request.getParameter("expense_description")).trim();
         String incurredAt = safe(request.getParameter("expense_incurred_at")).trim();
+        String expenseCode = safe(request.getParameter("expense_utbms_code")).trim();
         boolean billable = !boolLike(request.getParameter("expense_nonbillable"));
         ledger.createExpenseEntry(
                 selectedMatterUuid,
@@ -238,9 +239,33 @@
                 taxCents,
                 "USD",
                 billable,
-                incurredAt
+                incurredAt,
+                expenseCode
         );
         message = "Expense entry created.";
+      } else if ("set_managed_activity_mode".equals(action)) {
+        ledger.setRequireManagedActivities(boolLike(request.getParameter("require_managed_activities")));
+        message = "Managed-activity mode updated.";
+      } else if ("upsert_billing_activity".equals(action)) {
+        String code = safe(request.getParameter("activity_code")).trim();
+        if (code.isBlank()) throw new IllegalArgumentException("Activity code is required.");
+        long defaultRateCents = Math.max(0L, dollarsToCents(request.getParameter("activity_default_rate")));
+        ledger.upsertBillingActivity(
+                code,
+                safe(request.getParameter("activity_label")).trim(),
+                defaultRateCents,
+                !boolLike(request.getParameter("activity_default_nonbillable")),
+                safe(request.getParameter("activity_utbms_task_code")).trim(),
+                safe(request.getParameter("activity_utbms_activity_code")).trim(),
+                safe(request.getParameter("activity_utbms_expense_code")).trim(),
+                !boolLike(request.getParameter("activity_inactive"))
+        );
+        message = "Managed billing activity saved.";
+      } else if ("deactivate_billing_activity".equals(action)) {
+        String code = safe(request.getParameter("activity_code")).trim();
+        if (code.isBlank()) throw new IllegalArgumentException("Activity code is required.");
+        ledger.deactivateBillingActivity(code);
+        message = "Managed billing activity deactivated.";
       } else if ("draft_finalize_invoice".equals(action)) {
         if (selectedMatterUuid.isBlank()) throw new IllegalArgumentException("Select a matter first.");
         String issuedAt = safe(request.getParameter("invoice_issue_date")).trim();
@@ -282,6 +307,116 @@
         String reference = safe(request.getParameter("trust_refund_reference")).trim();
         ledger.recordTrustRefund(selectedMatterUuid, amountCents, "USD", postedAt, reference);
         message = "Trust refund posted.";
+      } else if ("set_trust_policy".equals(action)) {
+        if (selectedMatterUuid.isBlank()) throw new IllegalArgumentException("Select a matter first.");
+        long reserveCents = Math.max(0L, dollarsToCents(request.getParameter("policy_minimum_reserve")));
+        ledger.upsertMatterTrustPolicy(
+                selectedMatterUuid,
+                safe(request.getParameter("policy_iolta_account_name")).trim(),
+                safe(request.getParameter("policy_iolta_institution_name")).trim(),
+                boolLike(request.getParameter("policy_iolta_institution_eligible")),
+                safe(request.getParameter("policy_annual_due_date")).trim(),
+                safe(request.getParameter("policy_annual_completed_date")).trim(),
+                boolLike(request.getParameter("policy_require_approval")),
+                reserveCents,
+                actor
+        );
+        message = "Matter trust policy saved.";
+      } else if ("place_trust_hold".equals(action)) {
+        if (selectedMatterUuid.isBlank()) throw new IllegalArgumentException("Select a matter first.");
+        long holdAmountCents = Math.max(0L, dollarsToCents(request.getParameter("hold_amount")));
+        String reason = safe(request.getParameter("hold_reason")).trim();
+        String placedAt = safe(request.getParameter("hold_placed_at")).trim();
+        ledger.placeTrustDisputeHold(selectedMatterUuid, holdAmountCents, reason, actor, placedAt);
+        message = "Trust dispute hold placed.";
+      } else if ("release_trust_hold".equals(action)) {
+        String holdUuid = safe(request.getParameter("hold_uuid")).trim();
+        if (holdUuid.isBlank()) throw new IllegalArgumentException("Select a hold to release.");
+        String resolution = safe(request.getParameter("hold_resolution")).trim();
+        String releasedAt = safe(request.getParameter("hold_released_at")).trim();
+        ledger.releaseTrustDisputeHold(holdUuid, actor, resolution, releasedAt);
+        message = "Trust dispute hold released.";
+      } else if ("request_disbursement_approval".equals(action)) {
+        if (selectedMatterUuid.isBlank()) throw new IllegalArgumentException("Select a matter first.");
+        String disbursementType = safe(request.getParameter("approval_disbursement_type")).trim();
+        String invoiceUuid = safe(request.getParameter("approval_invoice_uuid")).trim();
+        long amountCents = Math.max(0L, dollarsToCents(request.getParameter("approval_amount")));
+        String reason = safe(request.getParameter("approval_reason")).trim();
+        String requestedAt = safe(request.getParameter("approval_requested_at")).trim();
+        billing_accounting.TrustDisbursementApprovalRec approval = ledger.requestTrustDisbursementApproval(
+                disbursementType,
+                selectedMatterUuid,
+                invoiceUuid,
+                amountCents,
+                "USD",
+                actor,
+                reason,
+                requestedAt
+        );
+        if (!safe(approval.invoiceUuid).isBlank()) selectedInvoiceUuid = safe(approval.invoiceUuid).trim();
+        message = "Disbursement approval requested.";
+      } else if ("review_disbursement_approval".equals(action)) {
+        String approvalUuid = safe(request.getParameter("approval_uuid")).trim();
+        if (approvalUuid.isBlank()) throw new IllegalArgumentException("Select an approval first.");
+        String decision = safe(request.getParameter("approval_decision")).trim().toLowerCase(Locale.ROOT);
+        boolean approved = "approve".equals(decision) || "approved".equals(decision) || "yes".equals(decision);
+        String reviewNotes = safe(request.getParameter("approval_review_notes")).trim();
+        String reviewedAt = safe(request.getParameter("approval_reviewed_at")).trim();
+        ledger.reviewTrustDisbursementApproval(approvalUuid, approved, actor, reviewNotes, reviewedAt);
+        message = approved ? "Approval marked approved." : "Approval marked rejected.";
+      } else if ("execute_disbursement_approval".equals(action)) {
+        String approvalUuid = safe(request.getParameter("approval_uuid")).trim();
+        if (approvalUuid.isBlank()) throw new IllegalArgumentException("Select an approval first.");
+        String postedAt = safe(request.getParameter("approval_execute_posted_at")).trim();
+        String reference = safe(request.getParameter("approval_execute_reference")).trim();
+        billing_accounting.TrustDisbursementApprovalRec approval = ledger.getTrustDisbursementApproval(approvalUuid);
+        if (approval == null) throw new IllegalArgumentException("approval not found");
+        if (billing_accounting.DISBURSEMENT_TRUST_APPLY.equals(safe(approval.disbursementType))) {
+          ledger.applyTrustToInvoiceWithApproval(approvalUuid, postedAt, reference);
+          if (!safe(approval.invoiceUuid).isBlank()) selectedInvoiceUuid = safe(approval.invoiceUuid).trim();
+        } else if (billing_accounting.DISBURSEMENT_TRUST_REFUND.equals(safe(approval.disbursementType))) {
+          ledger.recordTrustRefundWithApproval(approvalUuid, postedAt, reference);
+        } else {
+          throw new IllegalArgumentException("Unsupported approval disbursement type.");
+        }
+        message = "Approved trust disbursement executed.";
+      } else if ("create_payment_plan".equals(action)) {
+        if (selectedMatterUuid.isBlank()) throw new IllegalArgumentException("Select a matter first.");
+        String invoiceUuid = safe(request.getParameter("plan_invoice_uuid")).trim();
+        int installmentCount = Math.max(1, parseIntSafe(request.getParameter("plan_installment_count"), 3));
+        int cadenceDays = Math.max(1, parseIntSafe(request.getParameter("plan_cadence_days"), 30));
+        String firstDueAt = safe(request.getParameter("plan_first_due_at")).trim();
+        boolean autopay = boolLike(request.getParameter("plan_autopay"));
+        String planReference = safe(request.getParameter("plan_reference")).trim();
+        billing_accounting.PaymentPlanRec plan = ledger.createPaymentPlan(
+                invoiceUuid,
+                installmentCount,
+                cadenceDays,
+                firstDueAt,
+                autopay,
+                planReference
+        );
+        selectedInvoiceUuid = safe(plan.invoiceUuid).trim();
+        message = "Payment plan created.";
+      } else if ("post_payment_plan_installment".equals(action)) {
+        String planUuid = safe(request.getParameter("plan_uuid")).trim();
+        if (planUuid.isBlank()) throw new IllegalArgumentException("Select a payment plan first.");
+        String postedAt = safe(request.getParameter("plan_payment_posted_at")).trim();
+        String reference = safe(request.getParameter("plan_payment_reference")).trim();
+        billing_accounting.PaymentRec payment = ledger.postPaymentPlanInstallment(planUuid, postedAt, reference);
+        if (payment != null && !safe(payment.invoiceUuid).isBlank()) selectedInvoiceUuid = safe(payment.invoiceUuid).trim();
+        message = "Payment-plan installment posted.";
+      } else if ("run_autopay_sweep".equals(action)) {
+        String asOfDate = safe(request.getParameter("autopay_as_of_date")).trim();
+        String postedAt = safe(request.getParameter("autopay_posted_at")).trim();
+        String refPrefix = safe(request.getParameter("autopay_reference_prefix")).trim();
+        List<billing_accounting.PaymentRec> posted = ledger.runAutopayDuePlans(asOfDate, postedAt, refPrefix);
+        message = "Autopay sweep complete. Payments posted: " + posted.size() + ".";
+      } else if ("cancel_payment_plan".equals(action)) {
+        String planUuid = safe(request.getParameter("plan_uuid")).trim();
+        if (planUuid.isBlank()) throw new IllegalArgumentException("Select a payment plan first.");
+        ledger.cancelPaymentPlan(planUuid);
+        message = "Payment plan cancelled.";
       } else if ("set_inline_template".equals(action)) {
         String docType = safe(request.getParameter("template_doc_type")).trim();
         String templateBody = safe(request.getParameter("inline_template")).trim();
@@ -328,7 +463,7 @@
         if ("render_invoice_download".equals(action)) {
           String ext = safe(rendered.assembled.extension).trim();
           if (ext.isBlank()) ext = "txt";
-          String fileName = cleanFileToken("invoice_" + selectedInvoiceUuid + "_" + Instant.now().toEpochMilli()) + "." + ext;
+          String fileName = cleanFileToken("invoice_" + selectedInvoiceUuid + "_" + net.familylawandprobate.controversies.app_clock.now().toEpochMilli()) + "." + ext;
           response.setHeader("Cache-Control", "no-store");
           response.setHeader("Content-Disposition", contentDispositionValue(fileName));
           String ct = safe(rendered.assembled.contentType).trim();
@@ -385,7 +520,7 @@
         if ("render_trust_request_download".equals(action)) {
           String ext = safe(rendered.assembled.extension).trim();
           if (ext.isBlank()) ext = "txt";
-          String fileName = cleanFileToken("trust_request_" + selectedMatterUuid + "_" + Instant.now().toEpochMilli()) + "." + ext;
+          String fileName = cleanFileToken("trust_request_" + selectedMatterUuid + "_" + net.familylawandprobate.controversies.app_clock.now().toEpochMilli()) + "." + ext;
           response.setHeader("Cache-Control", "no-store");
           response.setHeader("Content-Disposition", contentDispositionValue(fileName));
           String ct = safe(rendered.assembled.contentType).trim();
@@ -426,7 +561,7 @@
         if ("render_statement_download".equals(action)) {
           String ext = safe(rendered.assembled.extension).trim();
           if (ext.isBlank()) ext = "txt";
-          String fileName = cleanFileToken("statement_of_account_" + selectedMatterUuid + "_" + Instant.now().toEpochMilli()) + "." + ext;
+          String fileName = cleanFileToken("statement_of_account_" + selectedMatterUuid + "_" + net.familylawandprobate.controversies.app_clock.now().toEpochMilli()) + "." + ext;
           response.setHeader("Cache-Control", "no-store");
           response.setHeader("Content-Disposition", contentDispositionValue(fileName));
           String ct = safe(rendered.assembled.contentType).trim();
@@ -441,6 +576,46 @@
         previewExtension = safe(rendered.assembled.extension);
         previewBytes = rendered.assembled.bytes == null ? 0L : rendered.assembled.bytes.length;
         previewBody = new String(rendered.assembled.bytes == null ? new byte[0] : rendered.assembled.bytes, StandardCharsets.UTF_8);
+      } else if ("render_ledes_preview".equals(action) || "render_ledes_download".equals(action)) {
+        if (selectedMatterUuid.isBlank()) throw new IllegalArgumentException("Select a matter first.");
+        if (selectedInvoiceUuid.isBlank()) throw new IllegalArgumentException("Select an invoice first.");
+
+        LinkedHashMap<String, String> profile = new LinkedHashMap<String, String>();
+        profile.put("tenant.name", safe(request.getParameter("profile_tenant_name")).trim());
+        profile.put("client.name", safe(request.getParameter("profile_client_name")).trim());
+        profile.put("client.address", safe(request.getParameter("profile_client_address")).trim());
+        profile.put("matter.label", safe(request.getParameter("profile_matter_label")).trim());
+        profile.put("matter.number", safe(request.getParameter("profile_matter_number")).trim());
+        profile.put("client.id", safe(request.getParameter("ledes_client_id")).trim());
+        profile.put("law_firm.id", safe(request.getParameter("ledes_law_firm_id")).trim());
+        profile.put("client.matter_id", safe(request.getParameter("ledes_client_matter_id")).trim());
+        LinkedHashMap<String, String> custom = parseCustomTokens(request.getParameter("custom_tokens"));
+
+        billing_output_documents.LedesDocument rendered = outputStore.renderLedes1998B(
+                tenantUuid,
+                ledger,
+                selectedMatterUuid,
+                selectedInvoiceUuid,
+                profile,
+                custom
+        );
+        if ("render_ledes_download".equals(action)) {
+          String ext = safe(rendered.extension).trim();
+          if (ext.isBlank()) ext = "txt";
+          String fileName = cleanFileToken("ledes1998b_" + selectedInvoiceUuid + "_" + net.familylawandprobate.controversies.app_clock.now().toEpochMilli()) + "." + ext;
+          response.setHeader("Cache-Control", "no-store");
+          response.setHeader("Content-Disposition", contentDispositionValue(fileName));
+          String ct = safe(rendered.contentType).trim();
+          response.setContentType(ct.isBlank() ? "text/plain; charset=UTF-8" : ct);
+          response.getOutputStream().write(rendered.bytes);
+          return;
+        }
+        previewTitle = "LEDES1998B Preview";
+        previewSource = safe(rendered.format);
+        previewContentType = safe(rendered.contentType);
+        previewExtension = safe(rendered.extension);
+        previewBytes = rendered.bytes == null ? 0L : rendered.bytes.length;
+        previewBody = new String(rendered.bytes == null ? new byte[0] : rendered.bytes, StandardCharsets.UTF_8);
       }
     } catch (Exception ex) {
       error = safe(ex.getMessage());
@@ -463,6 +638,20 @@
           ? List.of()
           : ledger.listTrustTransactionsForMatter(selectedMatterUuid);
   long currentTrustBalance = selectedMatterUuid.isBlank() ? 0L : ledger.matterTrustBalance(selectedMatterUuid);
+  long heldTrustBalance = selectedMatterUuid.isBlank() ? 0L : ledger.heldTrustAmount(selectedMatterUuid);
+  long availableTrustBalance = selectedMatterUuid.isBlank() ? 0L : ledger.availableTrustBalance(selectedMatterUuid);
+  billing_accounting.MatterTrustPolicyRec trustPolicy = selectedMatterUuid.isBlank() ? null : ledger.getMatterTrustPolicy(selectedMatterUuid);
+  List<billing_accounting.TrustDisputeHoldRec> matterTrustHolds = selectedMatterUuid.isBlank()
+          ? List.of()
+          : ledger.listTrustDisputeHoldsForMatter(selectedMatterUuid, true);
+  List<billing_accounting.TrustDisbursementApprovalRec> matterDisbursementApprovals = selectedMatterUuid.isBlank()
+          ? List.of()
+          : ledger.listTrustDisbursementApprovalsForMatter(selectedMatterUuid);
+  List<billing_accounting.PaymentPlanRec> matterPaymentPlans = selectedMatterUuid.isBlank()
+          ? List.of()
+          : ledger.listPaymentPlansForMatter(selectedMatterUuid);
+  List<billing_accounting.BillingActivityRec> managedActivities = ledger.listBillingActivities(true);
+  boolean requireManagedActivities = ledger.isRequireManagedActivities();
 
   List<billing_accounting.MatterTrustBalanceRec> trustBalances = ledger.listMatterTrustBalances();
   List<billing_output_documents.TemplateConfigRec> templateConfigs = outputStore.listTemplateConfigs(tenantUuid);
@@ -475,8 +664,8 @@
   List<form_templates.TemplateRec> availableTemplates = templateStore.list(tenantUuid);
   availableTemplates.sort(Comparator.comparing((form_templates.TemplateRec t) -> safe(t == null ? "" : t.label)));
 
-  billing_accounting.TrustReconciliationRec previewRecon = ledger.trustReconciliation(Instant.now().toString(), 0L);
-  billing_accounting.ComplianceSnapshot compliance = ledger.complianceSnapshot(Instant.now().toString(), previewRecon.bookTrustBankBalanceCents);
+  billing_accounting.TrustReconciliationRec previewRecon = ledger.trustReconciliation(net.familylawandprobate.controversies.app_clock.now().toString(), 0L);
+  billing_accounting.ComplianceSnapshot compliance = ledger.complianceSnapshot(net.familylawandprobate.controversies.app_clock.now().toString(), previewRecon.bookTrustBankBalanceCents);
 %>
 
 <jsp:include page="header.jsp" />
@@ -532,8 +721,8 @@
         </select>
       </label>
       <label>
-        <span>Current Trust Balance</span>
-        <input type="text" value="<%= esc(centsToText(currentTrustBalance)) %>" readonly />
+        <span>Trust (Ledger / Held / Available)</span>
+        <input type="text" value="<%= esc(centsToText(currentTrustBalance) + " / " + centsToText(heldTrustBalance) + " / " + centsToText(availableTrustBalance)) %>" readonly />
       </label>
       <label>
         <span>&nbsp;</span>
@@ -553,11 +742,11 @@
       <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
       <h3>Time Entry</h3>
       <div class="grid grid-2">
-        <label><span>Activity Code</span><input type="text" name="time_activity_code" placeholder="research" /></label>
+        <label><span>Activity Code</span><input type="text" name="time_activity_code" placeholder="L110 / A101 / RESEARCH" /></label>
         <label><span>Minutes</span><input type="number" min="1" name="time_minutes" value="60" /></label>
       </div>
       <div class="grid grid-2">
-        <label><span>Hourly Rate (USD)</span><input type="text" name="time_rate" value="250.00" /></label>
+        <label><span>Hourly Rate (USD)</span><input type="text" name="time_rate" value="0.00" /></label>
         <label><span>Worked At (ISO)</span><input type="text" name="time_worked_at" placeholder="2026-03-10T10:00:00Z" /></label>
       </div>
       <label><span>Note</span><textarea name="time_note" rows="3" placeholder="Narrative for billing line item"></textarea></label>
@@ -577,9 +766,90 @@
         <label><span>Tax (USD)</span><input type="text" name="expense_tax" value="0.00" /></label>
         <label><span>Incurred At (ISO)</span><input type="text" name="expense_incurred_at" placeholder="2026-03-10T10:00:00Z" /></label>
       </div>
+      <div class="grid grid-2">
+        <label><span>UTBMS Expense Code</span><input type="text" name="expense_utbms_code" placeholder="E101" /></label>
+        <label><span>&nbsp;</span><div class="meta">Optional. If blank, code may be inferred from description prefix like <code>E101</code>.</div></label>
+      </div>
       <label class="inline-check"><input type="checkbox" name="expense_nonbillable" value="1" /> Mark as non-billable</label>
       <button class="btn" type="submit">Create Expense Entry</button>
     </form>
+  </div>
+</section>
+
+<section class="card" style="margin-top:12px;">
+  <h2 style="margin-top:0;">Managed Activities and UTBMS Mapping</h2>
+  <p class="meta">Maintain a controlled activity catalog, enforce managed mode, and store UTBMS task/activity/expense codes for consistent billing output.</p>
+  <div class="split-grid">
+    <form method="post" action="<%= ctx %>/billing.jsp" class="subcard">
+      <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+      <input type="hidden" name="action" value="set_managed_activity_mode" />
+      <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+      <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+      <h3>Managed Mode</h3>
+      <label class="inline-check"><input type="checkbox" name="require_managed_activities" value="1" <%= requireManagedActivities ? "checked" : "" %> /> Require activity codes to exist and be active in catalog</label>
+      <button class="btn" type="submit">Save Managed Mode</button>
+      <div class="meta" style="margin-top:8px;">Current mode: <strong><%= requireManagedActivities ? "required" : "advisory" %></strong></div>
+    </form>
+
+    <form method="post" action="<%= ctx %>/billing.jsp" class="subcard">
+      <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+      <input type="hidden" name="action" value="upsert_billing_activity" />
+      <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+      <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+      <h3>Activity Catalog Entry</h3>
+      <div class="grid grid-2">
+        <label><span>Activity Code</span><input type="text" name="activity_code" placeholder="L110" /></label>
+        <label><span>Label</span><input type="text" name="activity_label" placeholder="Case assessment" /></label>
+      </div>
+      <div class="grid grid-2">
+        <label><span>Default Hourly Rate (USD)</span><input type="text" name="activity_default_rate" value="250.00" /></label>
+        <label><span>Flags</span>
+          <div class="inline-check"><input type="checkbox" name="activity_default_nonbillable" value="1" /> Default non-billable</div>
+          <div class="inline-check"><input type="checkbox" name="activity_inactive" value="1" /> Mark inactive</div>
+        </label>
+      </div>
+      <div class="grid grid-3">
+        <label><span>UTBMS Task</span><input type="text" name="activity_utbms_task_code" placeholder="L110" /></label>
+        <label><span>UTBMS Activity</span><input type="text" name="activity_utbms_activity_code" placeholder="A101" /></label>
+        <label><span>UTBMS Expense</span><input type="text" name="activity_utbms_expense_code" placeholder="E101" /></label>
+      </div>
+      <button class="btn btn-ghost" type="submit">Save Activity</button>
+    </form>
+  </div>
+
+  <div class="table-wrap" style="margin-top:10px;">
+    <table class="table">
+      <thead><tr><th>Code</th><th>Label</th><th>Defaults</th><th>UTBMS</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody>
+      <% if (managedActivities.isEmpty()) { %>
+        <tr><td colspan="6" class="muted">No managed activities configured.</td></tr>
+      <% } else { for (billing_accounting.BillingActivityRec act : managedActivities) {
+           if (act == null) continue;
+      %>
+        <tr>
+          <td><code><%= esc(act.code) %></code></td>
+          <td><%= esc(act.label) %></td>
+          <td>rate <code><%= esc(centsToText(act.defaultRateCents)) %></code> | <%= act.defaultBillable ? "billable" : "non-billable" %></td>
+          <td>task=<code><%= esc(act.utbmsTaskCode) %></code> activity=<code><%= esc(act.utbmsActivityCode) %></code> expense=<code><%= esc(act.utbmsExpenseCode) %></code></td>
+          <td><%= act.active ? "active" : "inactive" %></td>
+          <td>
+            <% if (act.active) { %>
+              <form method="post" action="<%= ctx %>/billing.jsp" class="mini-action">
+                <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                <input type="hidden" name="action" value="deactivate_billing_activity" />
+                <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+                <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+                <input type="hidden" name="activity_code" value="<%= esc(act.code) %>" />
+                <button class="btn btn-ghost danger" type="submit">Deactivate</button>
+              </form>
+            <% } else { %>
+              <span class="muted">-</span>
+            <% } %>
+          </td>
+        </tr>
+      <% }} %>
+      </tbody>
+    </table>
   </div>
 </section>
 
@@ -639,6 +909,279 @@
       </div>
       <button class="btn btn-ghost" type="submit" name="action" value="trust_refund">Post Trust Refund</button>
     </form>
+  </div>
+</section>
+
+<section class="card" style="margin-top:12px;">
+  <h2 style="margin-top:0;">Texas IOLTA Controls and Commercial Billing Features</h2>
+  <p class="meta">Adds trust-policy guardrails, disputed-fund holds, approval workflow, and payment plans/autopay inspired by common legal-practice billing systems.</p>
+
+  <div class="split-grid">
+    <form method="post" action="<%= ctx %>/billing.jsp" class="subcard">
+      <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+      <input type="hidden" name="action" value="set_trust_policy" />
+      <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+      <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+      <h3>Matter Trust Policy</h3>
+      <div class="grid grid-2">
+        <label><span>IOLTA Account Name</span><input type="text" name="policy_iolta_account_name" value="<%= esc(trustPolicy == null ? "" : trustPolicy.ioltaAccountName) %>" placeholder="Primary IOLTA" /></label>
+        <label><span>Institution Name</span><input type="text" name="policy_iolta_institution_name" value="<%= esc(trustPolicy == null ? "" : trustPolicy.ioltaInstitutionName) %>" placeholder="Eligible financial institution" /></label>
+      </div>
+      <div class="grid grid-2">
+        <label><span>Annual Certification Due</span><input type="date" name="policy_annual_due_date" value="<%= esc(asDateOrBlank(trustPolicy == null ? "" : trustPolicy.annualCertificationDueDate)) %>" /></label>
+        <label><span>Certification Completed</span><input type="date" name="policy_annual_completed_date" value="<%= esc(asDateOrBlank(trustPolicy == null ? "" : trustPolicy.annualCertificationCompletedAt)) %>" /></label>
+      </div>
+      <div class="grid grid-2">
+        <label><span>Minimum Trust Reserve (USD)</span><input type="text" name="policy_minimum_reserve" value="<%= esc(centsToText(trustPolicy == null ? 0L : trustPolicy.minimumTrustReserveCents)) %>" /></label>
+        <label><span>Policy Flags</span>
+          <div class="inline-check"><input type="checkbox" name="policy_iolta_institution_eligible" value="1" <%= trustPolicy != null && trustPolicy.ioltaInstitutionEligible ? "checked" : "" %> /> Institution eligibility confirmed</div>
+          <div class="inline-check"><input type="checkbox" name="policy_require_approval" value="1" <%= trustPolicy != null && trustPolicy.requireDisbursementApproval ? "checked" : "" %> /> Require approval for trust disbursements</div>
+        </label>
+      </div>
+      <button class="btn" type="submit">Save Matter Trust Policy</button>
+      <div class="meta" style="margin-top:8px;">
+        Ledger trust=<code><%= esc(centsToText(currentTrustBalance)) %></code>,
+        held=<code><%= esc(centsToText(heldTrustBalance)) %></code>,
+        available=<code><%= esc(centsToText(availableTrustBalance)) %></code>
+      </div>
+    </form>
+
+    <div class="subcard">
+      <h3>Disputed Funds Hold Queue</h3>
+      <form method="post" action="<%= ctx %>/billing.jsp">
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="action" value="place_trust_hold" />
+        <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+        <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+        <div class="grid grid-2">
+          <label><span>Hold Amount (USD)</span><input type="text" name="hold_amount" value="100.00" /></label>
+          <label><span>Placed At (ISO)</span><input type="text" name="hold_placed_at" placeholder="2026-03-10T10:00:00Z" /></label>
+        </div>
+        <label><span>Reason</span><textarea name="hold_reason" rows="2" placeholder="Disputed fee amount pending resolution"></textarea></label>
+        <button class="btn btn-ghost" type="submit">Place Dispute Hold</button>
+      </form>
+
+      <div class="table-wrap" style="margin-top:10px;">
+        <table class="table">
+          <thead><tr><th>Placed</th><th>Amount</th><th>Status</th><th>Reason</th><th>Action</th></tr></thead>
+          <tbody>
+          <% if (matterTrustHolds.isEmpty()) { %>
+            <tr><td colspan="5" class="muted">No trust dispute holds for this matter.</td></tr>
+          <% } else { for (billing_accounting.TrustDisputeHoldRec hold : matterTrustHolds) {
+               if (hold == null) continue;
+          %>
+            <tr>
+              <td><%= esc(hold.placedAt) %></td>
+              <td><%= esc(centsToText(hold.amountCents)) %></td>
+              <td><%= hold.active ? "active" : "released" %></td>
+              <td><%= esc(hold.reason) %><% if (!hold.active) { %><div class="meta"><%= esc(hold.resolution) %></div><% } %></td>
+              <td>
+                <% if (hold.active) { %>
+                  <form method="post" action="<%= ctx %>/billing.jsp" class="mini-action">
+                    <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                    <input type="hidden" name="action" value="release_trust_hold" />
+                    <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+                    <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+                    <input type="hidden" name="hold_uuid" value="<%= esc(hold.uuid) %>" />
+                    <input type="hidden" name="hold_released_at" value="" />
+                    <input type="hidden" name="hold_resolution" value="Released from billing hold." />
+                    <button class="btn btn-ghost" type="submit">Release</button>
+                  </form>
+                <% } else { %>
+                  <span class="muted">-</span>
+                <% } %>
+              </td>
+            </tr>
+          <% }} %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="split-grid" style="margin-top:12px;">
+    <div class="subcard">
+      <h3>Trust Disbursement Approval Workflow</h3>
+      <form method="post" action="<%= ctx %>/billing.jsp">
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="action" value="request_disbursement_approval" />
+        <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+        <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+        <div class="grid grid-2">
+          <label>
+            <span>Disbursement Type</span>
+            <select name="approval_disbursement_type">
+              <option value="trust_apply">trust_apply</option>
+              <option value="trust_refund">trust_refund</option>
+            </select>
+          </label>
+          <label>
+            <span>Invoice (for trust_apply)</span>
+            <select name="approval_invoice_uuid">
+              <option value="">(none)</option>
+              <% for (billing_accounting.InvoiceRec inv : matterInvoices) {
+                   if (inv == null) continue;
+              %>
+                <option value="<%= esc(inv.uuid) %>" <%= safe(inv.uuid).equals(selectedInvoiceUuid) ? "selected" : "" %>><%= esc(inv.uuid) %> | out <%= esc(centsToText(inv.outstandingCents)) %></option>
+              <% } %>
+            </select>
+          </label>
+        </div>
+        <div class="grid grid-2">
+          <label><span>Amount (USD)</span><input type="text" name="approval_amount" value="100.00" /></label>
+          <label><span>Requested At (ISO)</span><input type="text" name="approval_requested_at" placeholder="2026-03-10T10:00:00Z" /></label>
+        </div>
+        <label><span>Reason</span><textarea name="approval_reason" rows="2" placeholder="Client requested release of disputed funds."></textarea></label>
+        <button class="btn btn-ghost" type="submit">Request Approval</button>
+      </form>
+
+      <div class="table-wrap" style="margin-top:10px;">
+        <table class="table">
+          <thead><tr><th>Requested</th><th>Type</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody>
+          <% if (matterDisbursementApprovals.isEmpty()) { %>
+            <tr><td colspan="5" class="muted">No disbursement approvals for this matter.</td></tr>
+          <% } else { for (billing_accounting.TrustDisbursementApprovalRec approval : matterDisbursementApprovals) {
+               if (approval == null) continue;
+          %>
+            <tr>
+              <td><%= esc(approval.requestedAt) %></td>
+              <td><code><%= esc(approval.disbursementType) %></code></td>
+              <td><%= esc(centsToText(approval.amountCents)) %></td>
+              <td><%= esc(approval.status) %></td>
+              <td>
+                <% if ("requested".equals(safe(approval.status))) { %>
+                  <form method="post" action="<%= ctx %>/billing.jsp" class="mini-action">
+                    <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                    <input type="hidden" name="action" value="review_disbursement_approval" />
+                    <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+                    <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+                    <input type="hidden" name="approval_uuid" value="<%= esc(approval.uuid) %>" />
+                    <input type="hidden" name="approval_decision" value="approve" />
+                    <input type="hidden" name="approval_review_notes" value="Approved from billing screen." />
+                    <input type="hidden" name="approval_reviewed_at" value="" />
+                    <button class="btn btn-ghost" type="submit">Approve</button>
+                  </form>
+                  <form method="post" action="<%= ctx %>/billing.jsp" class="mini-action" style="margin-top:6px;">
+                    <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                    <input type="hidden" name="action" value="review_disbursement_approval" />
+                    <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+                    <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+                    <input type="hidden" name="approval_uuid" value="<%= esc(approval.uuid) %>" />
+                    <input type="hidden" name="approval_decision" value="reject" />
+                    <input type="hidden" name="approval_review_notes" value="Rejected from billing screen." />
+                    <input type="hidden" name="approval_reviewed_at" value="" />
+                    <button class="btn btn-ghost danger" type="submit">Reject</button>
+                  </form>
+                <% } else if ("approved".equals(safe(approval.status))) { %>
+                  <form method="post" action="<%= ctx %>/billing.jsp" class="mini-action">
+                    <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                    <input type="hidden" name="action" value="execute_disbursement_approval" />
+                    <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+                    <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+                    <input type="hidden" name="approval_uuid" value="<%= esc(approval.uuid) %>" />
+                    <input type="hidden" name="approval_execute_posted_at" value="" />
+                    <input type="hidden" name="approval_execute_reference" value="Approved trust disbursement" />
+                    <button class="btn" type="submit">Execute</button>
+                  </form>
+                <% } else { %>
+                  <span class="muted">-</span>
+                <% } %>
+              </td>
+            </tr>
+          <% }} %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="subcard">
+      <h3>Payment Plans and Autopay</h3>
+      <form method="post" action="<%= ctx %>/billing.jsp">
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="action" value="create_payment_plan" />
+        <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+        <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+        <label>
+          <span>Invoice</span>
+          <select name="plan_invoice_uuid">
+            <% for (billing_accounting.InvoiceRec inv : matterInvoices) {
+                 if (inv == null) continue;
+            %>
+              <option value="<%= esc(inv.uuid) %>" <%= safe(inv.uuid).equals(selectedInvoiceUuid) ? "selected" : "" %>><%= esc(inv.uuid) %> | out <%= esc(centsToText(inv.outstandingCents)) %></option>
+            <% } %>
+          </select>
+        </label>
+        <div class="grid grid-3">
+          <label><span>Installments</span><input type="number" min="1" name="plan_installment_count" value="3" /></label>
+          <label><span>Cadence Days</span><input type="number" min="1" name="plan_cadence_days" value="30" /></label>
+          <label><span>First Due Date</span><input type="date" name="plan_first_due_at" /></label>
+        </div>
+        <div class="grid grid-2">
+          <label><span>Reference</span><input type="text" name="plan_reference" value="Payment plan" /></label>
+          <label><span>Autopay</span><div class="inline-check"><input type="checkbox" name="plan_autopay" value="1" /> Enable autopay sweep</div></label>
+        </div>
+        <button class="btn btn-ghost" type="submit">Create Payment Plan</button>
+      </form>
+
+      <form method="post" action="<%= ctx %>/billing.jsp" style="margin-top:10px;">
+        <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+        <input type="hidden" name="action" value="run_autopay_sweep" />
+        <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+        <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+        <div class="grid grid-3">
+          <label><span>Autopay As-Of Date</span><input type="date" name="autopay_as_of_date" value="<%= esc(asDateOrBlank(request.getParameter("autopay_as_of_date"))) %>" /></label>
+          <label><span>Posted At (ISO)</span><input type="text" name="autopay_posted_at" placeholder="2026-03-10T10:00:00Z" /></label>
+          <label><span>Reference Prefix</span><input type="text" name="autopay_reference_prefix" value="Autopay sweep" /></label>
+        </div>
+        <button class="btn btn-ghost" type="submit">Run Autopay Sweep</button>
+      </form>
+
+      <div class="table-wrap" style="margin-top:10px;">
+        <table class="table">
+          <thead><tr><th>Plan</th><th>Invoice</th><th>Status</th><th>Next Due</th><th>Progress</th><th>Action</th></tr></thead>
+          <tbody>
+          <% if (matterPaymentPlans.isEmpty()) { %>
+            <tr><td colspan="6" class="muted">No payment plans for this matter.</td></tr>
+          <% } else { for (billing_accounting.PaymentPlanRec plan : matterPaymentPlans) {
+               if (plan == null) continue;
+          %>
+            <tr>
+              <td><code><%= esc(plan.uuid) %></code><div class="meta">autopay=<%= plan.autopay ? "yes" : "no" %></div></td>
+              <td><code><%= esc(plan.invoiceUuid) %></code></td>
+              <td><%= esc(plan.status) %></td>
+              <td><%= esc(plan.nextDueAt) %></td>
+              <td><%= plan.paymentsPostedCount %>/<%= plan.installmentCount %></td>
+              <td>
+                <% if ("active".equals(safe(plan.status))) { %>
+                  <form method="post" action="<%= ctx %>/billing.jsp" class="mini-action">
+                    <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                    <input type="hidden" name="action" value="post_payment_plan_installment" />
+                    <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+                    <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+                    <input type="hidden" name="plan_uuid" value="<%= esc(plan.uuid) %>" />
+                    <input type="hidden" name="plan_payment_posted_at" value="" />
+                    <input type="hidden" name="plan_payment_reference" value="" />
+                    <button class="btn btn-ghost" type="submit">Post Installment</button>
+                  </form>
+                  <form method="post" action="<%= ctx %>/billing.jsp" class="mini-action" style="margin-top:6px;">
+                    <input type="hidden" name="csrfToken" value="<%= esc(csrfToken) %>" />
+                    <input type="hidden" name="action" value="cancel_payment_plan" />
+                    <input type="hidden" name="matter_uuid" value="<%= esc(selectedMatterUuid) %>" />
+                    <input type="hidden" name="invoice_uuid" value="<%= esc(selectedInvoiceUuid) %>" />
+                    <input type="hidden" name="plan_uuid" value="<%= esc(plan.uuid) %>" />
+                    <button class="btn btn-ghost danger" type="submit">Cancel</button>
+                  </form>
+                <% } else { %>
+                  <span class="muted">-</span>
+                <% } %>
+              </td>
+            </tr>
+          <% }} %>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -790,7 +1333,7 @@
           <label><span>Requested Amount (USD)</span><input type="text" name="trust_request_amount" value="<%= esc(safe(request.getParameter("trust_request_amount")).isBlank() ? "500.00" : request.getParameter("trust_request_amount")) %>" /></label>
         </div>
         <div class="grid grid-2">
-          <label><span>Requested At (ISO)</span><input type="text" name="trust_request_requested_at" value="<%= esc(safe(request.getParameter("trust_request_requested_at")).isBlank() ? Instant.now().toString() : request.getParameter("trust_request_requested_at")) %>" /></label>
+          <label><span>Requested At (ISO)</span><input type="text" name="trust_request_requested_at" value="<%= esc(safe(request.getParameter("trust_request_requested_at")).isBlank() ? net.familylawandprobate.controversies.app_clock.now().toString() : request.getParameter("trust_request_requested_at")) %>" /></label>
           <label><span>Due Date</span><input type="date" name="trust_request_due_at" value="<%= esc(asDateOrBlank(request.getParameter("trust_request_due_at"))) %>" /></label>
         </div>
         <div class="grid grid-2">
@@ -819,6 +1362,20 @@
         <button class="btn btn-ghost" type="submit" name="action" value="render_statement_download">Download Statement</button>
       </div>
     </div>
+
+    <div class="subcard" style="margin-top:12px;">
+      <h3>LEDES1998B (UTBMS e-billing)</h3>
+      <div class="grid grid-3">
+        <label><span>Client ID</span><input type="text" name="ledes_client_id" value="<%= esc(safe(request.getParameter("ledes_client_id"))) %>" placeholder="CLIENT-001" /></label>
+        <label><span>Law Firm ID</span><input type="text" name="ledes_law_firm_id" value="<%= esc(safe(request.getParameter("ledes_law_firm_id"))) %>" placeholder="FIRM-001" /></label>
+        <label><span>Client Matter ID</span><input type="text" name="ledes_client_matter_id" value="<%= esc(safe(request.getParameter("ledes_client_matter_id"))) %>" placeholder="MATTER-REF-001" /></label>
+      </div>
+      <div class="meta" style="margin-top:6px;">Exports the selected invoice as LEDES1998B text with UTBMS task/activity/expense codes from managed activities and entry metadata.</div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button class="btn" type="submit" name="action" value="render_ledes_preview">Preview LEDES</button>
+        <button class="btn btn-ghost" type="submit" name="action" value="render_ledes_download">Download LEDES</button>
+      </div>
+    </div>
   </form>
 </section>
 
@@ -829,6 +1386,14 @@
     <div class="kv"><span>Invoices</span><strong><%= matterInvoices.size() %></strong></div>
     <div class="kv"><span>Matter Payments</span><strong><%= matterPayments.size() %></strong></div>
     <div class="kv"><span>Matter Trust Txns</span><strong><%= matterTrustTxns.size() %></strong></div>
+  </div>
+  <div class="meta" style="margin-top:8px;">
+    trust ledger=<code><%= esc(centsToText(currentTrustBalance)) %></code> |
+    held=<code><%= esc(centsToText(heldTrustBalance)) %></code> |
+    available=<code><%= esc(centsToText(availableTrustBalance)) %></code> |
+    approvals=<code><%= matterDisbursementApprovals.size() %></code> |
+    payment_plans=<code><%= matterPaymentPlans.size() %></code> |
+    managed_activities=<code><%= managedActivities.size() %></code>
   </div>
 
   <h3 style="margin-top:14px;">Invoice List</h3>
@@ -1066,6 +1631,9 @@
     gap:10px;
     align-items:center;
     flex-wrap:wrap;
+  }
+  .mini-action {
+    margin: 0;
   }
   .danger {
     border-color: rgba(239,68,68,0.42);

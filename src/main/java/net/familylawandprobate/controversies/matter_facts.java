@@ -1843,7 +1843,7 @@ public final class matter_facts {
     }
 
     private static String nowIso() {
-        return Instant.now().toString();
+        return app_clock.now().toString();
     }
 
     private static String safe(String s) {

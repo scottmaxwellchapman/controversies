@@ -335,6 +335,13 @@ public final class omnichannel_tickets {
             out = refreshMatterReport(tu, out.uuid, actor);
         }
         if (out != null) {
+            emitThreadMentions(
+                    tu,
+                    actor,
+                    out,
+                    (safe(out.subject).trim() + "\n" + safe(initialBody).trim()).trim(),
+                    Map.of()
+            );
             publishThreadEvent(
                     tu,
                     "omnichannel.thread.created",
@@ -357,6 +364,8 @@ public final class omnichannel_tickets {
 
         boolean changed;
         boolean needsReport;
+        boolean mentionTextChanged = false;
+        String mentionText = "";
 
         ReentrantReadWriteLock lock = lockFor(tu);
         lock.writeLock().lock();
@@ -375,6 +384,7 @@ public final class omnichannel_tickets {
                 String newAssignee = normalizeAssignmentCsv(in.assignedUserUuid);
                 String oldMode = canonicalAssignmentMode(rec.assignmentMode);
                 String newMode = canonicalAssignmentMode(in.assignmentMode);
+                String beforeMentionText = safe(rec.subject).trim();
 
                 String newSubject = clampLen(in.subject, MAX_SUBJECT_LEN).trim();
                 if (newSubject.isBlank()) throw new IllegalArgumentException("subject required");
@@ -396,6 +406,8 @@ public final class omnichannel_tickets {
                 rec.mmsEnabled = in.mmsEnabled;
                 rec.archived = in.archived;
                 rec.updatedAt = nowIso();
+                mentionText = safe(rec.subject).trim();
+                mentionTextChanged = !beforeMentionText.equals(mentionText);
 
                 changed = true;
                 needsReport = !safe(rec.matterUuid).trim().isBlank();
@@ -426,6 +438,7 @@ public final class omnichannel_tickets {
         if (changed) {
             TicketRec latest = getTicket(tu, id);
             if (latest != null) {
+                if (mentionTextChanged) emitThreadMentions(tu, actor, latest, mentionText, Map.of());
                 publishThreadEvent(
                         tu,
                         "omnichannel.thread.updated",
@@ -535,6 +548,13 @@ public final class omnichannel_tickets {
             refreshMatterReport(tu, id, actor);
         }
         if (ticket != null && rec != null) {
+            emitThreadMentions(
+                    tu,
+                    actor,
+                    ticket,
+                    safe(rec.body),
+                    Map.of("message_uuid", safe(rec.uuid))
+            );
             publishThreadEvent(
                     tu,
                     "omnichannel.message.added",
@@ -1880,7 +1900,7 @@ public final class omnichannel_tickets {
     }
 
     private static String nowIso() {
-        return Instant.now().toString();
+        return app_clock.now().toString();
     }
 
     private static String safe(String s) {
@@ -1943,6 +1963,37 @@ public final class omnichannel_tickets {
             out.add(id);
         }
         return String.join(",", out);
+    }
+
+    private static void emitThreadMentions(String tenantUuid,
+                                           String actor,
+                                           TicketRec ticket,
+                                           String text,
+                                           Map<String, String> extras) {
+        String tu = safe(tenantUuid).trim();
+        String body = safe(text).trim();
+        if (tu.isBlank() || ticket == null || body.isBlank()) return;
+
+        LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
+        details.put("source_type", "thread");
+        details.put("source_uuid", safe(ticket.uuid));
+        details.put("source_title", safe(ticket.subject).trim().isBlank() ? "Omnichannel thread" : safe(ticket.subject));
+        details.put("source_path", "/omnichannel.jsp?ticket_uuid=" + safe(ticket.uuid));
+        details.put("thread_uuid", safe(ticket.uuid));
+        details.put("matter_uuid", safe(ticket.matterUuid));
+        details.put("due_at", safe(ticket.dueAt));
+        if (extras != null && !extras.isEmpty()) details.putAll(extras);
+        try {
+            mentions.defaultService().logMentions(
+                    tu,
+                    safe(actor).trim(),
+                    safe(ticket.matterUuid),
+                    body,
+                    details
+            );
+        } catch (Exception ex) {
+            LOG.log(Level.FINE, "Omnichannel mention logging skipped: " + safe(ex.getMessage()), ex);
+        }
     }
 
     private static void audit(String action,

@@ -149,7 +149,7 @@
             boolLike((required != null && i < required.length) ? required[i] : "false"),
             boolLike((enabled != null && i < enabled.length) ? enabled[i] : "true"),
             intLike((sort != null && i < sort.length) ? sort[i] : "", (i + 1) * 10),
-            Instant.now().toString()
+            net.familylawandprobate.controversies.app_clock.now().toString()
           ));
         }
 

@@ -449,7 +449,7 @@
 
   if (allowRead && allowExport && "csv".equalsIgnoreCase(request.getParameter("export"))) {
     response.setContentType("text/csv; charset=UTF-8");
-    String fname = "custom-object-" + (objectRec == null ? "records" : safe(objectRec.key)) + "-" + Instant.now().toEpochMilli() + ".csv";
+    String fname = "custom-object-" + (objectRec == null ? "records" : safe(objectRec.key)) + "-" + net.familylawandprobate.controversies.app_clock.now().toEpochMilli() + ".csv";
     response.setHeader("Content-Disposition", "attachment; filename=\"" + fname.replaceAll("[^A-Za-z0-9._-]", "_") + "\"");
 
     StringBuilder csvOut = new StringBuilder(4096);

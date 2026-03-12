@@ -1,4 +1,6 @@
 <%@ page contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" %>
+<%@ page import="net.familylawandprobate.controversies.assembly_identity_tokens" %>
+<%@ page import="net.familylawandprobate.controversies.profile_assets" %>
 <%@ page import="net.familylawandprobate.controversies.users_roles" %>
 <%@ include file="security.jspf" %>
 
@@ -8,6 +10,34 @@
 
 <%!
   private static String usSafe(String s) { return s == null ? "" : s; }
+
+  private static String usEsc(String s) {
+    if (s == null) return "";
+    return s.replace("&","&amp;")
+            .replace("<","&lt;")
+            .replace(">","&gt;")
+            .replace("\"","&quot;")
+            .replace("'","&#39;");
+  }
+
+  private static String csrfForRender(jakarta.servlet.http.HttpServletRequest req) {
+    Object a = req.getAttribute("csrfToken");
+    if (a instanceof String) {
+      String s = (String) a;
+      if (s != null && !s.trim().isEmpty()) return s;
+    }
+    try {
+      jakarta.servlet.http.HttpSession sess = req.getSession(false);
+      if (sess != null) {
+        Object t = sess.getAttribute("CSRF_TOKEN");
+        if (t instanceof String) {
+          String cs = (String) t;
+          if (cs != null && !cs.trim().isEmpty()) return cs;
+        }
+      }
+    } catch (Exception ignored) {}
+    return "";
+  }
 %>
 
 <%
@@ -22,6 +52,19 @@
     response.sendRedirect(ctx + "/tenant_login.jsp");
     return;
   }
+
+  String csrfToken = csrfForRender(request);
+  String assetStatus = usSafe(request.getParameter("asset_status")).trim().toLowerCase();
+  String assetError = usSafe(request.getParameter("asset_error")).trim();
+  String photoMessage = "";
+  String photoError = "";
+  if (!assetError.isBlank()) photoError = assetError;
+  else if ("user_photo_saved".equals(assetStatus)) photoMessage = "User photo saved.";
+  else if ("user_photo_cleared".equals(assetStatus)) photoMessage = "User photo removed.";
+
+  profile_assets.AssetRec userPhoto = null;
+  try { userPhoto = profile_assets.defaultStore().readUserPhoto(tenantUuid, userUuid); } catch (Exception ignored) {}
+  String userPhotoUrl = assembly_identity_tokens.userPhotoUrl(ctx, userUuid);
 
   request.setAttribute("activeNav", "/user_settings.jsp");
 %>
@@ -76,6 +119,67 @@
     </form>
 
     <div id="usThemeMessage" class="alert alert-ok" style="display:none; margin-top:12px;"></div>
+  </section>
+
+  <section class="card narrow" style="margin-top:12px;">
+    <div class="section-head">
+      <div>
+        <h2 style="margin:0;">Profile Photo</h2>
+        <div class="meta">Available as form token <code>{{user.photo_url}}</code> and downloaded/stored by Controversies.</div>
+      </div>
+    </div>
+
+    <% if (!photoMessage.isBlank()) { %>
+      <div class="alert alert-ok" style="margin-top:10px;"><%= usEsc(photoMessage) %></div>
+    <% } %>
+    <% if (!photoError.isBlank()) { %>
+      <div class="alert alert-error" style="margin-top:10px;"><%= usEsc(photoError) %></div>
+    <% } %>
+
+    <div style="display:grid; grid-template-columns:minmax(180px, 240px) minmax(0, 1fr); gap:12px; align-items:start;">
+      <div style="border:1px solid var(--line); border-radius:12px; min-height:180px; display:flex; align-items:center; justify-content:center; background:var(--surface-2); padding:10px;">
+        <% if (userPhoto != null) { %>
+          <img src="<%= usEsc(userPhotoUrl) %>&t=<%= System.currentTimeMillis() %>" alt="Profile photo" style="max-width:100%; max-height:170px; object-fit:contain;" />
+        <% } else { %>
+          <div class="meta">No profile photo uploaded.</div>
+        <% } %>
+      </div>
+
+      <div style="display:grid; gap:10px;">
+        <% if (userPhoto != null) { %>
+          <div class="meta">Current photo: <strong><%= usEsc(usSafe(userPhoto.fileName)) %></strong> (<%= usEsc(usSafe(userPhoto.mimeType)) %>, <%= userPhoto.sizeBytes %> bytes)</div>
+        <% } %>
+
+        <form class="form" method="post" action="<%= ctx %>/profile_assets" enctype="multipart/form-data">
+          <input type="hidden" name="csrfToken" value="<%= usEsc(csrfToken) %>" />
+          <input type="hidden" name="action" value="upload_user_photo" />
+          <input type="hidden" name="next" value="/user_settings.jsp" />
+          <label>
+            <span>Upload photo (PNG/JPG/GIF, max <%= profile_assets.MAX_IMAGE_BYTES %> bytes)</span>
+            <input type="file" name="file" accept="image/png,image/jpeg,image/gif" required />
+          </label>
+          <div class="actions"><button class="btn" type="submit">Upload Photo</button></div>
+        </form>
+
+        <form class="form" method="post" action="<%= ctx %>/profile_assets">
+          <input type="hidden" name="csrfToken" value="<%= usEsc(csrfToken) %>" />
+          <input type="hidden" name="action" value="import_user_photo_url" />
+          <input type="hidden" name="next" value="/user_settings.jsp" />
+          <label>
+            <span>Or import photo from URL</span>
+            <input type="url" name="source_url" placeholder="https://example.com/photo.jpg" required />
+          </label>
+          <div class="actions"><button class="btn btn-ghost" type="submit">Import Photo URL</button></div>
+        </form>
+
+        <form class="form" method="post" action="<%= ctx %>/profile_assets">
+          <input type="hidden" name="csrfToken" value="<%= usEsc(csrfToken) %>" />
+          <input type="hidden" name="action" value="clear_user_photo" />
+          <input type="hidden" name="next" value="/user_settings.jsp" />
+          <button class="btn btn-ghost" type="submit" <%= userPhoto == null ? "disabled" : "" %>>Remove Photo</button>
+        </form>
+      </div>
+    </div>
   </section>
 
   <section class="card narrow" style="margin-top:12px;">

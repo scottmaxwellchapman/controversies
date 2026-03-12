@@ -158,6 +158,33 @@ public class contacts_test {
         }
     }
 
+    @Test
+    void tenant_path_tokens_are_sanitized_for_contacts_and_matter_links() throws Exception {
+        String segment = "tenant-path-test-" + UUID.randomUUID();
+        String rawTenantUuid = segment + "/nested";
+        String safeTenantUuid = safeFileToken(rawTenantUuid);
+        Path nestedContactsPath = Paths.get("data", "tenants", segment, "nested", "contacts.xml").toAbsolutePath();
+        Path nestedLinksPath = Paths.get("data", "tenants", segment, "nested", "matter_contacts.xml").toAbsolutePath();
+        try {
+            contacts store = contacts.defaultStore();
+            contacts.ContactInput in = new contacts.ContactInput();
+            in.displayName = "Scoped Tenant";
+            contacts.ContactRec rec = store.createNative(rawTenantUuid, in);
+            assertNotNull(rec);
+            assertTrue(Files.exists(Paths.get("data", "tenants", safeTenantUuid, "contacts.xml").toAbsolutePath()));
+            assertFalse(Files.exists(nestedContactsPath));
+
+            matter_contacts links = matter_contacts.defaultStore();
+            links.replaceNativeLinksForContact(rawTenantUuid, rec.uuid, List.of("matter-1"));
+            assertEquals(1, links.listByContact(rawTenantUuid, rec.uuid).size());
+            assertTrue(Files.exists(Paths.get("data", "tenants", safeTenantUuid, "matter_contacts.xml").toAbsolutePath()));
+            assertFalse(Files.exists(nestedLinksPath));
+        } finally {
+            deleteTenantDirQuiet(safeTenantUuid);
+            deleteTenantDirQuiet(segment);
+        }
+    }
+
     private static void deleteTenantDirQuiet(String tenantUuid) {
         if (tenantUuid == null || tenantUuid.isBlank()) return;
         Path root = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();
@@ -168,5 +195,12 @@ public class contacts_test {
             });
         } catch (Exception ignored) {
         }
+    }
+
+    private static String safeFileToken(String raw) {
+        if (raw == null) return "";
+        String t = raw.trim();
+        if (t.isBlank()) return "";
+        return t.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 }

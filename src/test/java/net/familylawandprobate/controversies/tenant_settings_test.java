@@ -64,6 +64,28 @@ public class tenant_settings_test {
     }
 
     @Test
+    void sanitize_supports_vpn_deployment_topology_aliases() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("integration_deployment_topology", "PRIVATE_VPN");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("vpn", out.get("integration_deployment_topology"));
+    }
+
+    @Test
+    void sanitize_defaults_invalid_deployment_topology_to_public() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("integration_deployment_topology", "dmz");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+        assertEquals("public", out.get("integration_deployment_topology"));
+    }
+
+    @Test
     void sanitize_supports_clio_sync_interval_and_document_sync_timestamp() {
         tenant_settings store = tenant_settings.defaultStore();
 
@@ -236,6 +258,30 @@ public class tenant_settings_test {
         assertEquals("1024", out.get("storage_cache_size_webdav_mb"));
         assertEquals("1024", out.get("storage_cache_size_s3_compatible_mb"));
         assertEquals("1024", out.get("storage_cache_size_onedrive_business_mb"));
+    }
+
+    @Test
+    void sanitize_supports_storage_dedup_links_enabled() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_dedup_links_enabled", "off");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("false", out.get("storage_dedup_links_enabled"));
+    }
+
+    @Test
+    void sanitize_defaults_invalid_storage_dedup_links_enabled() {
+        tenant_settings store = tenant_settings.defaultStore();
+
+        LinkedHashMap<String, String> in = new LinkedHashMap<String, String>();
+        in.put("storage_dedup_links_enabled", "maybe");
+
+        Map<String, String> out = store.sanitizeSettings(in);
+
+        assertEquals("true", out.get("storage_dedup_links_enabled"));
     }
 
     @Test

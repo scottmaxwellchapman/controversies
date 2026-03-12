@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Comparator;
+import java.util.List;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,53 @@ public class document_workflow_test {
         part_versions versions = part_versions.defaultStore();
         versions.create(tenant, matter, doc.uuid, part.uuid, "v1", "generated", "application/pdf", "abc", "100", "vault://x", "Atty", "", true);
         assertEquals(1, versions.listAll(tenant, matter, doc.uuid, part.uuid).size());
+    }
+
+    @Test
+    void document_part_and_version_events_can_trigger_bpm_workflows() throws Exception {
+        String tenant = "tenant-doc-test";
+        String matter = "matter-events";
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition partProcess = new business_process_manager.ProcessDefinition();
+        partProcess.name = "Part Event Watch";
+        business_process_manager.ProcessTrigger partTrigger = new business_process_manager.ProcessTrigger();
+        partTrigger.type = "document.part.created";
+        partProcess.triggers.add(partTrigger);
+        business_process_manager.ProcessStep partStep = new business_process_manager.ProcessStep();
+        partStep.stepId = "part_log";
+        partStep.order = 10;
+        partStep.action = "log_note";
+        partStep.settings.put("message", "Part created: {{event.part_uuid}}");
+        partProcess.steps.add(partStep);
+        bpm.saveProcess(tenant, partProcess);
+
+        business_process_manager.ProcessDefinition versionProcess = new business_process_manager.ProcessDefinition();
+        versionProcess.name = "Version Event Watch";
+        business_process_manager.ProcessTrigger versionTrigger = new business_process_manager.ProcessTrigger();
+        versionTrigger.type = "document.version.created";
+        versionProcess.triggers.add(versionTrigger);
+        business_process_manager.ProcessStep versionStep = new business_process_manager.ProcessStep();
+        versionStep.stepId = "version_log";
+        versionStep.order = 10;
+        versionStep.action = "log_note";
+        versionStep.settings.put("message", "Version created: {{event.version_uuid}}");
+        versionProcess.steps.add(versionStep);
+        bpm.saveProcess(tenant, versionProcess);
+
+        documents docs = documents.defaultStore();
+        documents.DocumentRec doc = docs.create(tenant, matter, "Event Doc", "pleading", "motion", "draft", "Atty", "work_product", "", "", "");
+
+        document_parts parts = document_parts.defaultStore();
+        document_parts.PartRec part = parts.create(tenant, matter, doc.uuid, "Argument", "attachment", "1", "confidential", "Atty", "");
+
+        part_versions versions = part_versions.defaultStore();
+        versions.create(tenant, matter, doc.uuid, part.uuid, "v1", "generated", "application/pdf", "abc", "100", "vault://event", "Atty", "", true);
+
+        List<business_process_manager.RunResult> runs = bpm.listRuns(tenant, 20);
+        assertEquals(2, runs.size());
+        assertEquals("completed", runs.get(0).status);
+        assertEquals("completed", runs.get(1).status);
     }
 
     @Test

@@ -240,7 +240,7 @@ public final class online_payments {
         if (amount > invoice.outstandingCents) throw new IllegalArgumentException("amount exceeds invoice outstanding.");
 
         Processor processor = processorByKey(input.processorKey);
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         String txUuid = "paytx_" + UUID.randomUUID().toString().replace("-", "");
         ProviderCheckout providerCheckout = processor.createCheckout(tu, input, invoice, txUuid);
 
@@ -339,7 +339,7 @@ public final class online_payments {
         String tu = safeToken(tenantUuid);
         String tx = safe(transactionUuid).trim();
         if (tu.isBlank() || tx.isBlank()) throw new IllegalArgumentException("tenantUuid and transactionUuid are required.");
-        String when = safe(postedAt).trim().isBlank() ? Instant.now().toString() : safe(postedAt).trim();
+        String when = safe(postedAt).trim().isBlank() ? app_clock.now().toString() : safe(postedAt).trim();
 
         ReentrantReadWriteLock lock = lockFor(tu);
         lock.writeLock().lock();
@@ -366,7 +366,7 @@ public final class online_payments {
             row.reference = safe(reference).trim();
             row.error_message = "";
             row.paid_at = when;
-            row.updated_at = Instant.now().toString();
+            row.updated_at = app_clock.now().toString();
             file.updated_at = row.updated_at;
             writeLocked(tu, file);
             fireIntegrationEvent(tu, "payments.transaction.paid", row);
@@ -389,7 +389,7 @@ public final class online_payments {
             if (row == null) throw new IllegalArgumentException("Payment transaction not found.");
             row.status = STATUS_FAILED;
             row.error_message = safe(errorMessage);
-            row.failed_at = Instant.now().toString();
+            row.failed_at = app_clock.now().toString();
             row.updated_at = row.failed_at;
             file.updated_at = row.updated_at;
             writeLocked(tu, file);
@@ -414,8 +414,8 @@ public final class online_payments {
             if (STATUS_PAID.equals(normalizeStatus(row.status))) throw new IllegalStateException("Paid transaction cannot be cancelled.");
             row.status = STATUS_CANCELLED;
             row.error_message = safe(reason);
-            row.failed_at = safe(row.failed_at).trim().isBlank() ? Instant.now().toString() : row.failed_at;
-            row.updated_at = Instant.now().toString();
+            row.failed_at = safe(row.failed_at).trim().isBlank() ? app_clock.now().toString() : row.failed_at;
+            row.updated_at = app_clock.now().toString();
             file.updated_at = row.updated_at;
             writeLocked(tu, file);
             fireIntegrationEvent(tu, "payments.transaction.cancelled", row);
@@ -536,7 +536,7 @@ public final class online_payments {
         Files.createDirectories(file.getParent());
         if (Files.exists(file)) return;
         FileRec empty = new FileRec();
-        empty.updated_at = Instant.now().toString();
+        empty.updated_at = app_clock.now().toString();
         writeJsonAtomic(file, empty);
     }
 
@@ -558,7 +558,7 @@ public final class online_payments {
     private static void writeLocked(String tenantToken, FileRec file) throws Exception {
         if (file == null) file = new FileRec();
         if (file.transactions == null) file.transactions = new ArrayList<StoredTransactionRec>();
-        if (safe(file.updated_at).trim().isBlank()) file.updated_at = Instant.now().toString();
+        if (safe(file.updated_at).trim().isBlank()) file.updated_at = app_clock.now().toString();
         writeJsonAtomic(storePath(tenantToken), file);
     }
 

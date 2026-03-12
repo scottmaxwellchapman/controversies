@@ -16,6 +16,7 @@
 <%@ page import="net.familylawandprobate.controversies.pdf_redaction_service" %>
 <%@ page import="net.familylawandprobate.controversies.pdf_version_background_jobs" %>
 <%@ page import="net.familylawandprobate.controversies.texas_pdf_compatibility_checker" %>
+<%@ page import="net.familylawandprobate.controversies.document_editor_service" %>
 <%@ include file="security.jspf" %>
 <% if (!require_login()) return; %>
 <%!
@@ -416,9 +417,13 @@ try { pdfsandwichAvailable = pdf_version_background_jobs.defaultService().isPdfS
     <%
       Path rowSourcePath = pdf_redaction_service.resolveStoragePath(safe(r.storagePath));
       boolean rowPreviewRenderable = isPreviewRenderable(rowSourcePath, tenantUuid);
+      boolean rowWysiwygEditable = document_editor_service.isWysiwygEditable(rowSourcePath, r.mimeType);
     %>
     <% if (rowPreviewRenderable) { %>
       <a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(docUuid) %>&part_uuid=<%= enc(partUuid) %>&view_version_uuid=<%= enc(safe(r.uuid)) %>&page=0">Preview</a>
+    <% } %>
+    <% if (!docReadOnly && rowWysiwygEditable) { %>
+      <a class="btn btn-ghost" href="<%= ctx %>/version_editor.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(docUuid) %>&part_uuid=<%= enc(partUuid) %>&version_uuid=<%= enc(safe(r.uuid)) %>">Edit</a>
     <% } %>
     <% if (isPdfVersion(r)) { %>
       <a class="btn btn-ghost" href="<%= ctx %>/versions.jsp?case_uuid=<%= enc(caseUuid) %>&doc_uuid=<%= enc(docUuid) %>&part_uuid=<%= enc(partUuid) %>&check_pdf_version_uuid=<%= enc(safe(r.uuid)) %>">TX Check</a>

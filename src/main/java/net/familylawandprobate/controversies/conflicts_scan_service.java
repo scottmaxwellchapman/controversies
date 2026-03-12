@@ -74,7 +74,7 @@ public final class conflicts_scan_service {
         ScanSummary summary = new ScanSummary();
         summary.tenantUuid = tu;
         summary.matterUuid = mu;
-        summary.startedAt = Instant.now().toString();
+        summary.startedAt = app_clock.now().toString();
 
         matters.MatterRec matter = matters.defaultStore().getByUuid(tu, mu);
         if (matter == null) {
@@ -90,7 +90,7 @@ public final class conflicts_scan_service {
         ArrayList<VersionTarget> targets = collectVersionTargets(tu, mu, matter);
         summary.versionsTotal = targets.size();
         LinkedHashSet<String> seenVersionUuids = new LinkedHashSet<String>();
-        String nowIso = Instant.now().toString();
+        String nowIso = app_clock.now().toString();
 
         for (VersionTarget target : targets) {
             if (target == null || target.version == null) continue;
@@ -142,11 +142,11 @@ public final class conflicts_scan_service {
         matter_conflicts.FileRec out = new matter_conflicts.FileRec();
         out.entries = new ArrayList<matter_conflicts.ConflictEntry>(entriesByKey.values());
         out.versionScanState = scanState;
-        out.lastScannedAt = Instant.now().toString();
+        out.lastScannedAt = app_clock.now().toString();
         out.updatedAt = out.lastScannedAt;
         conflictsStore.write(tu, mu, out);
 
-        summary.completedAt = Instant.now().toString();
+        summary.completedAt = app_clock.now().toString();
         summary.message = "Scanned " + summary.versionsScanned + "/" + summary.versionsTotal
                 + " version(s), skipped " + summary.versionsSkipped
                 + ", entities=" + (summary.nlpEntities + summary.linkedContactEntities)
@@ -185,7 +185,7 @@ public final class conflicts_scan_service {
                 ScanSummary failed = new ScanSummary();
                 failed.tenantUuid = tu;
                 failed.matterUuid = mu;
-                failed.startedAt = Instant.now().toString();
+                failed.startedAt = app_clock.now().toString();
                 failed.completedAt = failed.startedAt;
                 failed.message = "Scan failed: " + safe(ex.getMessage());
                 out.add(failed);

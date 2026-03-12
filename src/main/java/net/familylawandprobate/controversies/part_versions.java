@@ -50,6 +50,16 @@ public final class part_versions {
         return out;
     }
 
+    public VersionRec get(String tenantUuid, String matterUuid, String docUuid, String partUuid, String versionUuid) throws Exception {
+        String id = document_workflow_support.safe(versionUuid).trim();
+        if (id.isBlank()) return null;
+        for (VersionRec rec : listAll(tenantUuid, matterUuid, docUuid, partUuid)) {
+            if (rec == null) continue;
+            if (id.equals(document_workflow_support.safe(rec.uuid).trim())) return rec;
+        }
+        return null;
+    }
+
     public VersionRec create(String tenantUuid, String matterUuid, String docUuid, String partUuid, String versionLabel,
                              String source, String mimeType, String checksum, String fileSizeBytes,
                              String storagePath, String createdBy, String notes, boolean makeCurrent) throws Exception {
@@ -108,6 +118,40 @@ public final class part_versions {
           .append("</").append(tag).append(">\n");
     }
 
+    private static void publishVersionEvent(String tenantUuid,
+                                            String matterUuid,
+                                            String docUuid,
+                                            String partUuid,
+                                            String eventType,
+                                            VersionRec rec) {
+        if (rec == null) return;
+        try {
+            LinkedHashMap<String, String> payload = new LinkedHashMap<String, String>();
+            payload.put("matter_uuid", document_workflow_support.safe(matterUuid));
+            payload.put("doc_uuid", document_workflow_support.safe(docUuid));
+            payload.put("part_uuid", document_workflow_support.safe(partUuid));
+            payload.put("version_uuid", document_workflow_support.safe(rec.uuid));
+            payload.put("version_label", document_workflow_support.safe(rec.versionLabel));
+            payload.put("source", document_workflow_support.safe(rec.source));
+            payload.put("mime_type", document_workflow_support.safe(rec.mimeType));
+            payload.put("checksum", document_workflow_support.safe(rec.checksum));
+            payload.put("file_size_bytes", document_workflow_support.safe(rec.fileSizeBytes));
+            payload.put("storage_path", document_workflow_support.safe(rec.storagePath));
+            payload.put("created_by", document_workflow_support.safe(rec.createdBy));
+            payload.put("notes", document_workflow_support.safe(rec.notes));
+            payload.put("created_at", document_workflow_support.safe(rec.createdAt));
+            payload.put("current", rec.current ? "true" : "false");
+            business_process_manager.defaultService().triggerEvent(
+                    document_workflow_support.safe(tenantUuid),
+                    document_workflow_support.safe(eventType),
+                    payload,
+                    "",
+                    "part_versions.store"
+            );
+        } catch (Exception ignored) {
+        }
+    }
+
     private static Path versionsPath(String tenantUuid, String matterUuid, String docUuid, String partUuid) {
         document_parts parts = document_parts.defaultStore();
         Path partFolder = parts.partFolder(tenantUuid, matterUuid, docUuid, partUuid);
@@ -149,7 +193,7 @@ public final class part_versions {
         rec.storagePath = document_workflow_support.safe(storagePath).trim();
         rec.createdBy = document_workflow_support.safe(createdBy).trim();
         rec.notes = document_workflow_support.safe(notes).trim();
-        rec.createdAt = Instant.now().toString();
+        rec.createdAt = app_clock.now().toString();
         rec.current = makeCurrent || all.isEmpty();
         all.add(rec);
         writeAll(tenantUuid, matterUuid, docUuid, partUuid, all);
@@ -171,6 +215,7 @@ public final class part_versions {
                 document_workflow_support.safe(docUuid).trim(),
                 details
         );
+        publishVersionEvent(tenantUuid, matterUuid, docUuid, partUuid, "document.version.created", rec);
         return rec;
     }
 }

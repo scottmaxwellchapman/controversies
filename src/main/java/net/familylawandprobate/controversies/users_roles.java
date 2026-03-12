@@ -89,6 +89,8 @@ public final class users_roles {
     // -----------------------------
     public static final String S_USER_UUID   = "user.uuid";
     public static final String S_USER_EMAIL  = "user.email";
+    public static final String S_USER_BILLING_INITIALS = "user.billing.initials";
+    public static final String S_USER_DEFAULT_HOURLY_RATE_CENTS = "user.default.hourly_rate_cents";
     public static final String S_ROLE_UUID   = "user.role.uuid";
     public static final String S_ROLE_LABEL  = "user.role.label";
     public static final String S_PERMS_MAP   = "user.perms.map";     // Map<String,String>
@@ -123,6 +125,7 @@ public final class users_roles {
     private static final String USER_TWO_FACTOR_ENGINE_INHERIT = "inherit";
     private static final String USER_TWO_FACTOR_ENGINE_EMAIL_PIN = "email_pin";
     private static final String USER_TWO_FACTOR_ENGINE_FLOWROUTE_SMS = "flowroute_sms";
+    private static final String BILLING_INITIALS_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     public static users_roles defaultStore() {
         return new users_roles();
@@ -137,12 +140,14 @@ public final class users_roles {
         public final String roleUuid;
         public final String emailAddress;           // stored normalized (lowercase trim)
         public final String algo2idPasswordHash;    // Argon2id encoded string
+        public final String billingInitials;        // fixed 3-char uppercase initials
+        public final long defaultHourlyRateCents;   // >= 0
         public final boolean twoFactorEnabled;
         public final String twoFactorEngine;        // inherit | email_pin | flowroute_sms
         public final String twoFactorPhone;         // optional phone destination (for SMS)
 
         public UserRec(String uuid, boolean enabled, String roleUuid, String emailAddress, String algo2idPasswordHash) {
-            this(uuid, enabled, roleUuid, emailAddress, algo2idPasswordHash, false, USER_TWO_FACTOR_ENGINE_INHERIT, "");
+            this(uuid, enabled, roleUuid, emailAddress, algo2idPasswordHash, "", 0L, false, USER_TWO_FACTOR_ENGINE_INHERIT, "");
         }
 
         public UserRec(String uuid,
@@ -153,11 +158,30 @@ public final class users_roles {
                        boolean twoFactorEnabled,
                        String twoFactorEngine,
                        String twoFactorPhone) {
+            this(uuid, enabled, roleUuid, emailAddress, algo2idPasswordHash, "", 0L, twoFactorEnabled, twoFactorEngine, twoFactorPhone);
+        }
+
+        public UserRec(String uuid,
+                       boolean enabled,
+                       String roleUuid,
+                       String emailAddress,
+                       String algo2idPasswordHash,
+                       String billingInitials,
+                       long defaultHourlyRateCents,
+                       boolean twoFactorEnabled,
+                       String twoFactorEngine,
+                       String twoFactorPhone) {
             this.uuid = safe(uuid);
             this.enabled = enabled;
             this.roleUuid = safe(roleUuid);
             this.emailAddress = normalizeEmail(emailAddress);
             this.algo2idPasswordHash = safe(algo2idPasswordHash);
+            this.billingInitials = normalizeBillingInitials(
+                    safe(billingInitials).trim().isBlank() ? deriveBillingInitials(emailAddress, uuid) : billingInitials,
+                    emailAddress,
+                    uuid
+            );
+            this.defaultHourlyRateCents = Math.max(0L, defaultHourlyRateCents);
             this.twoFactorEnabled = twoFactorEnabled;
             this.twoFactorEngine = normalizeUserTwoFactorEngine(twoFactorEngine);
             this.twoFactorPhone = normalizePhone(twoFactorPhone);
@@ -248,7 +272,7 @@ public final class users_roles {
 
             UserBinding b = new UserBinding(tu, uu, email, roleUuid, ip, sid, cookieBind);
 
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             String xml =
                     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
                     "<userBinding created=\"" + xmlAttr(now) + "\" updated=\"" + xmlAttr(now) + "\" " +
@@ -450,6 +474,8 @@ public final class users_roles {
                     adminRole.uuid,
                     adminEmail,
                     hash,
+                    allocateBillingInitials(users, deriveBillingInitials(adminEmail, BOOTSTRAP_ADMIN_EMAIL), ""),
+                    0L,
                     false,
                     USER_TWO_FACTOR_ENGINE_INHERIT,
                     ""
@@ -499,6 +525,8 @@ public final class users_roles {
                                 roleUuid,
                                 email,
                                 hash,
+                                adminUser.billingInitials,
+                                adminUser.defaultHourlyRateCents,
                                 adminUser.twoFactorEnabled,
                                 adminUser.twoFactorEngine,
                                 adminUser.twoFactorPhone
@@ -565,6 +593,8 @@ public final class users_roles {
 
         session.setAttribute(S_USER_UUID, ar.user.uuid);
         session.setAttribute(S_USER_EMAIL, ar.user.emailAddress);
+        session.setAttribute(S_USER_BILLING_INITIALS, ar.user.billingInitials);
+        session.setAttribute(S_USER_DEFAULT_HOURLY_RATE_CENTS, String.valueOf(ar.user.defaultHourlyRateCents));
         session.setAttribute(S_ROLE_UUID, ar.role.uuid);
         session.setAttribute(S_ROLE_LABEL, ar.role.label);
 
@@ -595,6 +625,8 @@ public final class users_roles {
 
         session.removeAttribute(S_USER_UUID);
         session.removeAttribute(S_USER_EMAIL);
+        session.removeAttribute(S_USER_BILLING_INITIALS);
+        session.removeAttribute(S_USER_DEFAULT_HOURLY_RATE_CENTS);
         session.removeAttribute(S_ROLE_UUID);
         session.removeAttribute(S_ROLE_LABEL);
         session.removeAttribute(S_PERMS_MAP);
@@ -698,7 +730,7 @@ public final class users_roles {
      * Creates a new user. Enforces unique email (case-insensitive).
      */
     public UserRec createUser(String tenantUuid, String email, String roleUuid, boolean enabled, char[] password) throws Exception {
-        return createUser(tenantUuid, email, roleUuid, enabled, password, false);
+        return createUser(tenantUuid, email, roleUuid, enabled, password, "", 0L, false);
     }
 
     /**
@@ -710,6 +742,22 @@ public final class users_roles {
                               String roleUuid,
                               boolean enabled,
                               char[] password,
+                              boolean bypassPasswordPolicy) throws Exception {
+        return createUser(tenantUuid, email, roleUuid, enabled, password, "", 0L, bypassPasswordPolicy);
+    }
+
+    /**
+     * Creates a new user with explicit billing profile fields.
+     * Billing initials are normalized to 3 uppercase alphanumeric chars.
+     * When initials are omitted, they are derived from email/uuid and de-duplicated.
+     */
+    public UserRec createUser(String tenantUuid,
+                              String email,
+                              String roleUuid,
+                              boolean enabled,
+                              char[] password,
+                              String billingInitials,
+                              long defaultHourlyRateCents,
                               boolean bypassPasswordPolicy) throws Exception {
         String tu = safe(tenantUuid).trim();
         String em = normalizeEmail(email);
@@ -735,7 +783,27 @@ public final class users_roles {
             String uuid = UUID.randomUUID().toString();
             String hash = Argon2id.hash(password, pepper);
 
-            UserRec u = new UserRec(uuid, enabled, ru, em, hash, false, USER_TWO_FACTOR_ENGINE_INHERIT, "");
+            String normalizedInitials = normalizeBillingInitials(billingInitials, em, uuid);
+            boolean explicitInitials = !safe(billingInitials).trim().isBlank();
+            if (explicitInitials && isBillingInitialsInUse(users, normalizedInitials, "")) {
+                throw new IllegalStateException("Billing initials already exist");
+            }
+            if (!explicitInitials) {
+                normalizedInitials = allocateBillingInitials(users, normalizedInitials, "");
+            }
+
+            UserRec u = new UserRec(
+                    uuid,
+                    enabled,
+                    ru,
+                    em,
+                    hash,
+                    normalizedInitials,
+                    Math.max(0L, defaultHourlyRateCents),
+                    false,
+                    USER_TWO_FACTOR_ENGINE_INHERIT,
+                    ""
+            );
             users.add(u);
 
             writeUsers(tu, users);
@@ -781,6 +849,8 @@ public final class users_roles {
                             u.roleUuid,
                             em,
                             u.algo2idPasswordHash,
+                            u.billingInitials,
+                            u.defaultHourlyRateCents,
                             u.twoFactorEnabled,
                             u.twoFactorEngine,
                             u.twoFactorPhone
@@ -807,6 +877,46 @@ public final class users_roles {
 
     public boolean updateUserTwoFactorPhone(String tenantUuid, String userUuid, String phoneNumber) throws Exception {
         return updateUserField(tenantUuid, userUuid, "two_factor_phone", normalizePhone(phoneNumber));
+    }
+
+    public boolean updateUserBillingInitials(String tenantUuid, String userUuid, String billingInitials) throws Exception {
+        String tu = safe(tenantUuid).trim();
+        String uu = safe(userUuid).trim();
+        String raw = safe(billingInitials).trim();
+        if (tu.isBlank() || uu.isBlank() || raw.isBlank()) return false;
+
+        ReentrantReadWriteLock lock = lockFor(tu);
+        lock.writeLock().lock();
+        try {
+            ensure(tu);
+            List<UserRec> users = readUsers(tu);
+            UserRec target = null;
+            for (UserRec u : users) {
+                if (u != null && uu.equals(u.uuid)) {
+                    target = u;
+                    break;
+                }
+            }
+            if (target == null) return false;
+
+            String normalized = normalizeBillingInitials(raw, target.emailAddress, target.uuid);
+            if (isBillingInitialsInUse(users, normalized, uu)) {
+                throw new IllegalStateException("Billing initials already exist");
+            }
+
+            return updateUserField(tu, uu, "billing_initials", normalized);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public boolean updateUserDefaultHourlyRateCents(String tenantUuid, String userUuid, long defaultHourlyRateCents) throws Exception {
+        return updateUserField(
+                tenantUuid,
+                userUuid,
+                "default_hourly_rate_cents",
+                String.valueOf(Math.max(0L, defaultHourlyRateCents))
+        );
     }
 
     public boolean updateUserTwoFactorSettings(String tenantUuid,
@@ -844,6 +954,8 @@ public final class users_roles {
                         u.roleUuid,
                         u.emailAddress,
                         u.algo2idPasswordHash,
+                        u.billingInitials,
+                        u.defaultHourlyRateCents,
                         enabled,
                         normalizedEngine,
                         normalizedPhone
@@ -894,6 +1006,8 @@ public final class users_roles {
                             u.roleUuid,
                             u.emailAddress,
                             newHash,
+                            u.billingInitials,
+                            u.defaultHourlyRateCents,
                             u.twoFactorEnabled,
                             u.twoFactorEngine,
                             u.twoFactorPhone
@@ -1126,6 +1240,8 @@ public final class users_roles {
             String roleUuid = text(e, "role_uuid");
             String email = text(e, "email_address");
             String hash = text(e, "algo2id_password_hash");
+            String billingInitials = text(e, "billing_initials");
+            long defaultHourlyRateCents = parseLongSafe(text(e, "default_hourly_rate_cents"), 0L);
             boolean twoFactorEnabled = parseBool(text(e, "two_factor_enabled"), false);
             String twoFactorEngine = normalizeUserTwoFactorEngine(text(e, "two_factor_engine"));
             String twoFactorPhone = normalizePhone(text(e, "two_factor_phone"));
@@ -1137,6 +1253,8 @@ public final class users_roles {
                     roleUuid,
                     email,
                     hash,
+                    billingInitials,
+                    defaultHourlyRateCents,
                     twoFactorEnabled,
                     twoFactorEngine,
                     twoFactorPhone
@@ -1186,7 +1304,7 @@ public final class users_roles {
         Path p = usersPath(tenantUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(8192);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<users updated=\"").append(xmlAttr(now)).append("\">\n");
@@ -1199,6 +1317,8 @@ public final class users_roles {
             sb.append("    <role_uuid>").append(xmlText(u.roleUuid)).append("</role_uuid>\n");
             sb.append("    <email_address>").append(xmlText(u.emailAddress)).append("</email_address>\n");
             sb.append("    <algo2id_password_hash>").append(xmlText(u.algo2idPasswordHash)).append("</algo2id_password_hash>\n");
+            sb.append("    <billing_initials>").append(xmlText(u.billingInitials)).append("</billing_initials>\n");
+            sb.append("    <default_hourly_rate_cents>").append(Math.max(0L, u.defaultHourlyRateCents)).append("</default_hourly_rate_cents>\n");
             sb.append("    <two_factor_enabled>").append(u.twoFactorEnabled ? "true" : "false").append("</two_factor_enabled>\n");
             sb.append("    <two_factor_engine>").append(xmlText(u.twoFactorEngine)).append("</two_factor_engine>\n");
             sb.append("    <two_factor_phone>").append(xmlText(u.twoFactorPhone)).append("</two_factor_phone>\n");
@@ -1213,7 +1333,7 @@ public final class users_roles {
         Path p = rolesPath(tenantUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(8192);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<roles updated=\"").append(xmlAttr(now)).append("\">\n");
@@ -1268,6 +1388,8 @@ public final class users_roles {
                 String roleUuid = u.roleUuid;
                 String email = u.emailAddress;
                 String hash = u.algo2idPasswordHash;
+                String billingInitials = u.billingInitials;
+                long defaultHourlyRateCents = u.defaultHourlyRateCents;
                 boolean twoFactorEnabled = u.twoFactorEnabled;
                 String twoFactorEngine = u.twoFactorEngine;
                 String twoFactorPhone = u.twoFactorPhone;
@@ -1277,6 +1399,14 @@ public final class users_roles {
                     case "role_uuid" -> roleUuid = safe(newValue).trim();
                     case "email_address" -> email = normalizeEmail(newValue);
                     case "algo2id_password_hash" -> hash = safe(newValue);
+                    case "billing_initials" -> {
+                        String normalized = normalizeBillingInitials(newValue, email, uuid);
+                        if (isBillingInitialsInUse(users, normalized, uuid)) {
+                            throw new IllegalStateException("Billing initials already exist");
+                        }
+                        billingInitials = normalized;
+                    }
+                    case "default_hourly_rate_cents" -> defaultHourlyRateCents = Math.max(0L, parseLongSafe(newValue, defaultHourlyRateCents));
                     case "two_factor_enabled" -> twoFactorEnabled = parseBool(newValue, twoFactorEnabled);
                     case "two_factor_engine" -> twoFactorEngine = normalizeUserTwoFactorEngine(newValue);
                     case "two_factor_phone" -> twoFactorPhone = normalizePhone(newValue);
@@ -1289,6 +1419,8 @@ public final class users_roles {
                         roleUuid,
                         email,
                         hash,
+                        billingInitials,
+                        defaultHourlyRateCents,
                         twoFactorEnabled,
                         twoFactorEngine,
                         twoFactorPhone
@@ -1492,8 +1624,108 @@ public final class users_roles {
         return "true".equals(v) || "1".equals(v) || "yes".equals(v) || "y".equals(v);
     }
 
+    private static long parseLongSafe(String raw, long def) {
+        String v = safe(raw).trim();
+        if (v.isBlank()) return def;
+        try {
+            return Long.parseLong(v);
+        } catch (Exception ignored) {
+            return def;
+        }
+    }
+
     private static String normalizeEmail(String email) {
         return safe(email).trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean isBillingInitialsInUse(List<UserRec> users, String billingInitials, String excludeUserUuid) {
+        String wanted = safe(billingInitials).trim().toUpperCase(Locale.ROOT);
+        String exclude = safe(excludeUserUuid).trim();
+        if (wanted.isBlank() || users == null || users.isEmpty()) return false;
+        for (UserRec u : users) {
+            if (u == null) continue;
+            if (!exclude.isBlank() && exclude.equals(safe(u.uuid).trim())) continue;
+            if (wanted.equals(safe(u.billingInitials).trim().toUpperCase(Locale.ROOT))) return true;
+        }
+        return false;
+    }
+
+    private static String allocateBillingInitials(List<UserRec> users, String preferred, String excludeUserUuid) {
+        String base = safe(preferred).trim().toUpperCase(Locale.ROOT);
+        if (base.isBlank()) base = "XXX";
+        if (!isBillingInitialsInUse(users, base, excludeUserUuid)) return base;
+
+        int alphabetSize = BILLING_INITIALS_ALPHABET.length();
+        int space = alphabetSize * alphabetSize * alphabetSize;
+        int seed = Math.abs((base + "|" + safe(excludeUserUuid)).hashCode());
+        for (int i = 0; i < space; i++) {
+            int code = (seed + i) % space;
+            String candidate = billingCodeFromOrdinal(code);
+            if (!isBillingInitialsInUse(users, candidate, excludeUserUuid)) return candidate;
+        }
+        throw new IllegalStateException("No billing initials available");
+    }
+
+    private static String billingCodeFromOrdinal(int ordinal) {
+        int alphabetSize = BILLING_INITIALS_ALPHABET.length();
+        int v = Math.max(0, ordinal);
+        int c1 = v / (alphabetSize * alphabetSize);
+        int rem = v % (alphabetSize * alphabetSize);
+        int c2 = rem / alphabetSize;
+        int c3 = rem % alphabetSize;
+        return "" + BILLING_INITIALS_ALPHABET.charAt(c1)
+                + BILLING_INITIALS_ALPHABET.charAt(c2)
+                + BILLING_INITIALS_ALPHABET.charAt(c3);
+    }
+
+    private static String normalizeBillingInitials(String initials, String email, String seed) {
+        String clean = billingChars(initials);
+        if (clean.isBlank()) {
+            clean = deriveBillingInitials(email, seed);
+        }
+        if (clean.length() < 3) {
+            clean = clean + billingChars(deriveBillingInitials(email, seed));
+        }
+        if (clean.length() < 3) {
+            clean = clean + "XXX";
+        }
+        if (clean.length() > 3) {
+            clean = clean.substring(0, 3);
+        }
+        return clean.toUpperCase(Locale.ROOT);
+    }
+
+    private static String deriveBillingInitials(String email, String seed) {
+        StringBuilder sb = new StringBuilder(8);
+        String localPart = safe(email);
+        int at = localPart.indexOf('@');
+        if (at >= 0) {
+            localPart = localPart.substring(0, at);
+        }
+        appendBillingChars(sb, localPart);
+        appendBillingChars(sb, seed);
+        appendBillingChars(sb, Integer.toHexString((safe(email) + "|" + safe(seed)).hashCode()));
+        while (sb.length() < 3) {
+            sb.append('X');
+        }
+        return sb.substring(0, 3).toUpperCase(Locale.ROOT);
+    }
+
+    private static String billingChars(String raw) {
+        StringBuilder out = new StringBuilder();
+        appendBillingChars(out, raw);
+        return out.toString();
+    }
+
+    private static void appendBillingChars(StringBuilder out, String raw) {
+        if (out == null || raw == null) return;
+        String u = raw.toUpperCase(Locale.ROOT);
+        for (int i = 0; i < u.length(); i++) {
+            char c = u.charAt(i);
+            if (BILLING_INITIALS_ALPHABET.indexOf(c) >= 0) {
+                out.append(c);
+            }
+        }
     }
 
     private static String normalizeUserTwoFactorEngine(String engine) {
@@ -1541,13 +1773,13 @@ public final class users_roles {
     }
 
     private static String emptyUsersXml() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
              + "<users created=\"" + xmlAttr(now) + "\" updated=\"" + xmlAttr(now) + "\"></users>\n";
     }
 
     private static String emptyRolesXml() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
              + "<roles created=\"" + xmlAttr(now) + "\" updated=\"" + xmlAttr(now) + "\"></roles>\n";
     }

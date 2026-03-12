@@ -141,6 +141,7 @@ public class api_omnichannel_bpm_extensions_test {
         boolean foundRequestInformation = false;
         boolean foundDeadlineRule = false;
         boolean foundAuditSnapshot = false;
+        boolean foundAssemblyToDocumentVersion = false;
         for (Object row : asList(out.get("items"))) {
             if (!(row instanceof Map<?, ?> map)) continue;
             String action = safe(String.valueOf(map.get("action")));
@@ -152,6 +153,7 @@ public class api_omnichannel_bpm_extensions_test {
             if ("request_information".equals(action)) foundRequestInformation = true;
             if ("deadline_rule_calculation".equals(action)) foundDeadlineRule = true;
             if ("audit_snapshot".equals(action)) foundAuditSnapshot = true;
+            if ("assembly_to_document_version".equals(action)) foundAssemblyToDocumentVersion = true;
         }
         assertTrue(foundUpdateThread);
         assertTrue(foundSetDocumentField);
@@ -161,6 +163,7 @@ public class api_omnichannel_bpm_extensions_test {
         assertTrue(foundRequestInformation);
         assertTrue(foundDeadlineRule);
         assertTrue(foundAuditSnapshot);
+        assertTrue(foundAssemblyToDocumentVersion);
     }
 
     @Test

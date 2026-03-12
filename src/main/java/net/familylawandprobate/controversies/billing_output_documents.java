@@ -1,5 +1,7 @@
 package net.familylawandprobate.controversies;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,6 +13,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -172,6 +175,29 @@ public final class billing_output_documents {
         }
     }
 
+    public static final class LedesDocument {
+        public final String format; // ledes1998b
+        public final String invoiceUuid;
+        public final int lineCount;
+        public final byte[] bytes;
+        public final String contentType;
+        public final String extension;
+
+        public LedesDocument(String format,
+                             String invoiceUuid,
+                             int lineCount,
+                             byte[] bytes,
+                             String contentType,
+                             String extension) {
+            this.format = safe(format).trim();
+            this.invoiceUuid = safe(invoiceUuid).trim();
+            this.lineCount = Math.max(0, lineCount);
+            this.bytes = bytes == null ? new byte[0] : bytes.clone();
+            this.contentType = safe(contentType).trim().isBlank() ? "text/plain; charset=UTF-8" : safe(contentType).trim();
+            this.extension = safe(extension).trim().isBlank() ? "txt" : safe(extension).trim();
+        }
+    }
+
     public static final class TrustRequestInput {
         public final String matterUuid;
         public final String requestId;
@@ -314,7 +340,7 @@ public final class billing_output_documents {
             List<TemplateConfigRec> all = readAllLocked(tu);
             ArrayList<TemplateConfigRec> out = new ArrayList<TemplateConfigRec>(all.size());
             boolean found = false;
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             for (TemplateConfigRec r : all) {
                 if (r == null) continue;
                 if (docType.equals(r.documentType)) {
@@ -354,7 +380,7 @@ public final class billing_output_documents {
             List<TemplateConfigRec> all = readAllLocked(tu);
             ArrayList<TemplateConfigRec> out = new ArrayList<TemplateConfigRec>(all.size());
             boolean found = false;
-            String now = Instant.now().toString();
+            String now = app_clock.now().toString();
             for (TemplateConfigRec r : all) {
                 if (r == null) continue;
                 if (docType.equals(r.documentType)) {
@@ -420,7 +446,7 @@ public final class billing_output_documents {
         long trustBalance = ledger.matterTrustBalance(invoice.matterUuid);
 
         LinkedHashMap<String, String> values = baseValues(profileValues, customValues);
-        put(values, "document.generated_at", Instant.now().toString());
+        put(values, "document.generated_at", app_clock.now().toString());
         put(values, "matter.uuid", invoice.matterUuid);
         put(values, "invoice.uuid", invoice.uuid);
         put(values, "invoice.status", invoice.status);
@@ -485,11 +511,11 @@ public final class billing_output_documents {
 
         long trustBalance = ledger.matterTrustBalance(input.matterUuid);
         LinkedHashMap<String, String> values = baseValues(profileValues, customValues);
-        put(values, "document.generated_at", Instant.now().toString());
+        put(values, "document.generated_at", app_clock.now().toString());
         put(values, "matter.uuid", input.matterUuid);
         put(values, "trust.balance", cents(trustBalance));
         put(values, "trust_request.request_id", safe(input.requestId).isBlank() ? UUID.randomUUID().toString() : input.requestId);
-        put(values, "trust_request.requested_at", safe(input.requestedAt).isBlank() ? Instant.now().toString() : input.requestedAt);
+        put(values, "trust_request.requested_at", safe(input.requestedAt).isBlank() ? app_clock.now().toString() : input.requestedAt);
         put(values, "trust_request.due_at", input.dueAt);
         put(values, "trust_request.requested_by", input.requestedBy);
         put(values, "trust_request.amount", cents(input.requestedAmountCents));
@@ -634,7 +660,7 @@ public final class billing_output_documents {
         long trustClosing = trustOpening + trustDeposits - trustApplied - trustRefunds;
 
         LinkedHashMap<String, String> values = baseValues(profileValues, customValues);
-        put(values, "document.generated_at", Instant.now().toString());
+        put(values, "document.generated_at", app_clock.now().toString());
         put(values, "matter.uuid", matter);
         put(values, "statement.period_start", start.isBlank() ? "(beginning)" : start);
         put(values, "statement.period_end", end.isBlank() ? "(current)" : end);
@@ -653,6 +679,136 @@ public final class billing_output_documents {
         return renderWithConfig(tu, DOC_STATEMENT_OF_ACCOUNT, values);
     }
 
+    public LedesDocument renderLedes1998B(String tenantUuid,
+                                          billing_accounting ledger,
+                                          String matterUuid,
+                                          String invoiceUuid,
+                                          Map<String, String> profileValues,
+                                          Map<String, String> customValues) {
+        String tu = safeFileToken(tenantUuid);
+        String invoiceId = safe(invoiceUuid).trim();
+        String matter = safe(matterUuid).trim();
+        if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required");
+        if (ledger == null) throw new IllegalArgumentException("ledger required");
+        if (invoiceId.isBlank()) throw new IllegalArgumentException("invoiceUuid required");
+
+        billing_accounting.InvoiceRec invoice = ledger.getInvoice(invoiceId);
+        if (invoice == null) throw new IllegalArgumentException("invoice not found");
+        if (!matter.isBlank() && !matter.equals(safe(invoice.matterUuid).trim())) {
+            throw new IllegalArgumentException("invoice does not belong to matter");
+        }
+
+        LinkedHashMap<String, String> values = baseValues(profileValues, customValues);
+        String invoiceDate = ledesDate(firstNonBlank(invoice.issuedAt, invoice.createdAt));
+        String clientId = firstNonBlank(values.get("client.id"), values.get("client_id"), "CLIENT");
+        String lawFirmMatterId = firstNonBlank(values.get("matter.number"), values.get("matter.uuid"), invoice.matterUuid);
+        String lawFirmId = firstNonBlank(values.get("law_firm.id"), values.get("law_firm_id"), values.get("tenant.id"), values.get("tenant.uuid"), tu);
+        String clientMatterId = firstNonBlank(values.get("client.matter_id"), values.get("matter.number"), invoice.matterUuid);
+        String invoiceDescription = firstNonBlank(values.get("invoice.description"), "Invoice " + invoice.uuid);
+
+        LinkedHashMap<String, billing_accounting.TimeEntryRec> timeByUuid = new LinkedHashMap<String, billing_accounting.TimeEntryRec>();
+        for (billing_accounting.TimeEntryRec t : ledger.listTimeEntriesForInvoice(invoice.uuid)) {
+            if (t == null) continue;
+            timeByUuid.put(safe(t.uuid).trim(), t);
+        }
+        LinkedHashMap<String, billing_accounting.ExpenseEntryRec> expenseByUuid = new LinkedHashMap<String, billing_accounting.ExpenseEntryRec>();
+        for (billing_accounting.ExpenseEntryRec e : ledger.listExpenseEntriesForInvoice(invoice.uuid)) {
+            if (e == null) continue;
+            expenseByUuid.put(safe(e.uuid).trim(), e);
+        }
+
+        String billingStart = "";
+        String billingEnd = "";
+        ArrayList<String> lines = new ArrayList<String>();
+        lines.add("LEDES1998B[]");
+        lines.add("INVOICE_DATE|INVOICE_NUMBER|CLIENT_ID|LAW_FIRM_MATTER_ID|INVOICE_TOTAL|BILLING_START_DATE|BILLING_END_DATE|INVOICE_DESCRIPTION|LINE_ITEM_NUMBER|EXP/FEE/INV_ADJ_TYPE|LINE_ITEM_NUMBER_OF_UNITS|LINE_ITEM_ADJUSTMENT_AMOUNT|LINE_ITEM_TOTAL|LINE_ITEM_DATE|LINE_ITEM_TASK_CODE|LINE_ITEM_EXPENSE_CODE|LINE_ITEM_ACTIVITY_CODE|TIMEKEEPER_ID|LINE_ITEM_DESCRIPTION|LAW_FIRM_ID|LINE_ITEM_UNIT_COST|CLIENT_MATTER_ID");
+
+        int lineNo = 1;
+        for (billing_accounting.InvoiceLineRec line : invoice.lines) {
+            if (line == null) continue;
+            String type = safe(line.type).trim().toLowerCase(Locale.ROOT);
+            String expFeeType = "I";
+            String lineUnits = "1.00";
+            String lineDate = invoiceDate;
+            String taskCode = "";
+            String expenseCode = "";
+            String activityCode = "";
+            String timekeeperId = "";
+
+            if ("time".equals(type)) {
+                expFeeType = "F";
+                billing_accounting.TimeEntryRec t = timeByUuid.get(safe(line.sourceUuid).trim());
+                if (t != null) {
+                    lineUnits = ledesTimeUnits(t.minutes);
+                    lineDate = ledesDate(firstNonBlank(t.workedAt, invoice.issuedAt, invoice.createdAt));
+                    taskCode = firstNonBlank(t.utbmsTaskCode);
+                    activityCode = firstNonBlank(t.utbmsActivityCode);
+                    timekeeperId = firstNonBlank(t.userUuid);
+                } else {
+                    lineUnits = ledesTimeUnits((int) line.quantity);
+                }
+            } else if ("expense".equals(type)) {
+                expFeeType = "E";
+                billing_accounting.ExpenseEntryRec e = expenseByUuid.get(safe(line.sourceUuid).trim());
+                if (e != null) {
+                    lineDate = ledesDate(firstNonBlank(e.incurredAt, invoice.issuedAt, invoice.createdAt));
+                    expenseCode = firstNonBlank(e.utbmsExpenseCode);
+                }
+            }
+
+            if (billingStart.isBlank() || lineDate.compareTo(billingStart) < 0) billingStart = lineDate;
+            if (billingEnd.isBlank() || lineDate.compareTo(billingEnd) > 0) billingEnd = lineDate;
+
+            String row = String.join("|",
+                    sanitizeLedes(invoiceDate),
+                    sanitizeLedes(invoice.uuid),
+                    sanitizeLedes(clientId),
+                    sanitizeLedes(lawFirmMatterId),
+                    sanitizeLedes(cents(invoice.totalCents)),
+                    sanitizeLedes(billingStart),
+                    sanitizeLedes(billingEnd),
+                    sanitizeLedes(invoiceDescription),
+                    String.valueOf(lineNo),
+                    expFeeType,
+                    sanitizeLedes(lineUnits),
+                    "0.00",
+                    sanitizeLedes(cents(line.totalCents)),
+                    sanitizeLedes(lineDate),
+                    sanitizeLedes(taskCode),
+                    sanitizeLedes(expenseCode),
+                    sanitizeLedes(activityCode),
+                    sanitizeLedes(timekeeperId),
+                    sanitizeLedes(firstNonBlank(line.description, expFeeType.equals("F") ? "Fee entry" : "Expense entry")),
+                    sanitizeLedes(lawFirmId),
+                    sanitizeLedes(cents(line.unitAmountCents)),
+                    sanitizeLedes(clientMatterId)
+            );
+            lines.add(row);
+            lineNo++;
+        }
+
+        String resolvedStart = billingStart.isBlank() ? invoiceDate : billingStart;
+        String resolvedEnd = billingEnd.isBlank() ? invoiceDate : billingEnd;
+        for (int i = 2; i < lines.size(); i++) {
+            String line = lines.get(i);
+            String[] parts = line.split("\\|", -1);
+            if (parts.length < 22) continue;
+            parts[5] = resolvedStart;
+            parts[6] = resolvedEnd;
+            lines.set(i, String.join("|", parts));
+        }
+
+        String body = String.join("\n", lines) + "\n";
+        return new LedesDocument(
+                "ledes1998b",
+                invoice.uuid,
+                Math.max(0, lineNo - 1),
+                body.getBytes(StandardCharsets.UTF_8),
+                "text/plain; charset=UTF-8",
+                "txt"
+        );
+    }
+
     private RenderedDocument renderWithConfig(String tenantUuid, String documentType, LinkedHashMap<String, String> values) throws Exception {
         String tu = safeFileToken(tenantUuid);
         String docType = normalizeDocumentType(documentType);
@@ -665,7 +821,7 @@ public final class billing_output_documents {
         putIfBlank(values, "tenant.advanced_assembly_strict_mode", "false");
 
         TemplateConfigRec cfg = getTemplateConfig(tu, docType);
-        if (cfg == null) cfg = new TemplateConfigRec(docType, "", defaultTemplateForType(docType), Instant.now().toString());
+        if (cfg == null) cfg = new TemplateConfigRec(docType, "", defaultTemplateForType(docType), app_clock.now().toString());
 
         document_assembler assembler = new document_assembler();
         if (!safe(cfg.templateUuid).trim().isBlank()) {
@@ -800,7 +956,7 @@ public final class billing_output_documents {
     }
 
     private static List<TemplateConfigRec> defaultConfigs() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         ArrayList<TemplateConfigRec> out = new ArrayList<TemplateConfigRec>();
         out.add(new TemplateConfigRec(DOC_INVOICE, "", DEFAULT_INVOICE_TEMPLATE, now));
         out.add(new TemplateConfigRec(DOC_TRUST_REQUEST, "", DEFAULT_TRUST_REQUEST_TEMPLATE, now));
@@ -935,7 +1091,7 @@ public final class billing_output_documents {
     private static void writeAllLocked(String tenantUuid, List<TemplateConfigRec> all) throws Exception {
         Path p = configPath(tenantUuid);
         Files.createDirectories(p.getParent());
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
 
         ArrayList<TemplateConfigRec> rows = new ArrayList<TemplateConfigRec>();
         if (all != null) {
@@ -1031,6 +1187,42 @@ public final class billing_output_documents {
         long cents = abs % 100L;
         String sign = amountCents < 0L ? "-" : "";
         return sign + whole + "." + String.format(Locale.ROOT, "%02d", cents);
+    }
+
+    private static String ledesDate(String value) {
+        String v = safe(value).trim();
+        if (v.isBlank()) return "";
+        if (v.length() >= 10) {
+            try {
+                return LocalDate.parse(v.substring(0, 10)).format(DateTimeFormatter.BASIC_ISO_DATE);
+            } catch (Exception ignored) {}
+        }
+        try {
+            return LocalDate.parse(v).format(DateTimeFormatter.BASIC_ISO_DATE);
+        } catch (Exception ignored) {}
+        long epoch = toEpochMillis(v);
+        if (epoch >= 0L) {
+            return Instant.ofEpochMilli(epoch)
+                    .atZone(ZoneOffset.UTC)
+                    .toLocalDate()
+                    .format(DateTimeFormatter.BASIC_ISO_DATE);
+        }
+        return "";
+    }
+
+    private static String ledesTimeUnits(int minutes) {
+        int mins = Math.max(0, minutes);
+        BigDecimal hours = BigDecimal.valueOf(mins)
+                .divide(BigDecimal.valueOf(60L), 2, RoundingMode.HALF_UP);
+        return hours.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private static String sanitizeLedes(String value) {
+        return safe(value)
+                .replace('|', '/')
+                .replace('\n', ' ')
+                .replace('\r', ' ')
+                .trim();
     }
 
     private static void put(LinkedHashMap<String, String> map, String key, String value) {

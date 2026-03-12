@@ -65,7 +65,7 @@ public final class installation_state {
         synchronized (lock) {
             Properties p = loadLocked();
             p.setProperty(KEY_COMPLETED, "true");
-            p.setProperty(KEY_COMPLETED_AT, Instant.now().toString());
+            p.setProperty(KEY_COMPLETED_AT, app_clock.now().toString());
             p.setProperty(KEY_TENANT_UUID, tu);
             p.setProperty(KEY_ADMIN_EMAIL, em);
             saveLocked(p);

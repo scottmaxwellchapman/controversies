@@ -139,7 +139,7 @@ public final class email_change_tokens {
         if (email.isBlank()) throw new IllegalArgumentException("newEmailAddress required");
 
         Duration effectiveTtl = (ttl == null || ttl.isZero() || ttl.isNegative()) ? DEFAULT_TTL : ttl;
-        Instant now = Instant.now();
+        Instant now = app_clock.now();
         String nowIso = now.toString();
         String expiresAt = now.plus(effectiveTtl).toString();
 
@@ -187,7 +187,7 @@ public final class email_change_tokens {
         }
 
         String tokenHash = sha256Hex(token);
-        Instant now = Instant.now();
+        Instant now = app_clock.now();
         String nowIso = now.toString();
 
         ReentrantReadWriteLock lock = lockFor(tu);
@@ -283,7 +283,7 @@ public final class email_change_tokens {
         Path p = tokensPath(tenantUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(4096);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<email_change_tokens updated=\"").append(xmlAttr(now)).append("\">\n");

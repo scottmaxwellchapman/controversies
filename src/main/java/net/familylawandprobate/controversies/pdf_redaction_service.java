@@ -15,7 +15,9 @@ import org.apache.pdfbox.rendering.PDFRenderer;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Graphics2D;
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Constructor;
@@ -26,7 +28,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Base64;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -43,6 +45,9 @@ public final class pdf_redaction_service {
     private static final int DEFAULT_RENDER_DPI = 144;
     private static final int RASTER_REDACTION_DPI = 200;
     private static final int MAX_REDACTION_RECTS = 5000;
+    private static final double MIN_PREVIEW_RENDER_QUALITY = 0.25d;
+    private static final double MAX_PREVIEW_RENDER_QUALITY = 1.0d;
+    private static final float PDFREDACTOR_HEADLESS_QUALITY = 1.0f;
 
     private pdf_redaction_service() {
     }
@@ -181,22 +186,26 @@ public final class pdf_redaction_service {
     }
 
     public static RenderedPage renderPage(Path pdfPath, int requestedPageIndex) throws Exception {
+        return renderPage(pdfPath, requestedPageIndex, 1d);
+    }
+
+    public static RenderedPage renderPage(Path pdfPath, int requestedPageIndex, double requestedQuality) throws Exception {
         Path p = requirePdf(pdfPath);
-        document_page_preview.RenderedPage rendered = document_page_preview.renderPage(p, requestedPageIndex);
-        int total = Math.max(0, rendered.totalPages);
-        if (total <= 0) throw new IllegalArgumentException("PDF has no pages.");
-        byte[] png = new byte[0];
-        String b64 = safe(rendered.base64Png).trim();
-        if (!b64.isBlank()) {
-            try { png = Base64.getDecoder().decode(b64); } catch (Exception ignored) {}
+        int dpi = renderDpiForQuality(requestedQuality);
+        try (PDDocument doc = PDDocument.load(p.toFile())) {
+            int total = Math.max(0, doc.getNumberOfPages());
+            if (total <= 0) throw new IllegalArgumentException("PDF has no pages.");
+            int pageIndex = clamp(requestedPageIndex, 0, total - 1);
+            PDFRenderer renderer = new PDFRenderer(doc);
+            BufferedImage image = renderer.renderImageWithDPI(pageIndex, dpi, ImageType.RGB);
+            return new RenderedPage(
+                    pageIndex,
+                    total,
+                    image == null ? 0 : image.getWidth(),
+                    image == null ? 0 : image.getHeight(),
+                    image == null ? new byte[0] : toPng(image)
+            );
         }
-        return new RenderedPage(
-                rendered.pageIndex,
-                rendered.totalPages,
-                rendered.imageWidthPx,
-                rendered.imageHeightPx,
-                png
-        );
     }
 
     public static List<RedactionRectNorm> parseNormalizedPayload(String rawPayload) {
@@ -486,6 +495,11 @@ public final class pdf_redaction_service {
     }
 
     private static boolean tryPdfRedactor(Path inputPdf, Path outputPdf, List<RedactionRectPt> rects) {
+        if (tryPdfRedactorSpecApi(inputPdf, outputPdf, rects)) return true;
+        return tryPdfRedactorHeadlessApi(inputPdf, outputPdf, rects);
+    }
+
+    private static boolean tryPdfRedactorSpecApi(Path inputPdf, Path outputPdf, List<RedactionRectPt> rects) {
         try {
             Class<?> redactorClass = Class.forName("group.chapmanlaw.pdfredactor.headless.PdfRedactor");
             Class<?> specClass = Class.forName("group.chapmanlaw.pdfredactor.headless.RedactionSpec");
@@ -508,6 +522,59 @@ public final class pdf_redaction_service {
 
             Method redactFile = redactorClass.getMethod("redactFile", Path.class, Path.class, List.class);
             redactFile.invoke(null, inputPdf, outputPdf, specs);
+            return Files.exists(outputPdf) && Files.size(outputPdf) > 0L;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean tryPdfRedactorHeadlessApi(Path inputPdf, Path outputPdf, List<RedactionRectPt> rects) {
+        try {
+            Class<?> headlessClass = Class.forName("group.chapmanlaw.pdfredactor.headless");
+            Method openPdf = headlessClass.getMethod("openPdf", String.class, float.class);
+            Method dimensions = headlessClass.getMethod("getPageDimensionsInPixels");
+            Method apply = headlessClass.getMethod("applyPixelRedactions", Map.class, String.class);
+
+            openPdf.invoke(null, inputPdf.toAbsolutePath().normalize().toString(), PDFREDACTOR_HEADLESS_QUALITY);
+            Object rawDims = dimensions.invoke(null);
+            if (!(rawDims instanceof List<?> dimRows) || dimRows.isEmpty()) return false;
+
+            LinkedHashMap<Integer, ArrayList<Rectangle>> redactionsByPage = new LinkedHashMap<Integer, ArrayList<Rectangle>>();
+            try (PDDocument source = PDDocument.load(inputPdf.toFile())) {
+                int totalPages = Math.max(0, source.getNumberOfPages());
+                for (RedactionRectPt rect : rects) {
+                    if (rect == null) continue;
+                    int pageIndex = rect.pageIndex;
+                    if (pageIndex < 0 || pageIndex >= totalPages || pageIndex >= dimRows.size()) continue;
+                    Object dimRow = dimRows.get(pageIndex);
+                    if (!(dimRow instanceof Dimension dim)) continue;
+
+                    PDPage page = source.getPage(pageIndex);
+                    if (page == null) continue;
+                    PDRectangle crop = page.getCropBox();
+                    if (crop == null) crop = page.getMediaBox();
+                    if (crop == null) continue;
+
+                    float pageWidthPt = Math.max(1f, crop.getWidth());
+                    float pageHeightPt = Math.max(1f, crop.getHeight());
+                    int pageWidthPx = Math.max(1, dim.width);
+                    int pageHeightPx = Math.max(1, dim.height);
+
+                    int x1 = clamp((int) Math.floor((rect.xPt / pageWidthPt) * pageWidthPx), 0, pageWidthPx);
+                    int y1 = clamp((int) Math.floor(((pageHeightPt - (rect.yPt + rect.heightPt)) / pageHeightPt) * pageHeightPx), 0, pageHeightPx);
+                    int x2 = clamp((int) Math.ceil(((rect.xPt + rect.widthPt) / pageWidthPt) * pageWidthPx), 0, pageWidthPx);
+                    int y2 = clamp((int) Math.ceil(((pageHeightPt - rect.yPt) / pageHeightPt) * pageHeightPx), 0, pageHeightPx);
+                    int width = x2 - x1;
+                    int height = y2 - y1;
+                    if (width <= 0 || height <= 0) continue;
+
+                    redactionsByPage.computeIfAbsent(pageIndex, k -> new ArrayList<Rectangle>())
+                            .add(new Rectangle(x1, y1, width, height));
+                }
+            }
+
+            if (redactionsByPage.isEmpty()) return false;
+            apply.invoke(null, redactionsByPage, outputPdf.toAbsolutePath().normalize().toString());
             return Files.exists(outputPdf) && Files.size(outputPdf) > 0L;
         } catch (Throwable ignored) {
             return false;
@@ -556,22 +623,29 @@ public final class pdf_redaction_service {
         if (cloner == null || sourcePage == null || outputPage == null) return;
 
         ArrayList<PDAnnotation> merged = new ArrayList<PDAnnotation>();
+        HashSet<String> seen = new HashSet<String>();
 
         List<PDAnnotation> outputAnnotations = safeAnnotations(outputPage);
         for (PDAnnotation existing : outputAnnotations) {
-            if (!isWidgetAnnotation(existing)) continue;
+            if (existing == null) continue;
             existing.setPage(outputPage);
+            String fp = annotationFingerprint(existing);
+            if (!fp.isBlank() && seen.contains(fp)) continue;
+            if (!fp.isBlank()) seen.add(fp);
             merged.add(existing);
         }
 
         List<PDAnnotation> sourceAnnotations = safeAnnotations(sourcePage);
         for (PDAnnotation sourceAnnotation : sourceAnnotations) {
-            if (!isPreservableAnnotation(sourceAnnotation)) continue;
+            if (sourceAnnotation == null) continue;
             COSBase clonedBase = cloner.cloneForNewDocument(sourceAnnotation.getCOSObject());
             if (!(clonedBase instanceof COSDictionary clonedDictionary)) continue;
             PDAnnotation cloned = PDAnnotation.createAnnotation(clonedDictionary);
             if (cloned == null) continue;
             cloned.setPage(outputPage);
+            String fp = annotationFingerprint(cloned);
+            if (!fp.isBlank() && seen.contains(fp)) continue;
+            if (!fp.isBlank()) seen.add(fp);
             merged.add(cloned);
         }
 
@@ -589,13 +663,29 @@ public final class pdf_redaction_service {
         }
     }
 
-    private static boolean isPreservableAnnotation(PDAnnotation annotation) {
-        return annotation != null && !isWidgetAnnotation(annotation);
-    }
-
-    private static boolean isWidgetAnnotation(PDAnnotation annotation) {
-        if (annotation == null) return false;
-        return "Widget".equalsIgnoreCase(safe(annotation.getSubtype()).trim());
+    private static String annotationFingerprint(PDAnnotation annotation) {
+        if (annotation == null) return "";
+        String subtype = safe(annotation.getSubtype()).trim().toLowerCase(Locale.ROOT);
+        String contents = safe(annotation.getContents()).trim();
+        String name = "";
+        try {
+            name = safe(annotation.getAnnotationName()).trim();
+        } catch (Exception ignored) {
+        }
+        PDRectangle rect = null;
+        try {
+            rect = annotation.getRectangle();
+        } catch (Exception ignored) {
+        }
+        if (rect == null) {
+            return subtype + "|" + contents + "|" + name;
+        }
+        return subtype + "|"
+                + Math.round(rect.getLowerLeftX() * 100f) + ","
+                + Math.round(rect.getLowerLeftY() * 100f) + ","
+                + Math.round(rect.getWidth() * 100f) + ","
+                + Math.round(rect.getHeight() * 100f)
+                + "|" + contents + "|" + name;
     }
 
     private static byte[] toPng(BufferedImage image) throws Exception {
@@ -658,6 +748,18 @@ public final class pdf_redaction_service {
         if (value < 0d) return 0d;
         if (value > 1d) return 1d;
         return value;
+    }
+
+    public static double normalizePreviewRenderQuality(double value) {
+        if (!Double.isFinite(value)) return 1d;
+        if (value < MIN_PREVIEW_RENDER_QUALITY) return MIN_PREVIEW_RENDER_QUALITY;
+        if (value > MAX_PREVIEW_RENDER_QUALITY) return MAX_PREVIEW_RENDER_QUALITY;
+        return value;
+    }
+
+    private static int renderDpiForQuality(double requestedQuality) {
+        double quality = normalizePreviewRenderQuality(requestedQuality);
+        return Math.max(36, (int) Math.round(DEFAULT_RENDER_DPI * quality));
     }
 
     private static String hex(byte[] raw) {

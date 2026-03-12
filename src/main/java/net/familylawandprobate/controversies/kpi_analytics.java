@@ -71,7 +71,7 @@ public final class kpi_analytics {
         if (tu.isBlank()) throw new IllegalArgumentException("tenantUuid required.");
 
         SummaryRec out = new SummaryRec();
-        out.generatedAt = Instant.now().toString();
+        out.generatedAt = app_clock.now().toString();
 
         matters matterStore = matters.defaultStore();
         tasks taskStore = tasks.defaultStore();
@@ -104,7 +104,7 @@ public final class kpi_analytics {
 
         List<tasks.TaskRec> tasksAll = taskStore.listTasks(tu);
         out.tasksTotal = tasksAll.size();
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        LocalDate today = app_clock.todayUtc();
         for (tasks.TaskRec task : tasksAll) {
             if (task == null || task.archived) continue;
             String status = safe(task.status).trim().toLowerCase(Locale.ROOT);
@@ -180,7 +180,7 @@ public final class kpi_analytics {
         int span = Math.max(1, Math.min(366, days <= 0 ? 30 : days));
 
         LinkedHashMap<String, DailyRec> byDay = new LinkedHashMap<String, DailyRec>();
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        LocalDate today = app_clock.todayUtc();
         for (int i = span - 1; i >= 0; i--) {
             LocalDate d = today.minusDays(i);
             DailyRec row = new DailyRec();

@@ -120,12 +120,12 @@ public final class version_ocr_companion_service {
     }
 
     public boolean isTesseractAvailable() {
-        long now = System.currentTimeMillis();
+        long now = app_clock.currentTimeMillis();
         if (now - tesseractCheckedAtMs <= TESSERACT_CACHE_MS) {
             return tesseractAvailable;
         }
         synchronized (tesseractAvailabilityLock) {
-            now = System.currentTimeMillis();
+            now = app_clock.currentTimeMillis();
             if (now - tesseractCheckedAtMs <= TESSERACT_CACHE_MS) {
                 return tesseractAvailable;
             }

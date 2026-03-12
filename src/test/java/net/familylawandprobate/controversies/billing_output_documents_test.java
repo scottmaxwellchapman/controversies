@@ -197,6 +197,79 @@ public class billing_output_documents_test {
         }
     }
 
+    @Test
+    void ledes1998b_render_includes_utbms_time_and_expense_codes() throws Exception {
+        String tenantUuid = "billing-docs-ledes-" + UUID.randomUUID();
+        Path tenantDir = Paths.get("data", "tenants", tenantUuid).toAbsolutePath();
+        deleteQuietly(tenantDir);
+        try {
+            billing_accounting ledger = billing_accounting.inMemory();
+            billing_output_documents docs = billing_output_documents.defaultStore();
+            String matterUuid = "matter-ledes";
+
+            ledger.upsertBillingActivity(
+                    "L110",
+                    "Case assessment",
+                    30_000L,
+                    true,
+                    "L110",
+                    "A101",
+                    "",
+                    true
+            );
+            ledger.createTimeEntry(
+                    matterUuid,
+                    "user-ledes",
+                    "L110",
+                    "Initial case review",
+                    90,
+                    0L,
+                    "USD",
+                    true,
+                    "2026-03-10T09:00:00Z"
+            );
+            ledger.createExpenseEntry(
+                    matterUuid,
+                    "Filing fee",
+                    12_500L,
+                    0L,
+                    "USD",
+                    true,
+                    "2026-03-11T09:00:00Z",
+                    "E101"
+            );
+            billing_accounting.InvoiceRec issued = ledger.finalizeInvoice(
+                    ledger.draftInvoiceForMatter(matterUuid, "2026-03-12", "2026-03-26", "USD").uuid
+            );
+
+            billing_output_documents.LedesDocument ledes = docs.renderLedes1998B(
+                    tenantUuid,
+                    ledger,
+                    matterUuid,
+                    issued.uuid,
+                    Map.of(
+                            "client.id", "CLIENT-001",
+                            "law_firm.id", "FIRM-001",
+                            "matter.number", "MAT-100"
+                    ),
+                    Map.of()
+            );
+
+            String text = new String(ledes.bytes, StandardCharsets.UTF_8);
+            String[] lines = text.split("\\n");
+            assertEquals("ledes1998b", ledes.format);
+            assertEquals(issued.uuid, ledes.invoiceUuid);
+            assertEquals(2, ledes.lineCount);
+            assertTrue(lines.length >= 4);
+            assertEquals("LEDES1998B[]", lines[0]);
+            assertTrue(lines[1].startsWith("INVOICE_DATE|INVOICE_NUMBER|CLIENT_ID|"));
+            assertTrue(text.contains("|F|1.50|0.00|450.00|20260310|L110||A101|user-ledes|"));
+            assertTrue(text.contains("|E|1.00|0.00|125.00|20260311||E101||"));
+        } finally {
+            deleteQuietly(tenantDir);
+        }
+    }
+
     private static void deleteQuietly(Path p) {
         try {
             if (p == null || !Files.exists(p)) return;

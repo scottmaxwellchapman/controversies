@@ -115,6 +115,7 @@
         // Path-first mapping keeps menu and page heading icons consistent
         // and avoids icon re-use across menu targets.
         if ("/index.jsp".equals(h)) return "home";
+        if ("/inbox.jsp".equals(h)) return "inbox";
         if ("/cases.jsp".equals(h)) return "cases";
         if ("/case_lists.jsp".equals(h)) return "case-lists";
         if ("/case_focus.jsp".equals(h)) return "case-focus";
@@ -195,6 +196,7 @@
 
         // Label fallback handles heading defaults and submenu labels without href.
         if (containsKey(l, "home")) return "home";
+        if (containsKey(l, "inbox")) return "inbox";
         if (containsKey(l, "form") && containsKey(l, "assembler")) return "form-assembler";
         if (containsKey(l, "setting")) return "settings";
         if (containsKey(l, "help")) return "help";
@@ -328,6 +330,7 @@
     private static List<MenuGroup> defaultMenu() {
         MenuGroup g = new MenuGroup("");
         g.items.add(new MenuNode("Home", "/index.jsp"));
+        g.items.add(new MenuNode("Unified Inbox", "/inbox.jsp"));
         g.items.add(new MenuNode("Cases", "/cases.jsp"));
         g.items.add(new MenuNode("Case Conflicts", "/case_conflicts.jsp"));
         g.items.add(new MenuNode("Contacts", "/contacts.jsp"));
@@ -382,6 +385,7 @@
         if (q >= 0) h = h.substring(0, q);
 
         if ("/index.jsp".equals(h)) return "home.access";
+        if ("/inbox.jsp".equals(h)) return "home.access";
         if ("/cases.jsp".equals(h) || "/case_lists.jsp".equals(h) || "/case_focus.jsp".equals(h)) return "cases.access";
         if ("/case_conflicts.jsp".equals(h)) return "conflicts.access";
         if ("/case_fields.jsp".equals(h)) return "case_fields.access";

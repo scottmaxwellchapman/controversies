@@ -842,6 +842,107 @@ public class business_process_manager_test {
     }
 
     @Test
+    void supports_document_workflow_where_assembly_is_one_step_before_part_version_creation() throws Exception {
+        String tenant = "tenant-bpm-doc-assembly-chain-" + UUID.randomUUID();
+        cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());
+
+        matters.MatterRec matter = matters.defaultStore().create(
+                tenant,
+                "Workflow Matter",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
+        );
+        documents.DocumentRec doc = documents.defaultStore().create(
+                tenant,
+                matter.uuid,
+                "Final Packet",
+                "pleading",
+                "motion",
+                "draft",
+                "tester",
+                "work_product",
+                "",
+                "",
+                ""
+        );
+
+        form_templates.TemplateRec template = form_templates.defaultStore().create(
+                tenant,
+                "Packet Cover",
+                "packet-cover.txt",
+                "Matter: {{case.label}}".getBytes(StandardCharsets.UTF_8)
+        );
+        assertNotNull(template);
+
+        business_process_manager.ProcessDefinition process = new business_process_manager.ProcessDefinition();
+        process.name = "Assemble Then Attach Version";
+        business_process_manager.ProcessTrigger trigger = new business_process_manager.ProcessTrigger();
+        trigger.type = "manual";
+        process.triggers.add(trigger);
+
+        business_process_manager.ProcessStep assemble = new business_process_manager.ProcessStep();
+        assemble.stepId = "assemble";
+        assemble.order = 10;
+        assemble.action = "document_assembly";
+        assemble.settings.put("matter_uuid", "{{event.matter_uuid}}");
+        assemble.settings.put("template_uuid", template.uuid);
+        assemble.settings.put("output_file_name", "packet-cover.txt");
+        process.steps.add(assemble);
+
+        business_process_manager.ProcessStep attach = new business_process_manager.ProcessStep();
+        attach.stepId = "attach_version";
+        attach.order = 20;
+        attach.action = "assembly_to_document_version";
+        attach.settings.put("matter_uuid", "{{event.matter_uuid}}");
+        attach.settings.put("document_uuid", "{{event.doc_uuid}}");
+        attach.settings.put("part_label", "Cover Letter");
+        attach.settings.put("part_type", "lead");
+        attach.settings.put("version_label", "Cover Letter v1");
+        process.steps.add(attach);
+
+        business_process_manager bpm = business_process_manager.defaultService();
+        business_process_manager.ProcessDefinition saved = bpm.saveProcess(tenant, process);
+
+        business_process_manager.RunResult run = bpm.triggerProcess(
+                tenant,
+                saved.processUuid,
+                "manual",
+                Map.of("matter_uuid", matter.uuid, "doc_uuid", doc.uuid),
+                "tester",
+                "test"
+        );
+        assertEquals("completed", safe(run.status));
+
+        List<assembled_forms.AssemblyRec> assemblies = assembled_forms.defaultStore().listByMatter(tenant, matter.uuid);
+        assertEquals(1, assemblies.size());
+        assembled_forms.AssemblyRec assembly = assemblies.get(0);
+        assertEquals("completed", safe(assembly.status));
+
+        List<document_parts.PartRec> parts = document_parts.defaultStore().listAll(tenant, matter.uuid, doc.uuid);
+        assertEquals(1, parts.size());
+        document_parts.PartRec part = parts.get(0);
+        assertEquals("cover letter", safe(part.label).toLowerCase());
+
+        List<part_versions.VersionRec> versions = part_versions.defaultStore().listAll(tenant, matter.uuid, doc.uuid, part.uuid);
+        assertEquals(1, versions.size());
+        part_versions.VersionRec created = versions.get(0);
+        assertEquals("Cover Letter v1", safe(created.versionLabel));
+        assertEquals("assembled_form:" + assembly.uuid, safe(created.source));
+        assertFalse(safe(created.checksum).isBlank());
+
+        Path storagePath = pdf_redaction_service.resolveStoragePath(created.storagePath);
+        assertNotNull(storagePath);
+        assertTrue(Files.exists(storagePath));
+        String assembledText = Files.readString(storagePath, StandardCharsets.UTF_8);
+        assertTrue(assembledText.contains("Matter: Workflow Matter"));
+    }
+
+    @Test
     void supports_deadline_rule_calculation_action_and_case_field_write() throws Exception {
         String tenant = "tenant-bpm-deadline-rule-" + UUID.randomUUID();
         cleanupRoots.add(Paths.get("data", "tenants", tenant).toAbsolutePath());

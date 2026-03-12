@@ -138,7 +138,7 @@ public final class password_reset_tokens {
         if (em.isBlank()) throw new IllegalArgumentException("emailAddress required");
 
         Duration effectiveTtl = (ttl == null || ttl.isZero() || ttl.isNegative()) ? DEFAULT_TTL : ttl;
-        Instant now = Instant.now();
+        Instant now = app_clock.now();
         String nowIso = now.toString();
         String expiresAt = now.plus(effectiveTtl).toString();
 
@@ -178,7 +178,7 @@ public final class password_reset_tokens {
         if (tu.isBlank() || token.isBlank()) return new ConsumeResult(false, "", "", "invalid");
 
         String tokenHash = sha256Hex(token);
-        Instant now = Instant.now();
+        Instant now = app_clock.now();
         String nowIso = now.toString();
 
         ReentrantReadWriteLock lock = lockFor(tu);
@@ -272,7 +272,7 @@ public final class password_reset_tokens {
         Path p = tokensPath(tenantUuid);
         Files.createDirectories(p.getParent());
 
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         StringBuilder sb = new StringBuilder(4096);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<password_reset_tokens updated=\"").append(xmlAttr(now)).append("\">\n");

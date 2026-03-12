@@ -148,7 +148,7 @@ public final class matter_conflicts {
             map.put(key, merged);
 
             rec.entries = new ArrayList<ConflictEntry>(map.values());
-            rec.updatedAt = Instant.now().toString();
+            rec.updatedAt = app_clock.now().toString();
             writeAllLocked(conflictsPath(tu, mu), rec);
             LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
             details.put("entry_uuid", safe(merged.uuid).trim());
@@ -186,7 +186,7 @@ public final class matter_conflicts {
             }
             if (!changed) return false;
             rec.entries = next;
-            rec.updatedAt = Instant.now().toString();
+            rec.updatedAt = app_clock.now().toString();
             writeAllLocked(conflictsPath(tu, mu), rec);
             LinkedHashMap<String, String> details = new LinkedHashMap<String, String>();
             details.put("entry_uuid", eu);
@@ -260,7 +260,7 @@ public final class matter_conflicts {
         out.notes = safe(in.notes).trim();
         if (out.uuid.isBlank()) out.uuid = UUID.randomUUID().toString();
         if (out.occurrenceCount <= 0) out.occurrenceCount = 1;
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         if (out.firstSeenAt.isBlank()) out.firstSeenAt = now;
         if (out.lastSeenAt.isBlank()) out.lastSeenAt = out.firstSeenAt;
         return out;
@@ -286,7 +286,7 @@ public final class matter_conflicts {
             }
         }
         out.versionScanState = cleanState;
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         out.updatedAt = safe(out.updatedAt).trim();
         if (out.updatedAt.isBlank()) out.updatedAt = now;
         out.lastScannedAt = safe(out.lastScannedAt).trim();
@@ -354,7 +354,7 @@ public final class matter_conflicts {
         if (p == null) throw new IllegalArgumentException("Conflict path is required.");
         Files.createDirectories(p.getParent());
         FileRec rec = normalizeFile(file);
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         rec.updatedAt = now;
 
         ArrayList<ConflictEntry> entries = new ArrayList<ConflictEntry>(rec.entries);
@@ -423,7 +423,7 @@ public final class matter_conflicts {
     }
 
     private static String emptyXml() {
-        String now = Instant.now().toString();
+        String now = app_clock.now().toString();
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 + "<conflicts updated=\"" + document_workflow_support.xmlText(now) + "\" last_scanned_at=\"\">\n"
                 + "  <entries count=\"0\"></entries>\n"

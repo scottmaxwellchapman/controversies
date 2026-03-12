@@ -238,7 +238,7 @@ public final class ip_lists {
         if (net == null) return;
         if (isLoopbackNet(net)) return; // never block localhost
 
-        long until = Instant.now().getEpochSecond() + Math.max(1, durationSeconds);
+        long until = app_clock.now().getEpochSecond() + Math.max(1, durationSeconds);
 
         List<TempBan> bans = new ArrayList<>(loadTempBansRaw());
         // replace if exists
@@ -320,7 +320,7 @@ public final class ip_lists {
     }
 
     private TempBan matchTempBan(InetAddress addr) {
-        long now = Instant.now().getEpochSecond();
+        long now = app_clock.now().getEpochSecond();
         for (TempBan b : tempBans) {
             if (b.untilEpochSec <= now) continue;
             if (b.net.matches(addr)) return b;
@@ -357,7 +357,7 @@ public final class ip_lists {
     // -------------------------
 
     private synchronized void pruneExpiredTempBansIfNeeded(boolean forceWrite) {
-        long now = Instant.now().getEpochSecond();
+        long now = app_clock.now().getEpochSecond();
         List<TempBan> cur = new ArrayList<>(tempBans);
 
         boolean changed = cur.removeIf(b -> b.untilEpochSec <= now);
@@ -467,10 +467,10 @@ public final class ip_lists {
     private synchronized void writeTempBans(List<TempBan> bans) {
         StringBuilder sb = new StringBuilder(1024);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        sb.append("<temporaryBans version=\"1\" updatedEpochSec=\"").append(Instant.now().getEpochSecond()).append("\">\n");
+        sb.append("<temporaryBans version=\"1\" updatedEpochSec=\"").append(app_clock.now().getEpochSecond()).append("\">\n");
 
         // never persist loopback bans
-        long now = Instant.now().getEpochSecond();
+        long now = app_clock.now().getEpochSecond();
         for (TempBan b : bans) {
             if (b.untilEpochSec <= now) continue;
             if (isLoopbackNet(b.net)) continue;
@@ -488,7 +488,7 @@ public final class ip_lists {
     private synchronized void writeSimpleListXml(Path file, String root, List<String> entries) {
         StringBuilder sb = new StringBuilder(1024);
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        sb.append("<").append(root).append(" version=\"1\" updatedEpochSec=\"").append(Instant.now().getEpochSecond()).append("\">\n");
+        sb.append("<").append(root).append(" version=\"1\" updatedEpochSec=\"").append(app_clock.now().getEpochSecond()).append("\">\n");
 
         for (String e : entries) {
             if (e == null || e.isBlank()) continue;
@@ -548,7 +548,7 @@ public final class ip_lists {
     }
 
     private static List<TempBan> compileTempBans(List<TempBanRaw> raw) {
-        long now = Instant.now().getEpochSecond();
+        long now = app_clock.now().getEpochSecond();
         List<TempBan> out = new ArrayList<>();
         for (TempBanRaw r : raw) {
             IpNet n = parseNet(r.value);

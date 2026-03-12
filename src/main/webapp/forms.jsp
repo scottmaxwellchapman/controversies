@@ -10,6 +10,7 @@
 <%@ page import="java.util.Map" %>
 
 <%@ page import="net.familylawandprobate.controversies.activity_log" %>
+<%@ page import="net.familylawandprobate.controversies.assembly_identity_tokens" %>
 <%@ page import="net.familylawandprobate.controversies.assembled_forms" %>
 <%@ page import="net.familylawandprobate.controversies.case_fields" %>
 <%@ page import="net.familylawandprobate.controversies.case_list_items" %>
@@ -288,6 +289,8 @@
 
   putToken(mergeValues, "tenant.uuid", tenantUuid);
   putToken(mergeValues, "tenant.label", tenantLabel);
+  putToken(mergeValues, "user.uuid", userUuid);
+  putToken(mergeValues, "user.email", userEmail);
 
   if (selectedCase != null) {
     String caseCause = safe(caseKv.get("cause_docket_number"));
@@ -333,6 +336,9 @@
     putToken(mergeValues, "kv." + nk, val);
     putToken(mergeValues, nk, val);
   }
+
+  assembly_identity_tokens.addTenantIdentityTokens(mergeValues, tenantUuid, ctx, tenantKv);
+  assembly_identity_tokens.addUserIdentityTokens(mergeValues, tenantUuid, userUuid, userEmail, ctx);
 
   boolean advancedAssemblyEnabled = "true".equalsIgnoreCase(safe(tenantSettingsKv.get("feature_advanced_assembly")));
   putToken(mergeValues, "tenant.advanced_assembly_enabled", advancedAssemblyEnabled ? "true" : "false");
